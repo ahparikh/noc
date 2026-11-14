@@ -104,7 +104,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** `zellij/src/panes.rs` `recognizes_server_connection_failures_without_hiding_other_errors`
 
 ### ZH-012 Command result routing
-- **Behavior:** The panel MUST route `RunCommandResult` by the context value under key `zellij-noc`: `agent-snapshot` (ZH-010), `stop-agent`, `rename-agent` (ZH-013), `guest-snapshot` (ZX-021), `guest-open` (ZX-031), `update-check` (ZH-022). Results with no such key or any other value, including `host-action`, MUST be ignored. The details window handles only `agent-details`.
+- **Behavior:** The panel MUST route `RunCommandResult` by the context value under key `zellij-noc`: `agent-snapshot` (ZH-010), `stop-agent`, `rename-agent` (ZH-013), `guest-snapshot` (ZX-021), `guest-open` (ZX-031), `update-check` (ZH-022), `host-info` (ZX-038). Results with no such key or any other value, including `host-action`, MUST be ignored. The details window handles only `agent-details`.
 - **Source:** `zellij/src/main.rs` (`on_command_result`); `zellij/src/details.rs` (`update_details`)
 - **Verified by:** UNTESTED
 
@@ -145,7 +145,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
   | `home_theme`, `away_theme` | unset | the inner session's theme pair |
   | `away_key`, `home_key` | `Ctrl Alt Shift F11`, `Ctrl Alt Shift F12` | the keys typed into the inner session to switch theme |
   | `update_check` | on | `false` turns the release check (ZH-022) off; any other value does not |
-  | `pane_titles` | show | `hide` blanks the titles of the inner session's panes (ZX-038); any other value does not |
+  | `pane_titles` | show | what the frames of the inner session's panes say: `name` names each pane `<host> · <what runs in it>`, `hide` blanks the title, any other value leaves the titles alone (ZX-038) |
   | `colors` | built-in | `zellij` makes the panel follow the Zellij theme; any other value keeps the built-in colours ([07-zellij-panel.md](07-zellij-panel.md) ZR-018) |
   | `agent_id` | empty | details role only |
 
@@ -197,7 +197,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** `zellij/e2e/nested.sh` "host session has the sidebar and one guest pane"
 
 ### ZX-002 The plugin and its settings
-- **Behavior:** `layouts/noc-host.kdl` MUST load the plugin in the panel's pane as `plugin location="<URL>" { … }`, where the URL is a release asset that names the version (`https://github.com/ahparikh/noc/releases/download/v0.1.3/zellij-noc.wasm` as shipped). The block's children are the settings of ZH-017, and this block is the only place they are set; the shipped block sets `noc_bin "noc"`, `guest_session "noc"`, `icons "unicode"`, `pane_titles "hide"`, `poll_interval_ms "1000"`, `update_check "true"`, `home_theme "noc-blue"` and `away_theme "noc-blue-away"` (ZX-037), and carries `colors`, `away_key`, `home_key` as comments. `guest_session` MUST equal `inner=` in the same file's guest loop.
+- **Behavior:** `layouts/noc-host.kdl` MUST load the plugin in the panel's pane as `plugin location="<URL>" { … }`, where the URL is a release asset that names the version (`https://github.com/ahparikh/noc/releases/download/v0.1.4/zellij-noc.wasm` as shipped). The block's children are the settings of ZH-017, and this block is the only place they are set; the shipped block sets `noc_bin "noc"`, `guest_session "noc"`, `icons "unicode"`, `pane_titles "name"`, `poll_interval_ms "1000"`, `update_check "true"`, `home_theme "noc-blue"` and `away_theme "noc-blue-away"` (ZX-037), and carries `colors`, `away_key`, `home_key` as comments. `guest_session` MUST equal `inner=` in the same file's guest loop.
 - **Source:** `zellij/config/layouts/noc-host.kdl`
 - **Decision:** D-056
 - **Verified by:** `zellij/e2e/nested.sh` "sidebar lists the registry's agents" (settings from the layout reach the plugin)
@@ -407,15 +407,19 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** `zellij/src/details.rs` `the_window_closes_on_esc_d_capital_d_and_q_only`; `zellij/e2e/nested.sh` "D opens the floating details window" (title), "q closes it"
 
 ### ZX-034 Panel pane title
-- **Behavior:** The panel's pane title MUST be `NOC` centred in its frame, whether or not the panel has the keyboard: with `cols` columns and `padding = ((cols + 2 - width(title)) / 2) - 2` (saturating), the title is `─` repeated `padding - 1` times, a space, then `NOC` when `padding >= 2`, and the plain title when not. Before its width is known the title is the plain `NOC`. The pane is renamed only when the width changed.
-- **Source:** `zellij/src/panel.rs` (`sync_panel_title`); `zellij/src/panes.rs` (`centered_frame_title`)
-- **Verified by:** `zellij/src/panes.rs` `centres_the_panel_title_in_its_frame`
+- **Behavior:** The panel's pane title MUST be `NOC`, set once when permissions are granted (ZH-004) and left where Zellij draws a title, at the left of the frame's top border.
+- **Source:** `zellij/src/main.rs` (`on_granted`); `zellij/src/panel.rs` (`PANEL_TITLE`)
+- **Verified by:** `zellij/e2e/nested.sh` "host session has the sidebar and one guest pane" (finds the panel by that title)
 
-### ZX-038 Blank pane titles in the inner session
-- **Behavior:** With the setting `pane_titles "hide"`, after each successful read of the inner session the panel MUST rename every terminal pane there whose title is not a single space to a single space (`action rename-pane --pane-id terminal_<id> " "` in the inner session, without moving the host keyboard; the result is ignored), so that its frame shows no title. An empty name is not used, because Zellij then shows the pane's own title again. The panel MUST remember the title each pane had when it was renamed, for as long as the pane exists, and use that title wherever a pane's title identifies an agent (ZX-025). With any other value nothing is renamed. Plugin panes are never renamed.
-- **Source:** `zellij/src/guest.rs` (`blank_titles`, `blank_title_args`, `on_guest_snapshot`); `zellij/src/app.rs` (`Config::from_map`)
+### ZX-038 Pane titles in the inner session
+- **Behavior:** The setting `pane_titles` chooses what the frames of the inner session's terminal panes say. With `show` (the default in code) the panel renames nothing. Otherwise, after each successful read of the inner session, the panel MUST give every terminal pane there a name, by running `action rename-pane --pane-id terminal_<id> -- <name>` in the inner session without moving the host keyboard (the result is ignored), once per pane and again only when the wanted name changes:
+  - `hide`: a single space, so the frame shows no title. An empty name is not used, because Zellij then shows the pane's own title again.
+  - `name`: `<host> · <what>`, where `<host>` is this machine's short host name and `<what>` is, for a pane that holds an agent (ZX-025), the agent's provider (`claude`, `codex`); for any other pane started with a command, the last path component of the command's first word, quotes removed; and otherwise the name of the user's shell. The host and the shell come from running `hostname -s 2>/dev/null || hostname; basename "${SHELL:-sh}"` once when permissions are granted (context `host-info`); until that has answered, nothing is renamed.
+
+  The panel MUST remember the title each pane had by itself, for as long as the pane exists, and use that title wherever a pane's title identifies an agent (ZX-025): a pane showing the name the panel gave it is treated as having its own title. A title that is neither is taken as the pane's new own title, and the pane is named again. Plugin panes are never renamed.
+- **Source:** `zellij/src/guest.rs` (`restore_titles`, `title_renames`, `pane_name`, `rename_pane_args`, `parse_host_info`, `on_guest_snapshot`); `zellij/src/main.rs` (`on_granted`, `on_command_result`); `zellij/src/app.rs` (`Config::from_map`)
 - **Decision:** D-074
-- **Verified by:** `zellij/src/guest.rs` `pane_titles_are_blanked_once_and_remembered`; `zellij/src/app.rs` `parses_bounded_poll_configuration` (the setting); the rename in a running pair is MANUAL: start the dev pair and look at the inner panes' frames
+- **Verified by:** `zellij/src/guest.rs` `pane_names_are_given_once_and_the_real_titles_remembered`, `a_pane_is_named_for_its_machine_and_what_runs_in_it`; `zellij/src/app.rs` `parses_bounded_poll_configuration` (the setting); the rename in a running pair is MANUAL: start the dev pair and look at the inner panes' frames
 
 ## 10. Build
 
@@ -498,10 +502,10 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 ### ZE-016 The configuration installer
 - **Behavior:** `zellij/install-config.sh [--check]` installs `layouts/noc-host.kdl`, `layouts/noc-inner.kdl` and `themes/noc-blue.kdl` into `$ZELLIJ_CONFIG_DIR`, or `~/.config/zellij`, and brings an existing installation up to date. It MUST NOT read or write `config.kdl`. Any other argument prints `usage: install-config.sh [--check]` and exits `2`.
   1. **Source.** Run as a file with `config/layouts/noc-host.kdl` beside it (a checkout; also root `make zellij-install-config`) it uses the files beside it. Otherwise (piped: `curl -fsSL https://raw.githubusercontent.com/ahparikh/noc/main/zellij/install-config.sh | bash`, with `bash -s -- --check` for the check) it MUST download the three files into a temporary directory, removed on exit, from `$NOC_CONFIG_URL`, or else from `https://raw.githubusercontent.com/<NOC_REPO, default ahparikh/noc>/<ref>/zellij/config`, where `<ref>` is `$NOC_REF` or, when that is unset, the tag GitHub's `releases/latest` redirects to, so that the layouts name a published plugin. It prints `from       <source>`. It MUST stop, having changed nothing, with `install-config.sh: could not find the latest release of <repo> (set NOC_REF to a tag or branch)` when there is no such redirect, and with `install-config.sh: could not download <url>` when a download fails, both exit `1`.
-  2. **Host layout.** When the destination exists and loads `zellij-noc.wasm`, the file installed is the new layout with the user's settings: every setting of ZH-017 that is set (not commented out) in the user's plugin block is given the user's value, in place where the new layout sets it, uncommented where the new layout only mentions it, and added at the end of the plugin block otherwise; and `inner=noc; host=noc-host;` in the guest loop is replaced by the user's `inner=…; host=…;` when theirs differs. Nothing else of the user's file is carried over. Otherwise the new layout is installed as it is.
+  2. **Host layout.** When the destination exists and loads `zellij-noc.wasm`, the file installed is the new layout with the user's settings. To tell the user's choices from defaults, it fetches the host layout that the release named in the user's plugin location shipped (`https://raw.githubusercontent.com/<repo>/<that tag>/zellij/config/layouts/noc-host.kdl`, or the file in `$NOC_SHIPPED_HOST`). A setting of ZH-017 is the user's when it is set (not commented out) in their plugin block with a value that release did not ship; a setting that release set and the user's file does not is one the user turned off. When that layout cannot be had, every setting that is set is the user's and none is turned off. Each of the user's settings is given the user's value, in place where the new layout sets it, uncommented where the new layout only mentions it, and added at the end of the plugin block otherwise; each turned-off setting is commented out where the new layout sets it; and `inner=noc; host=noc-host;` in the guest loop is replaced by the user's `inner=…; host=…;` when theirs differs. Nothing else of the user's file is carried over. Otherwise the new layout is installed as it is.
   3. **Inner layout.** When the destination exists and differs from the new layout in more than its plugin locations, the user's file MUST be kept: only its plugin locations are set to the new one, and the new layout is written beside it as `noc-inner.kdl.new`. Otherwise the new layout is installed.
   4. **Theme.** The new file is installed.
-  5. **Reporting.** For each file it prints `unchanged  <path>` when the result is identical to what is there; `add        <path>` when there was none; `update     <path>[, keeping your <names>] (previous kept as <name>.bak)` after copying the existing file to `<path>.bak`, where `<names>` lists, sorted, the settings whose value differs from the new layout's own and `session names`; for a kept inner layout, `update     <path>: plugin location only, the rest is yours (previous kept as noc-inner.kdl.bak)` or, when nothing changed, `kept       <path> (yours differs from the new file)`, each followed by a line naming the `.new` file.
+  5. **Reporting.** For each file it prints `unchanged  <path>` when the result is identical to what is there; `add        <path>` when there was none; `update     <path>[, keeping your <names>] (previous kept as <name>.bak)` after copying the existing file to `<path>.bak`, where `<names>` lists, sorted, the settings whose value differs from the new layout's own, the turned-off ones as `<name> (off)`, and `session names`; for a kept inner layout, `update     <path>: plugin location only, the rest is yours (previous kept as noc-inner.kdl.bak)` or, when nothing changed, `kept       <path> (yours differs from the new file)`, each followed by a line naming the `.new` file.
   6. With `--check` it prints the same lines, changes nothing, and ends with `(--check: nothing was changed)`. Otherwise it ends by naming the plugin version installed, the file that holds the settings, and the two commands that restart the pair (ZX-008). It never edits a shell profile.
 - **Source:** `zellij/install-config.sh`; root `Makefile` (`zellij-install-config`)
 - **Decision:** D-062
@@ -689,16 +693,17 @@ Neither the unit tests nor `nested.sh` cover:
   bindings in `noc-inner.kdl` use different keys, name other themes than
   `home_theme` and `away_theme`, or the themes do not exist, nothing is
   reported and the theme does not change.
-- With `pane_titles "hide"` a pane's title is frozen as the panel first saw
+- With `pane_titles "hide"` or `"name"` a pane's title is frozen as the panel first saw
   it: a title its program sets later is not seen, by the user or by the
   panel, so an agent recognised only by its pane title is recognised by the
   title it had at first.
 - The plugin URL is written three times: once in `noc-host.kdl` and twice
   in `noc-inner.kdl`. Upgrading means changing all three, which the
   installer does (ZE-016).
-- The installer carries over only settings that are set. A shipped default
-  the user turned off by commenting it out comes back on an upgrade; an
-  empty value (`home_theme ""`) keeps it off.
+- The installer tells the user's choices from old defaults by fetching the
+  host layout of the release the user has. When it cannot (no network, or
+  a plugin location that names no release), every setting that is set
+  counts as the user's, so a changed default does not arrive.
 - `w` and `D` do not check that permissions were granted before acting, unlike
   Enter, `p` and `s`.
 - The inner session is local and single: remote inner sessions and several

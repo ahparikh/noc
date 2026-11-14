@@ -3,7 +3,6 @@
 use crate::model::{parse_snapshot, parse_terminal_pane_id, Agent, AgentGroup, AgentList};
 use serde::Deserialize;
 use std::collections::BTreeMap;
-use unicode_width::UnicodeWidthStr;
 use zellij_tile::prelude::{PaneInfo, PaneManifest};
 
 pub const MAX_PIPE_FRAME_BYTES: usize = 4 * 1024 * 1024;
@@ -137,16 +136,6 @@ pub fn tab_panes(panes: &[ScanPane], tab: usize) -> Vec<ScanPane> {
 
 /// Centre the panel title in its frame: plain when it would not fit with
 /// padding on both sides.
-pub fn centered_frame_title(title: &str, cols: usize) -> String {
-    let len = title.width();
-    let padding = ((cols + 2).saturating_sub(len) / 2).saturating_sub(2);
-    if padding < 2 {
-        title.to_string()
-    } else {
-        format!("{} {title}", "\u{2500}".repeat(padding - 1))
-    }
-}
-
 pub fn agent_tab_name(agent: &Agent) -> String {
     let title = agent.title();
     if title.chars().count() > TAB_NAME_LIMIT {
@@ -505,30 +494,6 @@ mod tests {
         assert_eq!(agent_tab_name(&long), format!("{}\u{2026}", "n".repeat(32)));
         let exact = agent(&format!(r#"{{"id":"a","user_name":"{}"}}"#, "n".repeat(32)));
         assert_eq!(agent_tab_name(&exact), "n".repeat(32));
-    }
-
-    #[test]
-    fn centres_the_panel_title_in_its_frame() {
-        // padding = (40 - 15) / 2 - 2 = 10: nine dashes, a space, the title.
-        assert_eq!(
-            centered_frame_title("NOC: Agent List", 38),
-            format!("{} NOC: Agent List", "\u{2500}".repeat(9))
-        );
-        assert_eq!(
-            centered_frame_title("NOC: Agent List", 20),
-            "NOC: Agent List"
-        );
-        assert_eq!(
-            centered_frame_title("NOC: Agent List", 0),
-            "NOC: Agent List"
-        );
-        assert_eq!(
-            centered_frame_title("NOC: Agent List", 80)
-                .chars()
-                .filter(|&c| c == '\u{2500}')
-                .count(),
-            ((82 - 15) / 2 - 2) - 1
-        );
     }
 
     #[test]

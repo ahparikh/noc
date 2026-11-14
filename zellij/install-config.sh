@@ -20,8 +20,11 @@
 #
 #   layouts/noc-host.kdl    The outer session and the sidebar plugin with its
 #                           settings. Installed new. On an upgrade the new
-#                           file is installed with the settings you had set
-#                           carried over, and your session names.
+#                           file is installed with your settings carried
+#                           over, and your session names. A setting is yours
+#                           when it differs from what the release you had
+#                           shipped, so new defaults reach you and your own
+#                           choices stay, including defaults you turned off.
 #   layouts/noc-inner.kdl   What your session has only beside the sidebar.
 #                           Installed new. On an upgrade, replaced if you
 #                           have not changed it; if you have, yours is kept,
@@ -118,18 +121,31 @@ user_settings() {
 	' "$1"
 }
 
-# with_settings <new noc-host.kdl> <settings file> <changed file>: the new
-# layout with each of those settings set to the given value: in place where
-# the layout sets it, uncommented where the layout only mentions it, and
-# added at the end of the plugin block otherwise. The names of the settings
-# whose value differs from the layout's own go to <changed file>.
+# only_changed <yours> <shipped>: the lines of <yours> ("key<TAB>value") that
+# are not in <shipped>: the settings you set differently, or added.
+only_changed() {
+	awk 'NR == FNR { shipped[$0] = 1; next } !($0 in shipped)' "$2" "$1"
+}
+
+# turned_off <yours> <shipped>: the keys <shipped> sets and <yours> does not.
+turned_off() {
+	awk -F '\t' 'NR == FNR { yours[$1] = 1; next } !($1 in yours) { print $1 }' "$1" "$2"
+}
+
+# with_settings <new noc-host.kdl> <settings file> <changed file> <off file>:
+# the new layout with each of those settings set to the given value: in
+# place where the layout sets it, uncommented where the layout only mentions
+# it, and added at the end of the plugin block otherwise; and with each
+# setting named in <off file> commented out where the layout sets it. The
+# names of the settings this changed go to <changed file>.
 with_settings() {
-	awk -v settings="$2" -v changed="$3" '
+	awk -v settings="$2" -v changed="$3" -v offs="$4" '
 		BEGIN {
 			while ((getline line < settings) > 0) {
 				tab = index(line, "\t")
 				value[substr(line, 1, tab - 1)] = substr(line, tab + 1)
 			}
+			while ((getline line < offs) > 0) off[line] = 1
 			printf "" > changed
 		}
 		function note(key) { print key >> changed }
@@ -153,6 +169,11 @@ with_settings() {
 				printf "%s%s \"%s\"\n", indent, key, value[key]
 				done[key] = 1
 				if (commented || old != value[key]) note(key)
+				next
+			}
+			if ((key in off) && !commented) {
+				printf "%s// %s \"%s\"\n", indent, key, old
+				note(key " (off)")
 				next
 			}
 		}
@@ -187,8 +208,24 @@ host_old="$DEST/layouts/noc-host.kdl"
 host_out="$WORK/noc-host.kdl"
 host_note=""
 if [ -f "$host_old" ] && [ -n "$(plugin_location "$host_old")" ]; then
-	user_settings "$host_old" >"$WORK/settings"
-	with_settings "$host_new" "$WORK/settings" "$WORK/changed" >"$host_out"
+	user_settings "$host_old" >"$WORK/yours"
+	cp "$WORK/yours" "$WORK/settings"
+	: >"$WORK/off"
+	# What the release you have shipped tells your choices from its defaults.
+	# Without it, every setting you have set counts as yours.
+	had="$(plugin_location "$host_old" | sed -n 's|.*/download/\([^/]*\)/zellij-noc\.wasm"|\1|p')"
+	shipped="${NOC_SHIPPED_HOST:-}"
+	if [ -z "$shipped" ] && [ -n "$had" ] && command -v curl >/dev/null 2>&1; then
+		shipped="$WORK/shipped-host.kdl"
+		curl -fsSL --max-time 15 "https://raw.githubusercontent.com/$REPO/$had/zellij/config/layouts/noc-host.kdl" \
+			-o "$shipped" 2>/dev/null || shipped=""
+	fi
+	if [ -n "$shipped" ] && [ -f "$shipped" ] && [ -n "$(plugin_location "$shipped")" ]; then
+		user_settings "$shipped" >"$WORK/shipped"
+		only_changed "$WORK/yours" "$WORK/shipped" >"$WORK/settings"
+		turned_off "$WORK/yours" "$WORK/shipped" >"$WORK/off"
+	fi
+	with_settings "$host_new" "$WORK/settings" "$WORK/changed" "$WORK/off" >"$host_out"
 	# Session names you changed in the guest pane's loop.
 	names="$(grep -o 'inner=[^;"]*; host=[^;"]*;' "$host_old" | head -1 || true)"
 	if [ -n "$names" ] && [ "$names" != "inner=noc; host=noc-host;" ]; then

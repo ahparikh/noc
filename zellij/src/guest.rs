@@ -2,7 +2,7 @@
 //! the keyboard signals typed into it, and the `relay` role that runs inside
 //! it to switch its theme.
 
-use crate::app::{is_plain_name, Config};
+use crate::app::{is_plain_name, Config, PaneTitles};
 use crate::model::{parse_terminal_pane_id, Agent};
 use crate::panes::{attached_agent_id, compact_error, LaunchedPane, ScanPane};
 use crate::{ctx, now_secs, State, PIPE_RELAY};
@@ -36,8 +36,11 @@ pub struct GuestState {
     /// Inner tabs named after an agent, by tab id: the agent and the name
     /// the tab had when the panel last looked or renamed it.
     pub named_tabs: BTreeMap<u32, (String, String)>,
-    /// The titles panes had before the panel blanked them, by pane id.
-    pub titles: BTreeMap<u32, String>,
+    /// For each pane the panel has seen: the title it had by itself, and
+    /// the name the panel gave it (empty when it gave none).
+    pub titles: BTreeMap<u32, (String, String)>,
+    /// This machine's short host name and the user's shell, for pane names.
+    pub host: Option<(String, String)>,
     /// Whether the last snapshot showed a client attached to the inner session.
     pub client_seen: bool,
     pub failing_since: Option<f64>,
@@ -163,33 +166,84 @@ pub fn tab_renames(
 /// give the pane its own title back.
 pub const BLANK_TITLE: &str = " ";
 
-/// Blank the titles of the inner session's panes: returns the panes to
-/// rename, and gives every pane already blanked the title it had before, so
-/// that an agent can still be recognised by it. `titles` is the memory of
-/// those titles, kept to the panes that still exist.
-pub fn blank_titles(snapshot: &mut GuestSnapshot, titles: &mut BTreeMap<u32, String>) -> Vec<u32> {
-    titles.retain(|id, _| snapshot.panes.iter().any(|p| p.id == *id));
-    let mut to_blank = Vec::new();
-    for pane in &mut snapshot.panes {
-        if pane.title == BLANK_TITLE {
-            if let Some(title) = titles.get(&pane.id) {
-                pane.title = title.clone();
-            }
-        } else {
-            titles.insert(pane.id, pane.title.clone());
-            to_blank.push(pane.id);
-        }
-    }
-    to_blank
+pub const CTX_HOST_INFO: &str = "host-info";
+/// Prints the short host name, then the name of the user's shell.
+pub const HOST_INFO_SCRIPT: &str = "hostname -s 2>/dev/null || hostname; basename \"${SHELL:-sh}\"";
+
+/// The two lines of `HOST_INFO_SCRIPT`.
+pub fn parse_host_info(stdout: &str) -> Option<(String, String)> {
+    let mut lines = stdout.lines().map(str::trim).filter(|l| !l.is_empty());
+    Some((lines.next()?.to_string(), lines.next()?.to_string()))
 }
 
-pub fn blank_title_args(pane: u32) -> Vec<String> {
+/// Undo the panel's own names in a snapshot, so that everything after sees
+/// each pane's real title: a pane showing the name the panel gave it gets
+/// the title it had before, and any other title is remembered as the
+/// pane's own. `titles` is kept to the panes that still exist.
+pub fn restore_titles(snapshot: &mut GuestSnapshot, titles: &mut BTreeMap<u32, (String, String)>) {
+    titles.retain(|id, _| snapshot.panes.iter().any(|p| p.id == *id));
+    for pane in &mut snapshot.panes {
+        match titles.get(&pane.id) {
+            Some((own, name)) if !name.is_empty() && pane.title == *name => {
+                pane.title = own.clone();
+            }
+            // The rename has not arrived yet: nothing to undo or to learn.
+            Some((own, _)) if pane.title == *own => {}
+            _ => {
+                titles.insert(pane.id, (pane.title.clone(), String::new()));
+            }
+        }
+    }
+}
+
+/// The panes whose name is not the wanted one yet, as `(pane, name)`, after
+/// `restore_titles`. Each is recorded as given, so it is asked for once.
+pub fn title_renames(
+    snapshot: &GuestSnapshot,
+    titles: &mut BTreeMap<u32, (String, String)>,
+    wanted: impl Fn(&ScanPane) -> String,
+) -> Vec<(u32, String)> {
+    let mut renames = Vec::new();
+    for pane in &snapshot.panes {
+        let want = wanted(pane);
+        if let Some((_, name)) = titles.get_mut(&pane.id) {
+            if *name != want {
+                *name = want.clone();
+                renames.push((pane.id, want));
+            }
+        }
+    }
+    renames
+}
+
+/// A pane's name: the machine, then what runs in it. For an agent that is
+/// its provider; for a pane started with a command, the command's name;
+/// otherwise the shell.
+pub fn pane_name(pane: &ScanPane, agent: Option<&Agent>, host: &str, shell: &str) -> String {
+    let what = match agent {
+        Some(agent) => agent.provider_label(),
+        None => pane
+            .terminal_command
+            .as_deref()
+            .and_then(|command| command.split_whitespace().next())
+            .map(|word| {
+                let word = word.trim_matches(|c| c == '"' || c == '\'');
+                word.rsplit('/').next().unwrap_or(word).to_string()
+            })
+            .filter(|word| !word.is_empty())
+            .unwrap_or_else(|| shell.to_string()),
+    };
+    format!("{host} \u{b7} {what}")
+}
+
+pub fn rename_pane_args(pane: u32, name: &str) -> Vec<String> {
     strings(&[
         "action",
         "rename-pane",
         "--pane-id",
         &format!("terminal_{pane}"),
-        BLANK_TITLE,
+        "--",
+        name,
     ])
 }
 
@@ -344,10 +398,37 @@ impl State {
         let Some(mut snapshot) = snapshot else {
             return self.on_guest_unreadable();
         };
-        if self.config.hide_pane_titles {
-            for pane in blank_titles(&mut snapshot, &mut self.guest.titles) {
+        if self.config.pane_titles != PaneTitles::Show {
+            restore_titles(&mut snapshot, &mut self.guest.titles);
+            let renames = match (&self.config.pane_titles, &self.guest.host) {
+                (PaneTitles::Hide, _) => title_renames(&snapshot, &mut self.guest.titles, |_| {
+                    BLANK_TITLE.to_string()
+                }),
+                (PaneTitles::Name, Some((host, shell))) => {
+                    let agents = &self.app.agents;
+                    let launched = &self.guest.launched;
+                    let config = &self.config;
+                    title_renames(&snapshot, &mut self.guest.titles, |pane| {
+                        let agent = crate::panes::agent_in_pane(
+                            agents,
+                            pane,
+                            launched,
+                            &config.noc_bin,
+                            Some(&config.guest_session),
+                        );
+                        pane_name(pane, agent, host, shell)
+                    })
+                }
+                // The host name is not known yet.
+                _ => Vec::new(),
+            };
+            for (pane, name) in renames {
                 run(
-                    &guest_run_command(&self.config.guest_session, "", &blank_title_args(pane)),
+                    &guest_run_command(
+                        &self.config.guest_session,
+                        "",
+                        &rename_pane_args(pane, &name),
+                    ),
                     ctx(CTX_HOST_ACTION),
                 );
             }
@@ -576,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn pane_titles_are_blanked_once_and_remembered() {
+    fn pane_names_are_given_once_and_the_real_titles_remembered() {
         let pane = |id: u32, title: &str| ScanPane {
             id,
             title: title.to_string(),
@@ -587,29 +668,89 @@ mod tests {
             focused: None,
             panes,
         };
+        let blank = |_: &ScanPane| BLANK_TITLE.to_string();
         let mut titles = BTreeMap::new();
         // First sight: both are renamed, and their titles kept.
         let mut first = snapshot(vec![pane(1, "\u{2733} Auth migration"), pane(2, "zsh")]);
-        assert_eq!(blank_titles(&mut first, &mut titles), [1, 2]);
-        assert_eq!(first.panes[0].title, "\u{2733} Auth migration");
-        // Blanked: nothing to do, and the panel still sees the old title.
-        let mut second = snapshot(vec![
-            pane(1, BLANK_TITLE),
-            pane(2, BLANK_TITLE),
-            pane(3, ""),
-        ]);
-        assert_eq!(blank_titles(&mut second, &mut titles), [3]);
+        restore_titles(&mut first, &mut titles);
+        assert_eq!(
+            title_renames(&first, &mut titles, blank),
+            [(1, " ".to_string()), (2, " ".to_string())]
+        );
+        // The rename has not arrived: it is not asked for again.
+        let mut pending = snapshot(vec![pane(1, "\u{2733} Auth migration"), pane(2, "zsh")]);
+        restore_titles(&mut pending, &mut titles);
+        assert!(title_renames(&pending, &mut titles, blank).is_empty());
+        // Renamed: nothing to do, and the panel still sees the real titles.
+        let mut second = snapshot(vec![pane(1, " "), pane(2, " "), pane(3, "")]);
+        restore_titles(&mut second, &mut titles);
         assert_eq!(second.panes[0].title, "\u{2733} Auth migration");
         assert_eq!(second.panes[1].title, "zsh");
-        // A pane that is gone is forgotten; a blank one never seen stays blank.
-        let mut third = snapshot(vec![pane(2, BLANK_TITLE), pane(9, BLANK_TITLE)]);
-        assert!(blank_titles(&mut third, &mut titles).is_empty());
-        assert_eq!(third.panes[1].title, BLANK_TITLE);
+        assert_eq!(
+            title_renames(&second, &mut titles, blank),
+            [(3, " ".to_string())]
+        );
+        // The wanted name changes: the pane is renamed again, once.
+        let named = |p: &ScanPane| format!("box \u{b7} {}", p.id);
+        let mut third = snapshot(vec![pane(2, " ")]);
+        restore_titles(&mut third, &mut titles);
+        assert_eq!(
+            title_renames(&third, &mut titles, named),
+            [(2, "box \u{b7} 2".to_string())]
+        );
+        let mut fourth = snapshot(vec![pane(2, "box \u{b7} 2")]);
+        restore_titles(&mut fourth, &mut titles);
+        assert_eq!(fourth.panes[0].title, "zsh");
+        assert!(title_renames(&fourth, &mut titles, named).is_empty());
+        // A title from somewhere else becomes the pane's own, and is renamed.
+        let mut fifth = snapshot(vec![pane(2, "mine")]);
+        restore_titles(&mut fifth, &mut titles);
+        assert_eq!(fifth.panes[0].title, "mine");
+        assert_eq!(title_renames(&fifth, &mut titles, named).len(), 1);
+        // A pane that is gone is forgotten.
         assert_eq!(titles.keys().copied().collect::<Vec<_>>(), [2]);
         assert_eq!(
-            blank_title_args(4),
-            ["action", "rename-pane", "--pane-id", "terminal_4", " "]
+            rename_pane_args(4, "-x"),
+            [
+                "action",
+                "rename-pane",
+                "--pane-id",
+                "terminal_4",
+                "--",
+                "-x"
+            ]
         );
+    }
+
+    #[test]
+    fn a_pane_is_named_for_its_machine_and_what_runs_in_it() {
+        let claude = parse_agent(r#"{"id":"a1","provider":"claude"}"#).unwrap();
+        let command = |c: Option<&str>| ScanPane {
+            terminal_command: c.map(str::to_string),
+            ..ScanPane::default()
+        };
+        let name = |p: &ScanPane, a: Option<&Agent>| pane_name(p, a, "ohm-2", "zsh");
+        // An agent's pane says which provider, whatever started it.
+        assert_eq!(
+            name(&command(Some("noc attach a1")), Some(&claude)),
+            "ohm-2 \u{b7} claude"
+        );
+        // A pane started with a command says the command, without its path.
+        assert_eq!(
+            name(&command(Some("/usr/bin/vim notes.md")), None),
+            "ohm-2 \u{b7} vim"
+        );
+        assert_eq!(name(&command(Some("'htop'")), None), "ohm-2 \u{b7} htop");
+        // A plain pane says the shell.
+        assert_eq!(name(&command(None), None), "ohm-2 \u{b7} zsh");
+        assert_eq!(name(&command(Some("  ")), None), "ohm-2 \u{b7} zsh");
+
+        assert_eq!(
+            parse_host_info("ohm-2\nzsh\n"),
+            Some(("ohm-2".to_string(), "zsh".to_string()))
+        );
+        assert_eq!(parse_host_info("ohm-2\n"), None);
+        assert_eq!(parse_host_info(""), None);
     }
 
     #[test]

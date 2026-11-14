@@ -362,7 +362,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   | `home_key` | `Ctrl Alt Shift F12` | non-empty trimmed | key typed into the inner session when the keyboard returns |
   | `update_check` | on | exactly `false` → off | whether the header can show `↑ vX.Y.Z` (ZR-002) |
   | `colors` | built-in | exactly `zellij` → follow the Zellij theme | ZR-018 |
-  | `pane_titles` | show | exactly `hide` → blank the inner session's pane titles | [08-zellij-host.md](08-zellij-host.md) ZX-038 |
+  | `pane_titles` | show | exactly `name` → name the inner session's panes; exactly `hide` → blank their titles | [08-zellij-host.md](08-zellij-host.md) ZX-038 |
 
   What the theme and key settings do is specified in
   [08-zellij-host.md](08-zellij-host.md); the user-facing reference is

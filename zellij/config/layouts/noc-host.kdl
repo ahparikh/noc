@@ -21,7 +21,7 @@ layout {
             // the setup script again does for you. Zellij asks for
             // the plugin's permissions once per location, in the sidebar.
             // Every setting of the sidebar is in this block.
-            plugin location="https://github.com/ahparikh/noc/releases/download/v0.1.3/zellij-noc.wasm" {
+            plugin location="https://github.com/ahparikh/noc/releases/download/v0.1.4/zellij-noc.wasm" {
                 // The noc executable. A bare name is looked up on the PATH
                 // Zellij was started with; an absolute path always works.
                 noc_bin "noc"
@@ -37,10 +37,12 @@ layout {
                 // blue accent). "zellij" makes it follow your Zellij theme.
                 // colors "zellij"
 
-                // "hide" blanks the title in the frame of every pane of the
-                // inner session: the tab already names the agent. "show"
-                // leaves the titles alone.
-                pane_titles "hide"
+                // What the frames of the inner session's panes say. "name"
+                // names each pane for its machine and what runs in it
+                // ("ohm-2 · claude", "ohm-2 · zsh"): the tab already names the
+                // agent, and your prompt the directory. "hide" blanks the
+                // title. "show" leaves the titles programs set.
+                pane_titles "name"
 
                 // How often the sidebar reads `noc ls`, in milliseconds
                 // (250..60000).

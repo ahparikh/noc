@@ -99,7 +99,6 @@ pub struct State {
     pub session_name: Option<String>,
     // panel
     pub followed_agent: Option<String>,
-    pub panel_title_state: Option<Option<usize>>,
     pub last_cols: Option<usize>,
     pub details_window: Option<u32>,
     pub pipe_buffer: String,
@@ -132,7 +131,6 @@ impl Default for State {
             panel_url: None,
             session_name: None,
             followed_agent: None,
-            panel_title_state: None,
             last_cols: None,
             details_window: None,
             pipe_buffer: String::new(),
@@ -259,6 +257,12 @@ impl State {
         self.sync_panel_selectable();
         self.refresh();
         self.check_for_update();
+        if self.config.pane_titles == app::PaneTitles::Name {
+            run_command(
+                &["/bin/sh", "-c", guest::HOST_INFO_SCRIPT],
+                ctx(guest::CTX_HOST_INFO),
+            );
+        }
         if !self.tick_armed {
             self.tick_armed = true;
             set_timeout(PANEL_TICK_SECONDS);
@@ -299,6 +303,12 @@ impl State {
             CTX_RENAME => self.on_rename_result(exit, stderr, context),
             guest::CTX_SNAPSHOT => self.on_guest_snapshot(exit, stdout),
             guest::CTX_OPEN => self.on_guest_open(exit, stdout, stderr, context),
+            guest::CTX_HOST_INFO => {
+                if exit == Some(0) {
+                    self.guest.host = guest::parse_host_info(&String::from_utf8_lossy(stdout));
+                }
+                false
+            }
             update::CTX_CHECK => self.on_update_result(exit, stdout),
             _ => false,
         }
@@ -330,7 +340,6 @@ impl State {
         if self.panel_has_keyboard() {
             self.followed_agent = None;
         }
-        self.sync_panel_title();
         false
     }
 
@@ -338,7 +347,6 @@ impl State {
         self.tick_armed = true;
         set_timeout(PANEL_TICK_SECONDS);
         self.sync_panel_selectable();
-        self.sync_panel_title();
         let mut redraw = self.poll_guest();
         let now = now_secs();
         if self.next_refresh.is_none_or(|t| now >= t) {

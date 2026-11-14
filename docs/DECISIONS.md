@@ -649,9 +649,11 @@ setup and upgrade does not.
 **Consequence:** the installer is the one thing in the repository that
 writes to the user's configuration, and only when they run it. It takes
 its files from the latest release, not from `main`, so a change to the
-shipped layouts reaches users with the next release. Edits to the host
-layout other than the plugin's settings and the session names are not
-carried over (they are in the `.bak`).
+shipped layouts reaches users with the next release. It compares the
+user's settings with what their release shipped, so that a changed default
+arrives and a choice of the user's, including a default turned off, stays.
+Edits to the host layout other than the plugin's settings and the session
+names are not carried over (they are in the `.bak`).
 
 ### D-063: the sidebar has its own colours
 
@@ -701,18 +703,23 @@ and the frontend contract gains that command. Age means time since the
 agent's last activity, never when noc last looked at it. The pipe transport
 has no search.
 
-### D-074: the sidebar can blank pane titles in the inner session
+### D-074: the sidebar names the panes of the inner session
 
-With `pane_titles "hide"` the panel renames every terminal pane of the
-inner session to a single space, so frames show no title. The shipped
-layout turns it on.
+With `pane_titles "name"`, the shipped setting, the panel renames every
+terminal pane of the inner session to its machine and what runs in it
+(`ohm-2 · claude`, `ohm-2 · zsh`). `hide` blanks the title instead, and
+`show` leaves titles alone.
 
-**Why:** a tab already carries its agent's name, and a title in each frame
-repeats it or shows a shell's prompt string. Zellij has no option to draw a
-frame without a title, and an empty name restores the pane's own title, so
-a space is the only way.
+**Why:** a tab already carries its agent's name and the shell prompt the
+directory, so the usual title (`user@host:dir`, or the agent's name again)
+repeats what is on screen. Zellij cannot draw a frame without a title: a
+blank one leaves a gap in the border, so the space may as well say
+something short that the rest of the screen does not, and the machine will
+matter once agents run on several.
 **Consequence:** a title a program sets afterwards is not shown. The panel
-keeps the title it saw first, for recognising agents by it.
+keeps the title it saw first, for recognising agents by it. The command
+shown is the one the pane was started with, not what is running in a
+shell at the moment, which Zellij does not report.
 
 ### D-075: one status line, with the words behind a click
 

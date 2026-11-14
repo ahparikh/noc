@@ -137,7 +137,7 @@ called `Tab #N`; a tab you named yourself keeps your name.
 Everything is in the `plugin` block of `layouts/noc-host.kdl`:
 
 ```kdl
-plugin location="https://github.com/ahparikh/noc/releases/download/v0.1.3/zellij-noc.wasm" {
+plugin location="https://github.com/ahparikh/noc/releases/download/v0.1.4/zellij-noc.wasm" {
     noc_bin "noc"
     guest_session "noc"
     icons "unicode"
@@ -157,7 +157,7 @@ pair and start it again.
 | `icons` | `unicode` | `nerd` to use Nerd Font provider icons. |
 | `poll_interval_ms` | `1000` | How often the sidebar reads `noc ls`. Clamped to 250..60000. |
 | `home_theme`, `away_theme` | unset | Optional pair, see below. |
-| `pane_titles` | `show` | `hide` blanks the title in the frame of every pane of the inner session, since the tab already names the agent. The shipped layout sets `hide`. A title a program sets later is then not shown. |
+| `pane_titles` | `show` | What the frames of the inner session's panes say. `name` (the shipped setting) names each pane for its machine and what runs in it: `ohm-2 · claude` for an agent, `ohm-2 · vim` for a pane started with a command, `ohm-2 · zsh` for a shell. `hide` blanks the title, which leaves a small gap in the border. `show` leaves the titles programs set. With `name` or `hide`, a title a program sets later is not shown. |
 | `colors` | built-in | The sidebar's colours: by default a fixed dark palette (blue header, red Blocked, yellow Working, teal Review, grey Quiet). `zellij` follows your Zellij theme instead; use it on a light terminal. |
 | `update_check` | `true` | `false` stops the sidebar from asking GitHub whether a newer release exists (see [Upgrading the plugin](#upgrading-the-plugin)). |
 | `away_key`, `home_key` | `Ctrl Alt Shift F11`, `Ctrl Alt Shift F12` | The keys the sidebar types into the inner session to switch theme. Function keys `F1`..`F12` with any of `Ctrl`, `Alt`, `Shift`. Change them only if they collide with something. |
@@ -232,10 +232,11 @@ Whatever it replaces is kept beside the new file as `<name>.bak`. Nothing
 else is read or written: not `config.kdl`, not your shell profile. It ends
 by naming the plugin version now installed and how to restart the pair.
 
-One thing to know: a setting counts as yours only while it is set. If you
-turned a shipped default off by commenting it out, an upgrade brings the
-default back. To keep it off, set it to an empty value instead, for example
-`home_theme ""` and `away_theme ""` to keep dimming off.
+A setting counts as yours when it differs from what the release you had
+shipped. So a default that changes in a new release reaches you, a value
+you chose stays, and a default you turned off by commenting it out stays
+off. The script reads the old release's layout from GitHub to tell; if it
+cannot, it keeps every setting you have set.
 
 ### Settings for the inner session only
 

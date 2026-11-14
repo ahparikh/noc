@@ -105,6 +105,17 @@ pub const DEFAULT_GUEST_SESSION: &str = "noc";
 pub const DEFAULT_AWAY_KEY: &str = "Ctrl Alt Shift F11";
 pub const DEFAULT_HOME_KEY: &str = "Ctrl Alt Shift F12";
 
+/// What the panel does with the titles of the inner session's panes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaneTitles {
+    /// Leave them alone.
+    Show,
+    /// Blank them.
+    Hide,
+    /// Name each pane `<host> · <what runs in it>`.
+    Name,
+}
+
 /// The plugin block's settings (`plugin location="…" { … }` in the host layout).
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -127,8 +138,7 @@ pub struct Config {
     pub update_check: bool,
     /// Follow the Zellij theme instead of the built-in colours.
     pub zellij_colors: bool,
-    /// Blank the titles of the inner session's panes.
-    pub hide_pane_titles: bool,
+    pub pane_titles: PaneTitles,
 }
 
 impl Default for Config {
@@ -146,7 +156,7 @@ impl Default for Config {
             home_key: DEFAULT_HOME_KEY.to_string(),
             update_check: true,
             zellij_colors: false,
-            hide_pane_titles: false,
+            pane_titles: PaneTitles::Show,
         }
     }
 }
@@ -234,7 +244,11 @@ impl Config {
         }
         config.update_check = get("update_check") != Some("false");
         config.zellij_colors = get("colors") == Some("zellij");
-        config.hide_pane_titles = get("pane_titles") == Some("hide");
+        config.pane_titles = match get("pane_titles") {
+            Some("hide") => PaneTitles::Hide,
+            Some("name") => PaneTitles::Name,
+            _ => PaneTitles::Show,
+        };
         config
     }
 
@@ -925,9 +939,16 @@ mod tests {
         assert!(!defaults.zellij_colors);
         assert!(!Config::from_map(&map(&[("colors", "herdr")])).zellij_colors);
         assert!(Config::from_map(&map(&[("colors", "zellij")])).zellij_colors);
-        assert!(!defaults.hide_pane_titles);
-        assert!(!Config::from_map(&map(&[("pane_titles", "show")])).hide_pane_titles);
-        assert!(Config::from_map(&map(&[("pane_titles", "hide")])).hide_pane_titles);
+        assert_eq!(defaults.pane_titles, PaneTitles::Show);
+        for (value, want) in [
+            ("show", PaneTitles::Show),
+            ("hide", PaneTitles::Hide),
+            ("name", PaneTitles::Name),
+            ("other", PaneTitles::Show),
+        ] {
+            let config = Config::from_map(&map(&[("pane_titles", value)]));
+            assert_eq!(config.pane_titles, want, "{value}");
+        }
         assert!(!Config::from_map(&map(&[("update_check", " false ")])).update_check);
         assert!(Config::from_map(&map(&[("update_check", "no")])).update_check);
         assert!(defaults.problems().is_empty() && !defaults.themes_enabled());

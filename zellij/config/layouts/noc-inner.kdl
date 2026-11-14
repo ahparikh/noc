@@ -50,10 +50,10 @@ ui {
 keybinds {
     shared {
         bind "Ctrl Alt Shift F11" {
-            MessagePlugin "https://github.com/ahparikh/noc/releases/download/v0.1.3/zellij-noc.wasm" { floating true; role "relay"; name "zellij-noc.relay"; payload "theme noc-blue-away"; };
+            MessagePlugin "https://github.com/ahparikh/noc/releases/download/v0.1.4/zellij-noc.wasm" { floating true; role "relay"; name "zellij-noc.relay"; payload "theme noc-blue-away"; };
         }
         bind "Ctrl Alt Shift F12" {
-            MessagePlugin "https://github.com/ahparikh/noc/releases/download/v0.1.3/zellij-noc.wasm" { floating true; role "relay"; name "zellij-noc.relay"; payload "theme noc-blue"; };
+            MessagePlugin "https://github.com/ahparikh/noc/releases/download/v0.1.4/zellij-noc.wasm" { floating true; role "relay"; name "zellij-noc.relay"; payload "theme noc-blue"; };
         }
     }
 }

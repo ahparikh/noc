@@ -5,8 +5,7 @@ use crate::app::{PendingStop, Transport, ZellijNoc};
 use crate::guest::keyboard_signal;
 use crate::model::{parse_snapshot, Agent, AgentGroup};
 use crate::panes::{
-    centered_frame_title, compact_error, focused_pane, is_server_unavailable,
-    other_running_session, tab_panes, ScanPane,
+    compact_error, focused_pane, is_server_unavailable, other_running_session, tab_panes, ScanPane,
 };
 use crate::{ctx, now_secs, Role, State, CTX_RENAME, CTX_STOP, GRAB_WINDOW, KEY_AGENT, KEY_TITLE};
 use std::collections::BTreeMap;
@@ -532,25 +531,6 @@ impl State {
                 .app
                 .set_notice("Zellij could not open the details window"),
         }
-    }
-
-    // ---- panel title ----
-
-    /// `NOC`, centred in the frame once the width is known, whether or not
-    /// the panel has the keyboard. Renames only when the width changed.
-    pub fn sync_panel_title(&mut self) {
-        if !self.permissions_granted || self.role != Role::Panel {
-            return;
-        }
-        if self.panel_title_state == Some(self.last_cols) {
-            return;
-        }
-        self.panel_title_state = Some(self.last_cols);
-        let title = match self.last_cols {
-            Some(cols) => centered_frame_title(PANEL_TITLE, cols),
-            None => PANEL_TITLE.to_string(),
-        };
-        rename_plugin_pane(self.plugin_id, title);
     }
 
     // ---- keyboard ownership ----

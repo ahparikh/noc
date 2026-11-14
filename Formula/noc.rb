@@ -1,28 +1,28 @@
-# Written by packaging/homebrew-formula.sh when v0.1.1 was released. Do not edit.
+# Written by packaging/homebrew-formula.sh when v0.1.2 was released. Do not edit.
 class Noc < Formula
   desc "Registry and control plane for coding-agent conversations"
   homepage "https://github.com/ahparikh/noc"
-  version "0.1.1"
+  version "0.1.2"
 
   on_macos do
     on_arm do
-      url "https://github.com/ahparikh/noc/releases/download/v0.1.1/noc-darwin-arm64"
-      sha256 "ddf2577c3c943f95ea29f643d5ca67fda135e9584e61c04b4178fa4e502138b0"
+      url "https://github.com/ahparikh/noc/releases/download/v0.1.2/noc-darwin-arm64"
+      sha256 "eff25d9b2e0e017dbaada584133a3e632c565da03dee1b75a610e729f84195fc"
     end
     on_intel do
-      url "https://github.com/ahparikh/noc/releases/download/v0.1.1/noc-darwin-amd64"
-      sha256 "6be2e8851ac5efca4ca2fa1b2dd8d2c5945e2bc6d850514acc1fe5b0fb2aa511"
+      url "https://github.com/ahparikh/noc/releases/download/v0.1.2/noc-darwin-amd64"
+      sha256 "b7cff7f1a8fde8ceb2abe10ec7ef09ad95958856d851c0300504351531552589"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/ahparikh/noc/releases/download/v0.1.1/noc-linux-arm64"
-      sha256 "076512cbe366da12578fb293eeb41706628d8669e43c1e420810d646b0d95b69"
+      url "https://github.com/ahparikh/noc/releases/download/v0.1.2/noc-linux-arm64"
+      sha256 "84520d4f3719ff2f67d0c059c562e918301f3838512c98202d8e968a851b6caa"
     end
     on_intel do
-      url "https://github.com/ahparikh/noc/releases/download/v0.1.1/noc-linux-amd64"
-      sha256 "fd173a1885f5dd97713505340ed9c7e639082133b39212ee3fe1875fb781ee44"
+      url "https://github.com/ahparikh/noc/releases/download/v0.1.2/noc-linux-amd64"
+      sha256 "9c9bd91b3c62762ecadfc739d8afbc8d58ab31e2ba1d6a1e87a86b3456398d71"
     end
   end
 
@@ -42,7 +42,7 @@ class Noc < Formula
 
       The Zellij sidebar is set up once, in your own Zellij configuration,
       and loads its plugin by URL from the same release:
-        https://github.com/ahparikh/noc/releases/download/v0.1.1/zellij-noc.wasm
+        https://github.com/ahparikh/noc/releases/download/v0.1.2/zellij-noc.wasm
       See https://github.com/ahparikh/noc#zellij-sidebar
     EOS
   end

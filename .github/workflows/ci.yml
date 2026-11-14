@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - run: make check
+      - run: make build
+      - name: Isolated smoke test
+        run: docs/spec/verify/isolated-smoke.sh go/bin/noc
+
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # zellij/rust-toolchain.toml pins the toolchain, components and target.
+      - run: rustup show
+        working-directory: zellij
+      - run: make zellij-check CARGO=cargo
+      - run: make zellij CARGO=cargo

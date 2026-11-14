@@ -1,0 +1,104 @@
+// noc-host: the noc sidebar beside your own Zellij session.
+//
+// Copy to ~/.config/zellij/layouts/noc-host.kdl. From a plain terminal (not
+// inside Zellij), this one line starts the pair, or attaches to it when it
+// is already running; make it an alias:
+//
+//     zellij attach --create noc-host options --default-layout noc-host
+//
+// To end both sessions: zellij kill-session noc
+//
+// The host session has one tab: the sidebar, and a guest pane that keeps a
+// client of your own session ("noc") attached. Everything you do happens in
+// the inner session; the host only owns the keys bound at the bottom.
+
+layout {
+    pane split_direction="vertical" {
+        pane size=38 {
+            // The sidebar. The plugin is loaded from a release: Zellij
+            // downloads a URL once and keeps it, so upgrading means changing
+            // the version here and in layouts/noc-inner.kdl. Zellij asks for
+            // the plugin's permissions once per location, in the sidebar.
+            // Every setting of the sidebar is in this block.
+            plugin location="https://github.com/ahparikh/noc/releases/download/v0.1.0/zellij-noc.wasm" {
+                // The noc executable. A bare name is looked up on the PATH
+                // Zellij was started with; an absolute path always works.
+                noc_bin "noc"
+
+                // The inner session. Must match `inner=` in the guest pane
+                // below.
+                guest_session "noc"
+
+                // "nerd" for Nerd Font provider icons, "unicode" otherwise.
+                icons "unicode"
+
+                // The sidebar's colours are built in (a dark palette with a
+                // blue accent). "zellij" makes it follow your Zellij theme.
+                // colors "zellij"
+
+                // How often the sidebar reads `noc ls`, in milliseconds
+                // (250..60000).
+                poll_interval_ms "1000"
+
+                // The sidebar asks GitHub a few times a day which release is
+                // the latest and shows "↑ vX.Y.Z" in its top line when it is
+                // newer than the one loaded above. "false" turns that off.
+                update_check "true"
+
+                // Optional: dim the inner session while the sidebar has the
+                // keyboard. `home_theme` is your normal theme; `away_theme`
+                // is a copy of it whose frame_selected colour equals
+                // frame_unselected, so no pane looks focused. Set both or
+                // neither, and name the same two themes in the bindings of
+                // layouts/noc-inner.kdl. themes/noc-blue.kdl is a ready pair.
+                // home_theme "noc-blue"
+                // away_theme "noc-blue-away"
+
+                // The keys the sidebar types into the inner session to
+                // switch theme. They must match the two bindings in
+                // layouts/noc-inner.kdl. These are the defaults.
+                // away_key "Ctrl Alt Shift F11"
+                // home_key "Ctrl Alt Shift F12"
+            }
+        }
+        // The guest pane. It creates the inner session on first start, with
+        // the layout and options in layouts/noc-inner.kdl,
+        // attaches again whenever the client detaches (detaching the host
+        // with it, so one detach leaves both), and ends the host session
+        // when the inner session ends.
+        pane borderless=true focus=true command="sh" {
+            args "-c" "inner=noc; host=noc-host; unset ZELLIJ ZELLIJ_SESSION_NAME ZELLIJ_PANE_ID; while :; do zellij attach --create \"$inner\" options --default-layout noc-inner; sleep 0.5; if zellij list-sessions --no-formatting 2>/dev/null | grep -v EXITED | grep -q \"^$inner \"; then zellij --session \"$host\" action detach; sleep 1; else zellij kill-session \"$host\"; exit 0; fi; done"
+        }
+    }
+}
+
+// Options for the host session only. A layout's options and keys override
+// config.kdl for the session it starts, so nothing of noc's needs to be in
+// your config.kdl.
+session_serialization false
+show_startup_tips false
+show_release_notes false
+// The host never takes over the inner session's keys or zooms into it.
+nested_session_handling "never"
+
+// The host sees every key first. A key it does not bind is typed into the
+// focused pane unchanged, so the inner session keeps all of its own keys.
+keybinds clear-defaults=true {
+    shared {
+        // Alt m: move the keyboard to the sidebar, or back to the inner session.
+        bind "Alt m" { MessagePlugin { name "zellij-noc.grab"; payload "keyboard"; }; }
+
+        // Alt o: hide the sidebar (the guest pane goes fullscreen), or show it.
+        bind "Alt o" { FocusPreviousPane; ToggleFocusFullscreen; }
+
+        // Alt d: detach. Both sessions keep running; attach the host again
+        // with `zellij attach noc-host`.
+        bind "Alt d" { Detach; }
+
+        // Optional: keys of your inner session that should also work while
+        // the sidebar has the keyboard. Each one hands the keyboard back and
+        // types the key. Examples (Alt t = ESC t, Alt n = ESC n):
+        // bind "Alt t" { FocusPreviousPane; Write 27 116; }
+        // bind "Alt n" { FocusPreviousPane; Write 27 110; }
+    }
+}

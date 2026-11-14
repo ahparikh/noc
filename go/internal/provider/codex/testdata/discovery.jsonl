@@ -1,0 +1,11 @@
+{"id":1,"result":{"userAgent":"codex-fixture"}}
+{"id":"server-1","method":"account/chatgptAuthTokens/refresh","params":{"reason":"unauthorized"}}
+{"id":2,"result":{"data":["cli-active","vscode-idle","app-approval","exec-live","sub-live","race","error-live","custom-live","cli-active"],"nextCursor":null}}
+{"id":3,"result":{"thread":{"id":"cli-active","name":"CLI task","cwd":"/workspace/cli","source":"cli","status":{"type":"active","activeFlags":[]},"model":"gpt-6-astra","reasoningEffort":"high","createdAt":1789400000,"updatedAt":1789400010,"preview":"Build a live agent registry","path":"/private/transcript.jsonl"}}}
+{"id":4,"result":{"thread":{"id":"vscode-idle","name":"VS Code task","cwd":"/workspace/vscode/./","source":"vscode","status":{"type":"idle"},"model":"gpt-6-astra","reasoningEffort":"low","createdAt":1789400100,"updatedAt":1789400200,"preview":"  first\n\n  request  ","path":"/private/transcript.jsonl"}}}
+{"id":5,"result":{"thread":{"id":"app-approval","name":"Approval task","cwd":"/workspace/app","source":"appServer","status":{"type":"active","activeFlags":["waitingOnApproval","waitingOnUserInput"]},"createdAt":1789400300,"updatedAt":1789400310}}}
+{"id":6,"result":{"thread":{"id":"exec-live","name":"Exec task","cwd":"/workspace/exec","source":"exec","status":{"type":"active","activeFlags":[]}}}}
+{"id":7,"result":{"thread":{"id":"sub-live","name":"Sub-agent task","cwd":"/workspace/sub","source":{"subAgent":"review"},"status":{"type":"active","activeFlags":[]}}}}
+{"id":8,"result":{"thread":{"id":"race","name":"Race task","cwd":"/workspace/race","source":"cli","status":{"type":"notLoaded"}}}}
+{"id":9,"result":{"thread":{"id":"error-live","name":null,"cwd":"/workspace/error","source":"cli","status":{"type":"systemError"},"createdAt":1789400400,"updatedAt":1789400410}}}
+{"id":10,"result":{"thread":{"id":"custom-live","name":"Custom task","cwd":"/workspace/custom","source":{"custom":"hosted"},"status":{"type":"active","activeFlags":[]}}}}

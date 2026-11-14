@@ -1,0 +1,301 @@
+// noc-blue: Catppuccin Mocha for Zellij with a blue accent, and the same
+// theme with no focused frame.
+//
+// Copy to ~/.config/zellij/themes/. Use `theme "noc-blue"` in config.kdl, and
+// in the noc plugin block `home_theme "noc-blue"` with
+// `away_theme "noc-blue-away"` to dim the inner session while the sidebar
+// has the keyboard.
+//
+// Palette:
+//   base #1e1e2e  mantle #181825  surface0 #313244  surface1 #45475a
+//   text #cdd6f4  subtext0 #a6adc8  accent/blue #89b4fa
+//
+// Differs from the built-in `catppuccin-mocha` theme in one deliberate way:
+// the accent is blue, not green, so selected ribbons and frames use #89b4fa.
+// `noc-blue-away` is a copy whose focused frame has the unfocused colour.
+// Keep the two blocks in step when you change one.
+themes {
+    noc-blue {
+        // Normal UI text (status bar, tab bar background text)
+        text_unselected {
+            base 205 214 244        // text
+            background 30 30 46     // base
+            emphasis_0 250 179 135  // peach
+            emphasis_1 137 180 250  // blue
+            emphasis_2 203 166 247  // mauve
+            emphasis_3 245 194 231  // pink
+        }
+        text_selected {
+            base 205 214 244        // text
+            background 69 71 90     // surface1
+            emphasis_0 250 179 135  // peach
+            emphasis_1 137 180 250  // blue
+            emphasis_2 203 166 247  // mauve
+            emphasis_3 245 194 231  // pink
+        }
+
+        // Tab bar + mode ribbons
+        ribbon_selected {
+            base 30 30 46           // base
+            background 137 180 250  // blue -- the accent
+            emphasis_0 126 17 48    // dark maroon -- the hotkey letter, drawn
+                                    // ON the light blue `background` above, so
+                                    // mocha's red #f38ba8 lands at 1.1:1 here
+            emphasis_1 180 190 254  // lavender -- hover background for the
+                                    // clickable mode ribbons; must contrast
+                                    // with `base` above
+            emphasis_2 203 166 247  // mauve
+            emphasis_3 245 194 231  // pink
+        }
+        ribbon_unselected {
+            base 166 173 200        // subtext0
+            background 49 50 68     // surface0
+            emphasis_0 243 139 168  // red
+            emphasis_1 69 71 90     // surface1 -- zellij uses ribbon emphasis_1
+                                    // as the BACKGROUND of a mouse-hovered tab,
+                                    // so it must contrast with `base` above
+            emphasis_2 137 180 250  // blue
+            emphasis_3 245 194 231  // pink
+        }
+
+        // Pane frames
+        frame_selected {
+            base 137 180 250        // blue -- focused pane border
+            background 0
+            emphasis_0 250 179 135  // peach
+            emphasis_1 137 220 235  // sky
+            emphasis_2 245 194 231  // pink
+            emphasis_3 0
+        }
+        frame_unselected {
+            base 69 71 90           // surface1 -- dim, recedes
+            background 0
+            emphasis_0 108 112 134  // overlay0
+            emphasis_1 108 112 134  // overlay0
+            emphasis_2 108 112 134  // overlay0
+            emphasis_3 0
+        }
+        frame_highlight {
+            base 250 179 135        // peach
+            background 0
+            emphasis_0 245 194 231  // pink
+            emphasis_1 250 179 135  // peach
+            emphasis_2 250 179 135  // peach
+            emphasis_3 250 179 135  // peach
+        }
+
+        // Plugin UIs (session manager, plugin manager, strider)
+        table_title {
+            base 137 180 250        // blue
+            background 0
+            emphasis_0 250 179 135  // peach
+            emphasis_1 137 220 235  // sky
+            emphasis_2 166 227 161  // green
+            emphasis_3 245 194 231  // pink
+        }
+        table_cell_selected {
+            base 205 214 244
+            background 69 71 90     // surface1
+            emphasis_0 250 179 135
+            emphasis_1 137 180 250
+            emphasis_2 203 166 247
+            emphasis_3 245 194 231
+        }
+        table_cell_unselected {
+            base 205 214 244
+            background 30 30 46     // base
+            emphasis_0 250 179 135
+            emphasis_1 137 180 250
+            emphasis_2 203 166 247
+            emphasis_3 245 194 231
+        }
+        list_selected {
+            base 205 214 244
+            background 69 71 90     // surface1
+            emphasis_0 250 179 135
+            emphasis_1 137 180 250
+            emphasis_2 203 166 247
+            emphasis_3 245 194 231
+        }
+        list_unselected {
+            base 205 214 244
+            background 30 30 46     // base
+            emphasis_0 250 179 135
+            emphasis_1 137 180 250
+            emphasis_2 203 166 247
+            emphasis_3 245 194 231
+        }
+
+        exit_code_success {
+            base 166 227 161        // green
+            background 0
+            emphasis_0 137 220 235  // sky
+            emphasis_1 30 30 46     // base
+            emphasis_2 245 194 231  // pink
+            emphasis_3 137 180 250  // blue
+        }
+        exit_code_error {
+            base 243 139 168        // red
+            background 0
+            emphasis_0 249 226 175  // yellow
+            emphasis_1 0
+            emphasis_2 0
+            emphasis_3 0
+        }
+
+        multiplayer_user_colors {
+            player_1 203 166 247    // mauve
+            player_2 137 180 250    // blue
+            player_3 0
+            player_4 249 226 175    // yellow
+            player_5 137 220 235    // sky
+            player_6 0
+            player_7 243 139 168    // red
+            player_8 0
+            player_9 0
+            player_10 0
+        }
+    }
+
+    noc-blue-away {
+        // Normal UI text (status bar, tab bar background text)
+        text_unselected {
+            base 205 214 244        // text
+            background 30 30 46     // base
+            emphasis_0 250 179 135  // peach
+            emphasis_1 137 180 250  // blue
+            emphasis_2 203 166 247  // mauve
+            emphasis_3 245 194 231  // pink
+        }
+        text_selected {
+            base 205 214 244        // text
+            background 69 71 90     // surface1
+            emphasis_0 250 179 135  // peach
+            emphasis_1 137 180 250  // blue
+            emphasis_2 203 166 247  // mauve
+            emphasis_3 245 194 231  // pink
+        }
+
+        // Tab bar + mode ribbons
+        ribbon_selected {
+            base 30 30 46           // base
+            background 137 180 250  // blue -- the accent
+            emphasis_0 126 17 48    // dark maroon -- the hotkey letter, drawn
+                                    // ON the light blue `background` above, so
+                                    // mocha's red #f38ba8 lands at 1.1:1 here
+            emphasis_1 180 190 254  // lavender -- hover background for the
+                                    // clickable mode ribbons; must contrast
+                                    // with `base` above
+            emphasis_2 203 166 247  // mauve
+            emphasis_3 245 194 231  // pink
+        }
+        ribbon_unselected {
+            base 166 173 200        // subtext0
+            background 49 50 68     // surface0
+            emphasis_0 243 139 168  // red
+            emphasis_1 69 71 90     // surface1 -- zellij uses ribbon emphasis_1
+                                    // as the BACKGROUND of a mouse-hovered tab,
+                                    // so it must contrast with `base` above
+            emphasis_2 137 180 250  // blue
+            emphasis_3 245 194 231  // pink
+        }
+
+        // Pane frames
+        frame_selected {
+            base 69 71 90            // surface1 -- same as frame_unselected
+            background 0
+            emphasis_0 250 179 135  // peach
+            emphasis_1 137 220 235  // sky
+            emphasis_2 245 194 231  // pink
+            emphasis_3 0
+        }
+        frame_unselected {
+            base 69 71 90           // surface1 -- dim, recedes
+            background 0
+            emphasis_0 108 112 134  // overlay0
+            emphasis_1 108 112 134  // overlay0
+            emphasis_2 108 112 134  // overlay0
+            emphasis_3 0
+        }
+        frame_highlight {
+            base 250 179 135        // peach
+            background 0
+            emphasis_0 245 194 231  // pink
+            emphasis_1 250 179 135  // peach
+            emphasis_2 250 179 135  // peach
+            emphasis_3 250 179 135  // peach
+        }
+
+        // Plugin UIs (session manager, plugin manager, strider)
+        table_title {
+            base 137 180 250        // blue
+            background 0
+            emphasis_0 250 179 135  // peach
+            emphasis_1 137 220 235  // sky
+            emphasis_2 166 227 161  // green
+            emphasis_3 245 194 231  // pink
+        }
+        table_cell_selected {
+            base 205 214 244
+            background 69 71 90     // surface1
+            emphasis_0 250 179 135
+            emphasis_1 137 180 250
+            emphasis_2 203 166 247
+            emphasis_3 245 194 231
+        }
+        table_cell_unselected {
+            base 205 214 244
+            background 30 30 46     // base
+            emphasis_0 250 179 135
+            emphasis_1 137 180 250
+            emphasis_2 203 166 247
+            emphasis_3 245 194 231
+        }
+        list_selected {
+            base 205 214 244
+            background 69 71 90     // surface1
+            emphasis_0 250 179 135
+            emphasis_1 137 180 250
+            emphasis_2 203 166 247
+            emphasis_3 245 194 231
+        }
+        list_unselected {
+            base 205 214 244
+            background 30 30 46     // base
+            emphasis_0 250 179 135
+            emphasis_1 137 180 250
+            emphasis_2 203 166 247
+            emphasis_3 245 194 231
+        }
+
+        exit_code_success {
+            base 166 227 161        // green
+            background 0
+            emphasis_0 137 220 235  // sky
+            emphasis_1 30 30 46     // base
+            emphasis_2 245 194 231  // pink
+            emphasis_3 137 180 250  // blue
+        }
+        exit_code_error {
+            base 243 139 168        // red
+            background 0
+            emphasis_0 249 226 175  // yellow
+            emphasis_1 0
+            emphasis_2 0
+            emphasis_3 0
+        }
+
+        multiplayer_user_colors {
+            player_1 203 166 247    // mauve
+            player_2 137 180 250    // blue
+            player_3 0
+            player_4 249 226 175    // yellow
+            player_5 137 220 235    // sky
+            player_6 0
+            player_7 243 139 168    // red
+            player_8 0
+            player_9 0
+            player_10 0
+        }
+    }
+}

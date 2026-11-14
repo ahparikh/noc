@@ -1,0 +1,75 @@
+#!/bin/sh
+# Fake `noc` CLI for the Zellij e2e harness. Plain sh: no jq, no network.
+dir=$(cd "$(dirname "$0")/.." && pwd -P)
+out="$dir/target/e2e"
+agents="$out/agents.json"
+
+# One agent object per line, so `show` can pick a line with grep.
+snapshot() {
+	cat <<'JSON'
+{"schema_version":1,"generated_at":"2026-10-01T12:00:06Z","agents":[
+{"schema_version":1,"id":"agent-e2e","host_id":"host-e2e","provider":"codex","native_session_id":"codex-session-e2e","name":"E2E agent","source_kind":"cli","live_state":"live","runtime_state":"running","activity_state":"idle","attention":{"type":"none"},"display_state":"idle","bucket":"quiet","initial_request":{"text":"Check the e2e fixture","source":"codex_app_server_preview","observed_at":"2026-10-01T12:00:05Z"},"first_seen_at":"2026-10-01T11:00:01Z","last_seen_at":"2026-10-01T12:00:05Z","last_activity_at":"2026-10-01T12:00:00Z","workspace":{"path":"/tmp","root_path":"/tmp","kind":"unknown","owner":"unknown","observed_at":"2026-10-01T12:00:05Z"}},
+{"schema_version":1,"id":"agent-two","host_id":"host-e2e","provider":"claude","native_session_id":"5e55a2b0-0000-4000-8000-000000000002","native_short_id":"5e55a2b0","name":"Second agent","source_kind":"background","live_state":"live","runtime_state":"running","activity_state":"idle","attention":{"type":"none"},"display_state":"idle","bucket":"quiet","initial_request":{"text":"Second request","source":"hook_first_observed_user_prompt","observed_at":"2026-10-01T12:00:05Z"},"first_seen_at":"2026-10-01T11:00:02Z","last_seen_at":"2026-10-01T12:00:05Z","last_activity_at":"2026-10-01T12:00:00Z","workspace":{"path":"/tmp","root_path":"/tmp","kind":"unknown","owner":"unknown","observed_at":"2026-10-01T12:00:05Z"}}
+]}
+JSON
+}
+
+source_file() {
+	if [ -f "$agents" ]; then cat "$agents"; else snapshot; fi
+}
+
+case "${1:-}" in
+ls)
+	source_file
+	;;
+search)
+	# search --json -- <query>: the agents whose line contains the query.
+	printf '{"schema_version":1,"generated_at":"2026-10-01T12:00:06Z","agents":[\n'
+	source_file | grep '"id":' | grep -i -F -- "${4:-}" | sed 's/,$//' | paste -s -d , -
+	printf ']}\n'
+	;;
+show)
+	# show --json <id>
+	id=$3
+	line=$(source_file | grep -F "\"id\":\"$id\"" | head -n 1 | sed 's/,$//')
+	if [ -z "$line" ]; then
+		echo "noc server: agent was not found"
+		exit 1
+	fi
+	printf '%s\n' "$line"
+	;;
+rename)
+	mkdir -p "$out"
+	echo "$*" >>"$out/renames.log"
+	echo "Named $2 \"$3\"."
+	;;
+stop)
+	echo "stopped $2"
+	;;
+attach)
+	case "${2:-}" in
+	agent-e2e | agent-two)
+		echo "attached $2"
+		if [ -t 0 ]; then
+			while read -r line; do
+				case "$line" in
+				"exit "*)
+					exit "${line#exit }"
+					;;
+				esac
+			done
+		else
+			while :; do sleep 3600; done
+		fi
+		;;
+	*)
+		echo "noc: refusing to attach ${2:-}"
+		exit 1
+		;;
+	esac
+	;;
+*)
+	echo "unexpected test command: $*"
+	exit 2
+	;;
+esac

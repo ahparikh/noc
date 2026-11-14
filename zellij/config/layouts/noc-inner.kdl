@@ -1,0 +1,59 @@
+// noc-inner: what your own session looks like when it runs inside the noc
+// pair, and only then.
+//
+// Copy to ~/.config/zellij/layouts/noc-inner.kdl. The guest pane of
+// noc-host.kdl creates the inner session ("noc") with this layout. Sessions
+// you start any other way never read this file, so the options below do not
+// change them.
+
+// The first tab. This is Zellij's default layout; change it freely.
+layout {
+    pane size=1 borderless=true {
+        plugin location="tab-bar"
+    }
+    pane
+    pane size=1 borderless=true {
+        plugin location="status-bar"
+    }
+}
+
+// Options for the inner session only. Anything that config.kdl accepts can go
+// here, and it overrides config.kdl for this one session. They are read when
+// the session is created: to apply a change, end the pair (`zellij kill-session noc`) and
+// start it again.
+
+// The tab bar's "[ N running ]" box with the other sessions and the inbox.
+// The sidebar already lists what needs you.
+session_indicator false
+
+// Zellij's own tracking of what panes need: the markers on frames and tabs,
+// the inbox, the session card and desktop notifications. The sidebar does
+// this for agents.
+attention {
+    enabled false
+}
+
+ui {
+    pane_frames {
+        // "Zellij (noc)" in the tab bar becomes "Zellij", and the session
+        // name leaves the focused pane's frame.
+        hide_session_name true
+    }
+}
+
+// Typed by the sidebar, never by you: switch this session's theme when the
+// keyboard leaves it for the sidebar and when it comes back. They do nothing
+// unless home_theme and away_theme are set in layouts/noc-host.kdl; name the
+// same two themes here. The keys must match away_key and home_key there, and
+// the plugin location must be the one loaded there. These bindings are added
+// to your own; none of yours is replaced.
+keybinds {
+    shared {
+        bind "Ctrl Alt Shift F11" {
+            MessagePlugin "https://github.com/ahparikh/noc/releases/download/v0.1.0/zellij-noc.wasm" { floating true; role "relay"; name "zellij-noc.relay"; payload "theme noc-blue-away"; };
+        }
+        bind "Ctrl Alt Shift F12" {
+            MessagePlugin "https://github.com/ahparikh/noc/releases/download/v0.1.0/zellij-noc.wasm" { floating true; role "relay"; name "zellij-noc.relay"; payload "theme noc-blue"; };
+        }
+    }
+}

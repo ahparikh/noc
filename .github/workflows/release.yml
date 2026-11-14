@@ -1,0 +1,45 @@
+name: release
+
+# Pushing a tag vX.Y.Z builds and publishes the release: the noc binary for
+# each platform, the Zellij plugin, and checksums. It then points the
+# Homebrew formula on main at that release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - run: rustup show
+        working-directory: zellij
+      - run: make check
+      - run: make zellij-check CARGO=cargo
+      - run: make dist VERSION="$GITHUB_REF_NAME" CARGO=cargo
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
+      # The repository is its own Homebrew tap: Formula/noc.rb on main names
+      # the release that was just published.
+      - name: Update the Homebrew formula
+        run: |
+          packaging/homebrew-formula.sh "$GITHUB_REF_NAME" dist/checksums.txt > "$RUNNER_TEMP/noc.rb"
+          git fetch origin main
+          git checkout -B main origin/main
+          mkdir -p Formula
+          cp "$RUNNER_TEMP/noc.rb" Formula/noc.rb
+          git add Formula/noc.rb
+          if git diff --cached --quiet; then exit 0; fi
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -m "Formula: noc $GITHUB_REF_NAME"
+          git push origin main

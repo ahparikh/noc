@@ -34,6 +34,10 @@ type HookWakeFunc func()
 type Handler struct {
 	reader        registry.Reader
 	namer         registry.Namer
+	teams         registry.TeamStore
+	store         registry.Store
+	hostID        string
+	inspector     WorkspaceInspector
 	forgetter     registry.Forgetter
 	events        registry.EventReader
 	health        HealthFunc
@@ -48,6 +52,8 @@ type Handler struct {
 func NewHandler(reader registry.Reader, health HealthFunc, wake ...HookWakeFunc) *Handler {
 	h := &Handler{reader: reader, health: health, watchInterval: defaultWatchInterval}
 	h.namer, _ = reader.(registry.Namer)
+	h.teams, _ = reader.(registry.TeamStore)
+	h.store, _ = reader.(registry.Store)
 	h.forgetter, _ = reader.(registry.Forgetter)
 	h.events, _ = reader.(registry.EventReader)
 	if len(wake) > 0 {
@@ -127,7 +133,13 @@ func (h *Handler) list(ctx context.Context, includeNotLive bool) (apiv1.AgentLis
 }
 
 func (h *Handler) handleAgents(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodGet) {
+	if r.Method == http.MethodPost {
+		h.handleSpawn(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET, POST")
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		return
 	}
 	list, err := h.list(r.Context(), r.URL.Query().Get("all") == "true")
@@ -234,6 +246,8 @@ func (h *Handler) handleAgent(w http.ResponseWriter, r *http.Request) {
 			h.handleAgentEvents(w, r, id)
 		case "name":
 			h.handleAgentName(w, r, id)
+		case "team":
+			h.handleAgentTeam(w, r, id)
 		default:
 			writeError(w, http.StatusNotFound, "endpoint_not_found", "endpoint was not found")
 		}

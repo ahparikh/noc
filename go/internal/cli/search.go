@@ -20,6 +20,9 @@ type searchQuery struct {
 	// Bounds on the time since the agent's last activity; zero is unset.
 	olderThan time.Duration
 	newerThan time.Duration
+	// Lower-cased team names from "team:<name>" words; the agent must be in
+	// each (so two different names match nothing). "none" is no team.
+	teams []string
 }
 
 const (
@@ -78,6 +81,10 @@ func parseSearchQuery(words []string, older, newer string) (searchQuery, error) 
 					continue
 				}
 			}
+			if rest, ok := strings.CutPrefix(word, teamPrefix); ok && rest != "" {
+				query.teams = append(query.teams, rest)
+				continue
+			}
 			query.terms = append(query.terms, word)
 		}
 	}
@@ -91,7 +98,7 @@ func parseSearchQuery(words []string, older, newer string) (searchQuery, error) 
 // agentSearchText is everything about an agent that text can match.
 func agentSearchText(agent apiv1.Agent) string {
 	parts := []string{
-		agent.ID, agent.UserName, agent.Name, string(agent.Provider),
+		agent.ID, agent.UserName, agent.Name, agent.Team, string(agent.Provider),
 		agent.NativeSessionID, agent.NativeShortID, agent.Model,
 		string(agent.DisplayState), string(agent.Bucket),
 		agent.Summary, agent.Attention.Detail,
@@ -112,6 +119,14 @@ func (q searchQuery) matches(agent apiv1.Agent, now time.Time) bool {
 	}
 	if q.newerThan > 0 && age > q.newerThan {
 		return false
+	}
+	for _, team := range q.teams {
+		if team == apiv1.NoTeam {
+			team = ""
+		}
+		if strings.ToLower(agent.Team) != team {
+			return false
+		}
 	}
 	if len(q.terms) == 0 {
 		return true
@@ -157,9 +172,18 @@ func renderSearchResults(w io.Writer, agents []apiv1.Agent, now time.Time) {
 		return
 	}
 	table := newTable(w)
-	fmt.Fprintln(table, "ID\tPROVIDER\tBUCKET\tSTATE\tAGE\tWORKSPACE\tNAME")
+	teams := anyInTeam(agents)
+	if teams {
+		fmt.Fprintln(table, "ID\tTEAM\tPROVIDER\tBUCKET\tSTATE\tAGE\tWORKSPACE\tNAME")
+	} else {
+		fmt.Fprintln(table, "ID\tPROVIDER\tBUCKET\tSTATE\tAGE\tWORKSPACE\tNAME")
+	}
 	for _, agent := range agents {
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", agent.ID, agent.Provider, agent.Bucket,
+		fmt.Fprintf(table, "%s\t", agent.ID)
+		if teams {
+			fmt.Fprintf(table, "%s\t", teamCell(agent))
+		}
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n", agent.Provider, agent.Bucket,
 			agent.DisplayState, formatAge(now.Sub(agentRecency(agent))),
 			dash(agentWorkspacePath(agent)), dash(agentDisplayName(agent)))
 	}
@@ -178,11 +202,17 @@ func runSearch(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	older := fs.String("older-than", "", "last active at least this long ago: days, or 14d, 2w, 36h")
 	newer := fs.String("newer-than", "", "last active within this long: days, or 14d, 2w, 36h")
 	bucketFlag := fs.String("bucket", "", "comma-separated buckets: blocked, working, review, quiet")
+	teamFlag := fs.String("team", "", "keep one team's agents, or none for agents in no team")
 	socket := fs.String("socket", paths.SocketPath, "server socket")
 	if code, stop := parseFlags(fs, args); stop {
 		return code
 	}
 	buckets, err := parseBuckets(*bucketFlag)
+	if err != nil {
+		fmt.Fprintf(stderr, "noc search: %v\n", err)
+		return 2
+	}
+	team, err := parseTeamFilter(*teamFlag)
 	if err != nil {
 		fmt.Fprintf(stderr, "noc search: %v\n", err)
 		return 2
@@ -202,7 +232,7 @@ func runSearch(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		return printServerError(stderr, err)
 	}
 	now := time.Now()
-	list.Agents = searchAgents(filterBuckets(list.Agents, buckets), query, now)
+	list.Agents = searchAgents(filterTeam(filterBuckets(list.Agents, buckets), team), query, now)
 	sortByBucket(list.Agents)
 	if *asJSON {
 		return writeJSON(stdout, stderr, list)

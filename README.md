@@ -54,6 +54,9 @@ noc show <id>
 noc attach <id>             # open the provider's own UI on an agent
 noc rename <id> <name>
 noc stop <id>
+noc spawn --team auth "fix the login tests"   # start a background Claude agent
+noc team set auth <id>...   # put existing agents in a team
+noc teams                   # each team, its lead, and what needs you
 noc ls --json               # the contract frontends read
 ```
 

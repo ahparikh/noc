@@ -45,6 +45,7 @@ func isolate(t *testing.T) string {
 	t.Setenv("NOC_CODEX_BIN", "/usr/bin/false")
 	t.Setenv("NOC_CODEX_SOCKET", filepath.Join(dir, "no-codex.sock"))
 	t.Setenv("NOC_AGENT_ID", "")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	t.Setenv("NOC_INTERNAL_SERVER_READY_FD", "")
 	os.Unsetenv("NOC_INTERNAL_SERVER_READY_FD")
 	t.Setenv("ZELLIJ", "")

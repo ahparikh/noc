@@ -138,6 +138,9 @@ type Agent struct {
 	NativeSessionID     string                `json:"native_session_id"`
 	NativeShortID       string                `json:"native_short_id,omitempty"`
 	UserName            string                `json:"user_name,omitempty"`
+	Team                string                `json:"team,omitempty"`
+	Lead                bool                  `json:"lead,omitempty"`
+	ParentID            string                `json:"parent_id,omitempty"`
 	Name                string                `json:"name,omitempty"`
 	SourceKind          string                `json:"source_kind,omitempty"`
 	Origin              string                `json:"origin,omitempty"`
@@ -175,6 +178,75 @@ type Agent struct {
 // An empty name clears the override.
 type AgentNameUpdate struct {
 	Name string `json:"name"`
+}
+
+// NoTeam is the reserved word that means "in no team" wherever a team name
+// is accepted. It is never a team's name.
+const NoTeam = "none"
+
+// MaxTeamNameLength bounds a team name.
+const MaxTeamNameLength = 48
+
+// ValidTeamName reports whether name can name a team: 1 to 48 characters
+// from A-Za-z0-9._-, not starting with '-' or '.', and not "none".
+func ValidTeamName(name string) bool {
+	if name == "" || len(name) > MaxTeamNameLength || name == NoTeam {
+		return false
+	}
+	if name[0] == '-' || name[0] == '.' {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '.', c == '_', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// AgentTeamUpdate is the request body for PUT /v1/agents/{id}/team. An empty
+// team takes the agent out of its team. Lead marks the agent as the lead of
+// the team named, which it must already be in.
+type AgentTeamUpdate struct {
+	Team string `json:"team"`
+	Lead bool   `json:"lead,omitempty"`
+}
+
+// AgentSpawn is the request body for POST /v1/agents: the registration of a
+// provider session the caller is about to start. The server never starts it.
+type AgentSpawn struct {
+	Provider        Provider `json:"provider"`
+	NativeSessionID string   `json:"native_session_id"`
+	// Team is a team name, "none" for no team, or empty to inherit the
+	// parent's team.
+	Team      string `json:"team,omitempty"`
+	ParentID  string `json:"parent_id,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Directory string `json:"directory,omitempty"`
+	Prompt    string `json:"prompt,omitempty"`
+}
+
+// Team is one row of `noc teams`: a summary computed from the agents that
+// carry the team's name. The row for agents in no team has an empty name.
+type Team struct {
+	Name     string `json:"team"`
+	LeadID   string `json:"lead_id,omitempty"`
+	LeadName string `json:"lead_name,omitempty"`
+	Agents   int    `json:"agents"`
+	Blocked  int    `json:"blocked"`
+	Working  int    `json:"working"`
+	Review   int    `json:"review"`
+	Quiet    int    `json:"quiet"`
+}
+
+// TeamList is what `noc teams --json` writes.
+type TeamList struct {
+	SchemaVersion int       `json:"schema_version"`
+	GeneratedAt   time.Time `json:"generated_at"`
+	Teams         []Team    `json:"teams"`
 }
 
 // ProviderNameSync reports whether a rename reached the provider.

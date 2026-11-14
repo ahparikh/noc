@@ -124,17 +124,17 @@ Remote attach assumes background agents, which is what `noc spawn`
 - **A "we are done" flow in the skill:** the agent settles its own worktree
   and branch, then records completion. Teardown belongs to the agent, which
   knows what is unpushed; `noc` never touches Git.
-- **Spawn, interrupt, and archive.** A spawn request describes intent:
-  provider, host, prompt or issue reference, starting directory, an
-  isolation preference, and an optional parent. The owning node invokes a
-  supported provider interface, and ordinary hooks and reconciliation
-  confirm the result. Spawning needs quotas, idempotency, cancellation, and
-  clear diagnostics, and never becomes the only way to start a session.
-- **Cells:** a named set of agents that work together, with a handler that
-  runs it; in Zellij, a session per cell and a tab per agent. Specified, as
-  a first draft, in [spec/11-cells.md](spec/11-cells.md).
-- **Durable children:** parent/child relationships between top-level agents,
-  and links to external work items.
+- **More of spawn, then interrupt and archive.** `noc spawn` starts a
+  background Claude agent today. Still to come: Codex, a host, an issue
+  reference, an isolation preference, quotas, idempotency and cancellation.
+  Spawning never becomes the only way to start a session.
+- **A Zellij view of a team.** Teams, their leads and the sidebar's team
+  grouping are built. What is left is a place to see one team's agents
+  together, such as a session per team with a tab per agent. A first
+  draft is in [spec/11-teams.md](spec/11-teams.md).
+- **More of durable children:** `parent_id` records which agent spawned an
+  agent. Still to come: a view of the tree, and links to external work
+  items.
 - **A warning** when several agents write to one workspace at once.
 
 ### 6. More frontends, history, and providers

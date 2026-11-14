@@ -66,7 +66,9 @@ changes (D-005).
 | Retention: 14-day prune, named-row protection, unprompted-row drop | [04](04-server.md) |
 | Read-only Git workspace classification | [04](04-server.md) |
 | Versioned HTTP/JSON API over a user-only Unix socket, including the NDJSON watch stream | [02](02-api.md) |
-| `ls`, `show`, `watch`, `events`, `rename`, `forget`, `attach`, `stop` | [03](03-cli.md) |
+| `ls`, `search`, `show`, `watch`, `events`, `rename`, `forget`, `attach`, `stop` | [03](03-cli.md) |
+| Teams: a name agents share, with an optional lead; `noc team set\|clear\|lead`, `noc teams`, `--team` filters | [02](02-api.md), [03](03-cli.md) |
+| `noc spawn`: starts a background Claude session from the CLI process and registers its team and parent | [03](03-cli.md), [02](02-api.md) |
 | Buckets `blocked`/`working`/`review`/`quiet` as registry state | [02](02-api.md) |
 | Two-way names (Codex `thread/name/set`; Claude overlay only) | [02](02-api.md), [05](05-providers.md) |
 | `noc setup [--check\|--uninstall]`, `noc doctor` | [06](06-hooks.md) |
@@ -90,11 +92,13 @@ agent skill; that is part of M4.
 ### 2.3 Explicitly out of scope
 
 History import/browsing; Claude Cloud / Codex Cloud sessions; provider
-subagents; agent spawning, objectives (`noc objective`), interrupt,
-archive; Git/worktree/branch/PR management of any kind; launchd/systemd
-service installation; multi-user access control; third-party provider
-plugins. History, cloud, spawning, objectives, and Git/PR management require
-an explicit scope change recorded in [`docs/DECISIONS.md`](../DECISIONS.md).
+subagents; spawning Codex agents, and spawning from the server; objectives
+(`noc objective`), interrupt, archive; Git/worktree/branch/PR management of
+any kind; launchd/systemd service installation; multi-user access control;
+third-party provider plugins. History, cloud, objectives, and Git/PR
+management require an explicit scope change recorded in
+[`docs/DECISIONS.md`](../DECISIONS.md). Spawning a Claude agent from the CLI
+is in scope (D-076).
 
 ## 3. System invariants
 
@@ -109,11 +113,16 @@ requirement says so and the gap is repeated under
   terminal multiplexer. `noc attach` MUST run the provider's own command
   as a child process wired to the caller's terminal (`exec.CommandContext`,
   not a noc-owned PTY); the server MUST NOT spawn provider conversation
-  processes. Discovery may run only bounded, read-only provider query
-  commands (`claude agents --json`, `codex app-server proxy` fallback).
-- **Decision:** D-002
-- **Verified by:** Code review of `go/internal/attach` and `go/internal/server`
-  (no PTY code exists). See [03](03-cli.md) ATT-*, [04](04-server.md) SRV-*.
+  processes. `noc spawn` starts a provider session only from the CLI process
+  the user or an agent ran, by the provider's own background command, and
+  the server only records it ([03](03-cli.md) CLI-046). Discovery may run
+  only bounded, read-only provider query commands (`claude agents --json`,
+  `codex app-server proxy` fallback).
+- **Decision:** D-002, D-076
+- **Verified by:** Code review of `go/internal/attach`, `go/internal/cli` and
+  `go/internal/server` (no PTY code exists, and no provider command is run
+  by the server other than discovery). See [03](03-cli.md) ATT-*, CLI-046,
+  [04](04-server.md) SRV-*.
 
 #### INV-002 Fail-open toward providers
 - **Behavior:** A missing, broken, or stopped `noc server`, a corrupt
@@ -311,8 +320,13 @@ requirement says so and the gap is repeated under
    change.
 5. **Act ([03](03-cli.md)):** `attach`/`stop` plan provider argv in the CLI
    process (no server round-trip for execution); `rename` goes through the
-   server, which writes `user_name` and pushes to Codex.
-6. **Zellij ([07](07-zellij-panel.md), [08](08-zellij-host.md)):** the static
+   server, which writes `user_name` and pushes to Codex; `team` writes an
+   agent's team and lead through the server.
+6. **Spawn ([03](03-cli.md) → [02](02-api.md)):** `noc spawn` runs
+   `claude --bg` in the CLI process, reads the new session's ID from Claude's
+   roster, and registers it with the server, which gives the agent its team
+   and parent (origin `spawn` when no hook or snapshot saw it first).
+7. **Zellij ([07](07-zellij-panel.md), [08](08-zellij-host.md)):** the static
    layout `noc-host.kdl` starts the outer session `noc-host` with the sidebar
    plugin beside a pane that attaches the user's session `noc`. The plugin is
    declared once, with its settings, in the host layout

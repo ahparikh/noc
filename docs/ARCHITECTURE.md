@@ -362,6 +362,7 @@ for other Go programs. Field-level definitions are in
 |---|---|---|
 | Identity | `id`, `host_id`, `provider`, `native_session_id`, `native_short_id` | The short ID is a provider alias used by attach and stop |
 | Names | `user_name`, `name` | User-assigned and provider-reported; see [Names](#names) |
+| Team | `team`, `lead`, `parent_id` | The team the agent is in, whether it leads it, and the agent that spawned it; see [Teams](#teams) |
 | Provenance | `source_kind`, `origin` | Provider's session kind (`interactive`, `background`, `cli`, `vscode`, `appServer`); whether a hook or a snapshot first created the row |
 | State | `live_state`, `runtime_state`, `activity_state`, `attention`, `display_state`, `bucket` | As above |
 | Model | `model`, `reasoning_effort`, each with source and observation time | Present when a supported surface exposes them |
@@ -416,6 +417,22 @@ later reports a name different from the one it reported before, the session
 was renamed from inside and `user_name` is cleared. Claude reports a
 session's ID as its name until the session is named; that placeholder is
 treated as no name.
+
+## Teams
+
+Agents that work together carry the same team name, and one of them may be
+its lead. A team has no record of its own: it exists while an agent carries
+its name. `noc team set`, `noc team clear` and `noc team lead` change it,
+`noc teams` summarises it, and `--team` filters `noc ls`, `noc search` and
+`noc watch`. Like `user_name`, the team, the lead mark and the parent are
+stored beside the provider's snapshot, so hooks and reconciliation cannot
+erase them.
+
+`noc spawn` starts a background Claude agent and records its team and the
+agent that spawned it. The CLI runs the provider; the server only records
+the result. An agent spawned from inside a team joins that team, and an
+agent in no team that names a team for its first worker becomes that team's
+lead. Details are in [`spec/03-cli.md`](spec/03-cli.md).
 
 ## Attach and stop
 

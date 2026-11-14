@@ -814,6 +814,60 @@ the conversations worth returning to.
 **Consequence:** this is presentation in the plugin (D-046); the registry
 keeps the rows under D-041.
 
+### D-070: the sidebar groups by status or by team
+
+`group_by` and the `v` key choose how the sidebar groups its rows: by
+status (the default) or by team. Grouping by machine and by provider is
+planned with remote nodes (spec/10-remote-nodes.md).
+
+**Why:** the same list answers different questions: what needs me, and who
+is working on what together.
+**Consequence:** grouping is a view over the same rows; colours and
+symbols keep meaning the agent's state in every grouping.
+
+### D-071: a team is a name agents share, with a lead
+
+Agents that work together carry the same team name, and one of them may be
+marked its lead. A team has no record of its own: it exists while any agent
+carries its name. The name is stored beside the agent like `user_name`, so
+hooks and reconciliation cannot erase it. An agent spawned from inside a
+team joins it, and an agent in no team that spawns the first member of a
+team with no lead joins that team and leads it. How an agent was started
+(its parent) is recorded separately and never changes.
+
+**Why:** a shared name needs no coordination, so a team can later span
+machines without a registry of teams. Inheritance means an orchestrator
+gets a team by naming it once. "Workspace" already means an agent's
+directory, so the set needed its own word.
+**Consequence:** renaming a team means setting the new name on each agent.
+A team disappears when its last agent is forgotten or pruned.
+
+### D-076: `noc spawn` runs the provider from the CLI, and reads its session back
+
+`noc spawn` starts a background Claude session with `claude --bg`, in the
+CLI process and with the caller's directory. The server never starts a
+provider: it only records the session's team, parent and name
+(`POST /v1/agents`). Claude chooses the session ID, so `noc spawn` finds it
+in Claude's roster by the job ID that `claude --bg` printed, and registers
+the agent after the session exists. The session starts with
+`--permission-mode auto`; everything after `--` is passed to Claude
+unchanged and can override it. Codex is not supported yet.
+
+The calling agent is the one whose Claude session ID is in
+`CLAUDE_CODE_SESSION_ID`, then `NOC_AGENT_ID`, then the agent whose provider
+process is an ancestor of the command.
+
+**Why:** the control-plane rule (D-021) holds only if the server starts
+nothing, and a spawn should run as the caller, where the caller is.
+`claude --bg` ignores `--session-id`, so the ID cannot be chosen up front.
+A background session does not inherit the caller's environment, so
+`NOC_AGENT_ID` cannot identify a spawned agent; Claude's own session
+variable can. Auto mode keeps a background agent from stopping at its first
+permission prompt, and it was chosen for that.
+**Consequence:** a spawn has no quota, idempotency key or worktree of its
+own. If the roster does not list the session, `noc spawn` reports it and
+the session runs without a team or parent.
+
 ## Attach and stop
 
 ### D-038: attach refuses only what would fork a conversation
@@ -968,52 +1022,26 @@ agents from stale ones.
 
 Attaching to a remote agent is `ssh -t <alias> noc attach <id>`, and is
 specified for agents the provider runs in the background, which survive
-the connection that views them. `noc spawn` will create such agents.
+the connection that views them. `noc spawn` creates such agents (D-076).
 
 **Why:** `noc` is not a runtime and does not keep terminals alive; a
 background agent needs none.
 **Consequence:** a remote agent that lives in someone's terminal is not
 given a new home by attaching to it.
 
-### D-070: the sidebar can group by status, machine or provider *(planned)*
+### D-072: one room per team, one room on show *(planned)*
 
-`group_by` and the `v` key choose between the status groups across all
-machines (the default), one group per machine, and one per provider.
-
-**Why:** with several machines the same list answers different questions:
-what needs me, what is on that box, what is Codex doing.
-**Consequence:** grouping is a view over the same rows; colours and
-symbols keep meaning the agent's state in every grouping.
-
-### D-071: a cell is a name agents share, run by a handler *(planned)*
-
-Agents that work together carry the same cell name; one of them may be
-marked its handler. A cell has no record of its own and exists while any
-agent carries its name. An agent spawned from inside a cell joins it, and
-an agent that spawns the first member of a new cell becomes its handler.
-How an agent was started (its parent) is recorded separately.
-
-**Why:** a shared name needs no coordination between machines, so a cell
-can span nodes. Inheritance means an orchestrator gets a cell by naming it
-once. "Workspace" already means an agent's directory, so the set needed its
-own word; a cell is a small group of operatives on one task, and a handler
-is who runs them.
-**Consequence:** renaming a cell means renaming it on each agent. Two
-handlers can appear when nodes are merged; the first seen wins.
-
-### D-072: one room per cell, one room on show *(planned)*
-
-In Zellij each cell has its own inner session, a room, and the host
-session's guest pane shows one room at a time. Agents in no cell use the
-default room, which is today's inner session.
+In Zellij each team would have its own inner session, a room, and the host
+session's guest pane would show one room at a time. Agents in no team would
+use the default room, which is today's inner session. This is not designed
+in detail yet; see spec/11-teams.md.
 
 **Why:** each piece of work gets its own tabs and layout, and moving
 between pieces of work is one step instead of a search through tabs. The
-sidebar still lists every cell, because what needs attention anywhere is
+sidebar still lists every team, because what needs attention anywhere is
 its purpose.
-**Consequence:** this replaces "one inner session" (D-055) with "one room
-on show". The panel keeps its knowledge of the inner session per room and
-reads only the room on show.
+**Consequence:** this would replace "one inner session" (D-055) with "one
+room on show".
 
 ### D-073: a tab is one agent, and its panes are ways into it *(planned)*
 
@@ -1021,11 +1049,11 @@ An agent has one tab. The other panes in that tab, such as a shell in its
 worktree, belong to that agent. An agent's tab is found wherever it is
 open, it is never moved between rooms, and it outlives the agent.
 
-**Why:** a tab bar of agents is a readable picture of a cell, and the shell
+**Why:** a tab bar of agents is a readable picture of a team, and the shell
 beside an agent is the one you want when you look at it. Zellij cannot move
 a tab between sessions, and a tab may hold work worth keeping after the
 agent is gone.
-**Consequence:** changing an agent's cell changes where it is listed, not
+**Consequence:** changing an agent's team changes where it is listed, not
 where it is open. Two agents side by side in one tab is still allowed, and
 such a tab belongs to neither.
 
@@ -1064,7 +1092,9 @@ Not decided, and not blocking current work:
 - Whether the first hub stays the hub or an always-on host takes the role.
 - Provider-neutral semantics for moving an existing session into a newly
   created worktree.
-- Spawn quotas and authorization.
+- Spawn quotas and authorization, and spawning Codex agents.
+- How Zellij shows a team: a session per team or something else
+  (spec/11-teams.md).
 - Mailbox retention, acknowledgement, and offline delivery.
 - A process protocol for third-party provider adapters.
 - Multi-user access control.

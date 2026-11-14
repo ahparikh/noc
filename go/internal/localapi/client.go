@@ -83,6 +83,38 @@ func (c *Client) SetAgentName(ctx context.Context, id, name string) (apiv1.Agent
 	return result.Agent, err
 }
 
+// SetAgentTeam puts the agent in team; an empty team takes it out.
+func (c *Client) SetAgentTeam(ctx context.Context, id, team string) (apiv1.Agent, error) {
+	return c.putTeam(ctx, id, apiv1.AgentTeamUpdate{Team: team})
+}
+
+// SetTeamLead marks the agent, which must be in team, as the team's lead.
+func (c *Client) SetTeamLead(ctx context.Context, id, team string) (apiv1.Agent, error) {
+	return c.putTeam(ctx, id, apiv1.AgentTeamUpdate{Team: team, Lead: true})
+}
+
+func (c *Client) putTeam(ctx context.Context, id string, update apiv1.AgentTeamUpdate) (apiv1.Agent, error) {
+	body, err := json.Marshal(update)
+	if err != nil {
+		return apiv1.Agent{}, fmt.Errorf("encode agent team: %w", err)
+	}
+	var out apiv1.Agent
+	_, err = c.doJSON(ctx, http.MethodPut, "/v1/agents/"+url.PathEscape(id)+"/team", body, &out)
+	return out, err
+}
+
+// RegisterSpawn records a provider session the caller is about to start and
+// returns its agent.
+func (c *Client) RegisterSpawn(ctx context.Context, spawn apiv1.AgentSpawn) (apiv1.Agent, error) {
+	body, err := json.Marshal(spawn)
+	if err != nil {
+		return apiv1.Agent{}, fmt.Errorf("encode spawned agent: %w", err)
+	}
+	var out apiv1.Agent
+	_, err = c.doJSON(ctx, http.MethodPost, "/v1/agents", body, &out)
+	return out, err
+}
+
 func (c *Client) ForgetAgent(ctx context.Context, id string) error {
 	_, err := c.doJSON(ctx, http.MethodDelete, "/v1/agents/"+url.PathEscape(id), nil, nil)
 	return err

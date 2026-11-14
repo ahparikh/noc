@@ -50,6 +50,8 @@ environment lacks the interactive `PATH` should set them.
 | Lifecycle hooks in `settings.json` | Low-latency events and interactive sessions |
 | `claude attach <short-id>`, `claude --bg --resume <session-id>` | `noc attach` |
 | `claude stop <short-id>` | `noc stop` |
+| `claude --bg --permission-mode auto <prompt>`, then `claude agents --json --all` | `noc spawn`: start a background session, then find its session ID by the job ID Claude printed |
+| `CLAUDE_CODE_SESSION_ID` in the environment of a session's commands | Which agent a `noc` command is run by |
 
 References: [agent view and JSON roster](https://code.claude.com/docs/en/agent-view),
 [hooks](https://code.claude.com/docs/en/hooks-guide),
@@ -156,6 +158,14 @@ never read or stored.
   the daemon's environment, including whatever pane the daemon was first
   started from. Bindings from those hooks would point at the wrong pane, so
   background sessions carry none.
+- **`claude --bg` chooses the session ID.** `--session-id` is ignored with
+  `--bg`, so `noc spawn` learns the ID from the roster entry whose job ID
+  Claude printed. A directory Claude does not trust makes `claude --bg` exit
+  with a message, which `noc spawn` relays.
+- **A background session does not inherit its starter's environment.**
+  `NOC_AGENT_ID` therefore does not reach a spawned agent. Claude sets
+  `CLAUDE_CODE_SESSION_ID` for the commands a session runs, and that is how
+  `noc` tells which agent ran `noc spawn` or `noc team`.
 - **A running session cannot be renamed from outside.** `noc rename` on a
   Claude agent stays a `noc`-side label, and the rename response says so.
 - **Hooks can be disabled** by safe or bare modes or by organization policy.

@@ -46,6 +46,21 @@ type Namer interface {
 	SetUserName(ctx context.Context, id, name string) (apiv1.Agent, error)
 }
 
+// ErrNoTeam is returned when an agent that is in no team is marked lead.
+var ErrNoTeam = errors.New("agent is not in a team")
+
+// TeamStore records which team an agent is in and who leads it.
+type TeamStore interface {
+	// SetTeam puts the agent in team, moving it out of any other; an empty
+	// team takes it out. An agent whose team changes stops being a lead.
+	SetTeam(ctx context.Context, id, team string) (apiv1.Agent, error)
+	// SetLead marks the agent as the lead of the team it is in, clearing any
+	// other lead of that team. ErrNoTeam when it is in none.
+	SetLead(ctx context.Context, id string) (apiv1.Agent, error)
+	// SetParent records the agent that spawned this one.
+	SetParent(ctx context.Context, id, parentID string) (apiv1.Agent, error)
+}
+
 // Forgetter deletes a registry row.
 type Forgetter interface {
 	Forget(ctx context.Context, id string) error
@@ -140,7 +155,9 @@ func (m *Memory) GetByNativeIdentity(_ context.Context, hostID string, provider 
 
 // Upsert replaces the stored agent, recomputing derived fields. The user name
 // is an overlay: it is kept from the existing row unless the provider renamed
-// the session.
+// the session. Team, lead and parent are overlays too: a new row takes its
+// team and parent from the incoming agent and is never a lead; an existing
+// row keeps what is stored.
 func (m *Memory) Upsert(_ context.Context, agent apiv1.Agent) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -148,10 +165,12 @@ func (m *Memory) Upsert(_ context.Context, agent apiv1.Agent) error {
 	agent.DisplayState = apiv1.DeriveDisplayState(agent)
 	agent.Bucket = apiv1.DeriveBucket(agent)
 	agent.UserName = ""
+	agent.Lead = false
 	if existing, ok := m.agents[agent.ID]; ok {
 		if !ProviderRenamed(existing.Name, agent.Name) {
 			agent.UserName = existing.UserName
 		}
+		agent.Team, agent.Lead, agent.ParentID = existing.Team, existing.Lead, existing.ParentID
 	}
 	m.agents[agent.ID] = agent
 	return nil
@@ -165,6 +184,53 @@ func (m *Memory) SetUserName(_ context.Context, id, name string) (apiv1.Agent, e
 		return apiv1.Agent{}, ErrNotFound
 	}
 	agent.UserName = name
+	m.agents[id] = agent
+	return agent, nil
+}
+
+func (m *Memory) SetTeam(_ context.Context, id, team string) (apiv1.Agent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	agent, ok := m.agents[id]
+	if !ok {
+		return apiv1.Agent{}, ErrNotFound
+	}
+	if agent.Team != team {
+		agent.Team, agent.Lead = team, false
+	}
+	m.agents[id] = agent
+	return agent, nil
+}
+
+func (m *Memory) SetLead(_ context.Context, id string) (apiv1.Agent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	agent, ok := m.agents[id]
+	if !ok {
+		return apiv1.Agent{}, ErrNotFound
+	}
+	if agent.Team == "" {
+		return apiv1.Agent{}, ErrNoTeam
+	}
+	for otherID, other := range m.agents {
+		if other.Team == agent.Team && other.Lead {
+			other.Lead = false
+			m.agents[otherID] = other
+		}
+	}
+	agent.Lead = true
+	m.agents[id] = agent
+	return agent, nil
+}
+
+func (m *Memory) SetParent(_ context.Context, id, parentID string) (apiv1.Agent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	agent, ok := m.agents[id]
+	if !ok {
+		return apiv1.Agent{}, ErrNotFound
+	}
+	agent.ParentID = parentID
 	m.agents[id] = agent
 	return agent, nil
 }
@@ -212,6 +278,7 @@ func retired(agent apiv1.Agent, endedBefore time.Time) bool {
 var (
 	_ Store     = (*Memory)(nil)
 	_ Namer     = (*Memory)(nil)
+	_ TeamStore = (*Memory)(nil)
 	_ Forgetter = (*Memory)(nil)
 	_ Pruner    = (*Memory)(nil)
 )

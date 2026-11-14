@@ -9,8 +9,8 @@ event projection, socket lifecycle); the Go client used by the CLI (dialing,
 error classification, caller timeouts); the registry interfaces and their two
 implementations (in-memory `registry.Memory` and the SQLite store that backs
 the real server) as far as they define API-visible semantics (list filter and
-ordering, user-name overlay, rename, forget, prune, event listing); and UUID
-generation. How rows are *produced* (hook normalization, snapshot
+ordering, user-name overlay, rename, teams and their leads, the registration
+of a spawned agent, forget, prune, event listing); and UUID generation. How rows are *produced* (hook normalization, snapshot
 reconciliation, staleness timing) is specified in [06-hooks.md](06-hooks.md)
 and [04-server.md](04-server.md); this section only cites those writers where
 they fix the value of a public field.
@@ -19,8 +19,9 @@ Source files covered:
 
 - `go/pkg/api/v1/types.go`, `go/pkg/api/v1/types_test.go`
 - `go/internal/localapi/server.go`, `go/internal/localapi/client.go`,
-  `go/internal/localapi/socket.go`, `go/internal/localapi/server_test.go`,
-  `go/internal/localapi/rename_test.go`
+  `go/internal/localapi/teams.go`, `go/internal/localapi/socket.go`,
+  `go/internal/localapi/server_test.go`, `go/internal/localapi/rename_test.go`,
+  `go/internal/localapi/teams_test.go`
 - `go/internal/registry/registry.go`, `go/internal/registry/registry_test.go`
 - `go/internal/identity/uuid.go`, `go/internal/identity/uuid_test.go`
 - Neighbouring code read for call-site semantics only:
@@ -304,48 +305,52 @@ Conventions used below:
   | # | Wire name | Go type | omitempty | Meaning | Who sets it |
   |---|---|---|---|---|---|
   | 1 | `schema_version` | `int` | no | Always `1`. | Registry `Upsert` (API-001) |
-  | 2 | `id` | `string` | no | Stable noc agent identity, a v4 UUID (API-032). | Allocated by hook processor or reconciler on first sight of a natural key |
+  | 2 | `id` | `string` | no | Stable noc agent identity, a v4 UUID (API-032). | Allocated by the hook processor, the reconciler, or a spawn registration (HTTP-036) on first sight of a natural key |
   | 3 | `host_id` | `string` | no | Persistent host identity (API-033). | Writers |
   | 4 | `provider` | `Provider` | no | `claude`/`codex`. | Writers |
   | 5 | `native_session_id` | `string` | no | Provider conversation/thread id. Natural key with host+provider. | Writers |
   | 6 | `native_short_id` | `string` | yes | Provider alias used for attach (Claude short id). | Reconcile (keeps previous if new empty) |
   | 7 | `user_name` | `string` | yes | User-assigned label set via the API; preferred by frontends. Never in the stored snapshot; overlaid from its own column (REG-010). | `PUT /v1/agents/{id}/name` only; cleared by provider rename (REG-011) |
-  | 8 | `name` | `string` | yes | Provider-owned display name; not identity. Empty for a Claude session whose roster name is only its short id. | Reconcile/hooks |
-  | 9 | `source_kind` | `string` | yes | Provider session kind, e.g. Claude `background`/`interactive`, Codex `cli`. Free-form string. | Reconcile/hooks |
-  | 10 | `origin` | `string` | yes | `hook` (row created by a hook) or `reconcile` (created by a snapshot); preserved once set. | `hooks/processor.go`, `reconciler.go` |
-  | 11 | `live_state` | `LiveState` | no | API-004. | Reconcile/hooks |
-  | 12 | `runtime_state` | `RuntimeState` | no | API-005. May be `""` if a writer left it unset. | Reconcile/hooks |
-  | 13 | `activity_state` | `ActivityState` | no | API-006. | Reconcile/hooks |
-  | 14 | `attention` | `Attention` | no | API-012. | Reconcile/hooks |
-  | 15 | `display_state` | `DisplayState` | no | API-026; recomputed on every `Upsert`. | Registry `Upsert` |
-  | 16 | `bucket` | `Bucket` | yes | API-028; recomputed on every `Upsert` and on every SQLite read. | Registry |
-  | 17 | `model` | `string` | yes | Active model when exposed. | Reconcile/hooks |
-  | 18 | `model_source` | `string` | yes | Provenance of `model` (API-018). | Reconcile/hooks |
-  | 19 | `model_observed_at` | `*time.Time` | yes | When `model` was last observed. Freshness-only for watch. | Reconcile/hooks |
-  | 20 | `reasoning_effort` | `string` | yes | Configured reasoning effort when exposed (Codex). | Reconcile |
-  | 21 | `reasoning_source` | `string` | yes | Provenance. | Reconcile |
-  | 22 | `reasoning_observed_at` | `*time.Time` | yes | Freshness-only for watch. | Reconcile |
-  | 23 | `initial_request` | `*TextPreview` | yes | Bounded first-request preview. | Reconcile/hooks |
-  | 24 | `summary` | `string` | yes | Bounded current preview (latest assistant excerpt today). | Reconcile/hooks |
-  | 25 | `summary_source` | `string` | yes | Provenance. | Reconcile/hooks |
-  | 26 | `summary_updated_at` | `*time.Time` | yes | Freshness-only for watch. | Reconcile/hooks |
-  | 27 | `summary_truncated` | `bool` | yes | Whether `summary` is an excerpt. | Reconcile/hooks |
-  | 28 | `created_at` | `*time.Time` | yes | Provider creation time. | Reconcile |
-  | 29 | `first_seen_at` | `time.Time` | no | First noc observation. | Writers |
-  | 30 | `last_seen_at` | `time.Time` | no | Latest evidence the session exists; also the retention clock (REG-015). Freshness-only for watch. | Writers |
-  | 31 | `last_activity_at` | `*time.Time` | yes | Latest observed work. Reconcile sets it to "now" on every poll while `activity_state` is `working`. | Reconcile/hooks |
-  | 32 | `snapshot_confirmed_at` | `*time.Time` | yes | Latest time a provider snapshot positively included the session; nil for hook-only rows. Freshness-only for watch. | Reconcile |
-  | 33 | `ended_at` | `*time.Time` | yes | When confirmed no longer live. Reconcile clears it (nil) whenever the session is seen live. | Reconcile/hooks |
-  | 34 | `capabilities` | `map[string]Capability` | yes | API-013. | Reconcile (keeps previous if adapter supplies nil) |
-  | 35 | `native_state` | `json.RawMessage` | yes | Bounded provider payload for diagnostics; opaque to clients. | Adapters |
-  | 36 | `workspace` | `*Workspace` | yes | API-016. | Reconcile/hooks |
-  | 37 | `frontend_bindings` | `[]FrontendBinding` | yes | API-015. | Hooks (reconcile preserves/clears) |
-  | 38 | `process_id` | `int` | yes | Last provider process observed by a hook. Used only as a negative liveness signal for rows no roster covers. | Hooks |
+  | 8 | `team` | `string` | yes | The team the agent is in (API-034). Never in the stored snapshot; overlaid from its own column (REG-021). | `PUT /v1/agents/{id}/team`, `POST /v1/agents` |
+  | 9 | `lead` | `bool` | yes | `true` only for the lead of the agent's team; at most one agent per team. Overlaid like `team`. | `PUT /v1/agents/{id}/team` with `lead`, and the rule in HTTP-037 |
+  | 10 | `parent_id` | `string` | yes | The `id` of the agent that spawned this one. Independent of teams. Overlaid like `team`. | `POST /v1/agents` only |
+  | 11 | `name` | `string` | yes | Provider-owned display name; not identity. Empty for a Claude session whose roster name is only its short id. | Reconcile/hooks |
+  | 12 | `source_kind` | `string` | yes | Provider session kind, e.g. Claude `background`/`interactive`, Codex `cli`. Free-form string. | Reconcile/hooks |
+  | 13 | `origin` | `string` | yes | `hook` (row created by a hook), `reconcile` (created by a snapshot) or `spawn` (created by a spawn registration, HTTP-036); preserved once set. | `hooks/processor.go`, `reconciler.go`, `localapi/teams.go` |
+  | 14 | `live_state` | `LiveState` | no | API-004. | Reconcile/hooks |
+  | 15 | `runtime_state` | `RuntimeState` | no | API-005. May be `""` if a writer left it unset. | Reconcile/hooks |
+  | 16 | `activity_state` | `ActivityState` | no | API-006. | Reconcile/hooks |
+  | 17 | `attention` | `Attention` | no | API-012. | Reconcile/hooks |
+  | 18 | `display_state` | `DisplayState` | no | API-026; recomputed on every `Upsert`. | Registry `Upsert` |
+  | 19 | `bucket` | `Bucket` | yes | API-028; recomputed on every `Upsert` and on every SQLite read. | Registry |
+  | 20 | `model` | `string` | yes | Active model when exposed. | Reconcile/hooks |
+  | 21 | `model_source` | `string` | yes | Provenance of `model` (API-018). | Reconcile/hooks |
+  | 22 | `model_observed_at` | `*time.Time` | yes | When `model` was last observed. Freshness-only for watch. | Reconcile/hooks |
+  | 23 | `reasoning_effort` | `string` | yes | Configured reasoning effort when exposed (Codex). | Reconcile |
+  | 24 | `reasoning_source` | `string` | yes | Provenance. | Reconcile |
+  | 25 | `reasoning_observed_at` | `*time.Time` | yes | Freshness-only for watch. | Reconcile |
+  | 26 | `initial_request` | `*TextPreview` | yes | Bounded first-request preview. | Reconcile/hooks |
+  | 27 | `summary` | `string` | yes | Bounded current preview (latest assistant excerpt today). | Reconcile/hooks |
+  | 28 | `summary_source` | `string` | yes | Provenance. | Reconcile/hooks |
+  | 29 | `summary_updated_at` | `*time.Time` | yes | Freshness-only for watch. | Reconcile/hooks |
+  | 30 | `summary_truncated` | `bool` | yes | Whether `summary` is an excerpt. | Reconcile/hooks |
+  | 31 | `created_at` | `*time.Time` | yes | Provider creation time. | Reconcile |
+  | 32 | `first_seen_at` | `time.Time` | no | First noc observation. | Writers |
+  | 33 | `last_seen_at` | `time.Time` | no | Latest evidence the session exists; also the retention clock (REG-015). Freshness-only for watch. | Writers |
+  | 34 | `last_activity_at` | `*time.Time` | yes | Latest observed work. Reconcile sets it to "now" on every poll while `activity_state` is `working`. | Reconcile/hooks |
+  | 35 | `snapshot_confirmed_at` | `*time.Time` | yes | Latest time a provider snapshot positively included the session; nil for hook-only rows. Freshness-only for watch. | Reconcile |
+  | 36 | `ended_at` | `*time.Time` | yes | When confirmed no longer live. Reconcile clears it (nil) whenever the session is seen live. | Reconcile/hooks |
+  | 37 | `capabilities` | `map[string]Capability` | yes | API-013. | Reconcile (keeps previous if adapter supplies nil) |
+  | 38 | `native_state` | `json.RawMessage` | yes | Bounded provider payload for diagnostics; opaque to clients. | Adapters |
+  | 39 | `workspace` | `*Workspace` | yes | API-016. | Reconcile/hooks |
+  | 40 | `frontend_bindings` | `[]FrontendBinding` | yes | API-015. | Hooks (reconcile preserves/clears) |
+  | 41 | `process_id` | `int` | yes | Last provider process observed by a hook. Used only as a negative liveness signal for rows no roster covers. | Hooks |
 - **Source:** `go/pkg/api/v1/types.go`; writer citations inline;
   `go/internal/reconcile/reconciler.go` (materialize)
-- **Decision:** D-016, D-027, D-035, D-040, D-042, D-046
+- **Decision:** D-016, D-027, D-035, D-040, D-042, D-046, D-071
 - **Verified by:** UNTESTED as a whole-object contract (no golden JSON test);
-  MANUAL: §Verification step 4.
+  MANUAL: §Verification step 4. `team`, `lead` and `parent_id`:
+  `go/internal/localapi/teams_test.go` TestTeamMembershipAndLead, TestSpawnRegistrationRules.
 
 #### API-018 Provenance (`*_source`) values
 - **Behavior:** The provenance string fields MUST take these values from
@@ -358,6 +363,7 @@ Conventions used below:
   | `model_source`, `reasoning_source`, `summary_source`, `initial_request.source` | `provider_snapshot` | a snapshot supplied the value without its own source (`reconciler.go`) |
   | `initial_request.source` | `codex_app_server_preview` | Codex thread `preview` (`provider/codex/adapter.go`) |
   | `initial_request.source` | `hook_first_observed_user_prompt` | first prompt seen by a hook (`hooks/normalize.go`) |
+  | `initial_request.source` | `spawn` | the prompt a spawn registration carried (`localapi/teams.go`, HTTP-036) |
   | `summary_source` | `hook_last_assistant_message` | stop-hook assistant excerpt (`hooks/normalize.go`) |
 
   When a snapshot omits a value, reconcile MUST keep the previous value AND its
@@ -378,9 +384,12 @@ Conventions used below:
   "native_session_id": "0199aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee",
   "native_short_id": "a1b2c3",                           // omitted when empty
   "user_name": "Cache work",                             // overlay; omitted when unset
+  "team": "cache",                                       // overlay; omitted when in no team
+  "lead": true,                                          // overlay; omitted unless the team's lead
+  "parent_id": "0d5c1f6e-1b1f-4c55-9d53-0c7a4b3f2a10",   // overlay; omitted when not spawned by an agent
   "name": "cache refactor",                              // provider name; omitted when empty
   "source_kind": "cli",
-  "origin": "reconcile",                                 // "hook" | "reconcile"
+  "origin": "reconcile",                                 // "hook" | "reconcile" | "spawn"
   "live_state": "live",
   "runtime_state": "loaded",
   "activity_state": "idle",
@@ -623,6 +632,64 @@ Conventions used below:
 - **Decision:** D-028
 - **Verified by:** `go/internal/hooks/normalize_test.go` TestNormalizeClaudePromptIsBoundedAndCapturesFrontend, TestNormalizeNotificationGolden (golden envelopes); see [06-hooks.md](06-hooks.md).
 
+#### API-034 Team names
+- **Behavior:** A team is a name that agents carry in `team`; it has no object
+  of its own and exists while at least one agent carries its name. Two agents
+  are in the same team exactly when their `team` strings are equal
+  (case-sensitive). `ValidTeamName(name)` MUST be true iff the name is 1 to
+  `MaxTeamNameLength` = 48 bytes, every byte is one of `A-Za-z0-9._-`, the
+  first byte is neither `-` nor `.`, and the name is not `none`. `NoTeam` =
+  `"none"` is the reserved word that means "in no team" wherever a team name
+  is accepted (the `--team` filters, `AgentSpawn.team`); the comparison is
+  exact, so `None` is a valid team name.
+- **Source:** `go/pkg/api/v1/types.go`
+- **Decision:** D-071
+- **Verified by:** `go/internal/cli/teams_test.go` TestValidTeamNames
+
+#### API-035 `AgentTeamUpdate`
+- **Behavior:** Request body for `PUT /v1/agents/{id}/team`:
+  `{"team": string, "lead": bool}`; `lead` is omitempty. An empty `team`
+  takes the agent out of its team. `lead: true` marks the agent as the lead
+  of the team named, which it must already be in (HTTP-035).
+- **Source:** `go/pkg/api/v1/types.go`; `go/internal/localapi/teams.go`
+- **Decision:** D-071
+- **Verified by:** `go/internal/localapi/teams_test.go` TestTeamMembershipAndLead, TestTeamAndSpawnErrorCatalog
+
+#### API-036 `AgentSpawn`
+- **Behavior:** Request body for `POST /v1/agents`, the registration of a
+  provider session that the caller started. The server never starts one.
+
+  | Wire name | Go type | omitempty | Meaning |
+  |---|---|---|---|
+  | `provider` | `Provider` | no | `claude` or `codex`. |
+  | `native_session_id` | `string` | no | The provider's session id. |
+  | `team` | `string` | yes | A team name, `none` for no team, or empty to take the parent's team. |
+  | `parent_id` | `string` | yes | The `id` of the agent that spawned it. |
+  | `name` | `string` | yes | A name for the agent. |
+  | `directory` | `string` | yes | The directory it was started in. |
+  | `prompt` | `string` | yes | The prompt it was started with. |
+- **Source:** `go/pkg/api/v1/types.go`; `go/internal/localapi/teams.go`
+- **Decision:** D-076
+- **Verified by:** `go/internal/localapi/teams_test.go` TestSpawnRegistrationRules, TestTeamAndSpawnErrorCatalog
+
+#### API-037 `Team` and `TeamList`
+- **Behavior:** `TeamList` is what `noc teams --json` writes
+  ([03-cli.md](03-cli.md) CLI-044); no HTTP route returns it:
+  `{"schema_version":1,"generated_at":<time>,"teams":[Team...]}`, no field
+  omitempty. `Team` is a summary computed from the agents that carry the
+  team's name:
+
+  | Wire name | Go type | omitempty | Meaning |
+  |---|---|---|---|
+  | `team` | `string` | no | The team's name; `""` for the row of agents in no team. |
+  | `lead_id` | `string` | yes | The `id` of the team's lead. |
+  | `lead_name` | `string` | yes | The lead's `user_name`, else its `name`. |
+  | `agents` | `int` | no | How many agents carry the name. |
+  | `blocked`, `working`, `review`, `quiet` | `int` | no | How many of them are in each bucket; any other bucket value counts as `quiet`. |
+- **Source:** `go/pkg/api/v1/types.go`; `go/internal/cli/teams.go`
+- **Decision:** D-071
+- **Verified by:** `go/internal/cli/teams_test.go` TestSummarizeAndRenderTeams, TestTeamCommandsListsAndFilters (`teams --json`)
+
 ---
 
 ## 4. Derivation functions
@@ -833,9 +900,9 @@ Conventions used below:
   | Pattern | Handler | Methods accepted |
   |---|---|---|
   | `/v1/health` | handleHealth | GET |
-  | `/v1/agents` | handleAgents | GET |
+  | `/v1/agents` | handleAgents | GET, POST |
   | `/v1/agents/watch` | handleAgentWatch | GET |
-  | `/v1/agents/` (subtree) | handleAgent | `/v1/agents/{id}`: GET, DELETE; `/v1/agents/{id}/events`: GET; `/v1/agents/{id}/name`: PUT |
+  | `/v1/agents/` (subtree) | handleAgent | `/v1/agents/{id}`: GET, DELETE; `/v1/agents/{id}/events`: GET; `/v1/agents/{id}/name`: PUT; `/v1/agents/{id}/team`: PUT |
   | `/v1/events` | handleEvents | GET |
   | `/v1/hooks/wake` | handleHookWake | POST |
 
@@ -845,31 +912,39 @@ Conventions used below:
   body `404 page not found\n`. `/v1/agents/watch/` (trailing slash) is routed
   to the subtree handler and treated as agent id `watch`.
 - **Source:** `go/internal/localapi/server.go`
-- **Decision:** D-019, D-031, D-033
-- **Verified by:** `go/internal/localapi/server_test.go` TestErrorCatalogOverRawHTTP (every route; `/v1/nope` text 404; `/v1/agents/watch/` treated as an agent id)
+- **Decision:** D-019, D-031, D-033, D-071, D-076
+- **Verified by:** `go/internal/localapi/server_test.go` TestErrorCatalogOverRawHTTP (every route; `/v1/nope` text 404; `/v1/agents/watch/` treated as an agent id); `go/internal/localapi/teams_test.go` TestTeamAndSpawnErrorCatalog (the team route and `POST /v1/agents`)
 
 #### HTTP-008 Optional capabilities by interface assertion
 - **Behavior:** `NewHandler(registry.Reader, HealthFunc, ...HookWakeFunc)` MUST
-  enable rename, forget, and events only if the reader also implements
-  `registry.Namer`, `registry.Forgetter`, `registry.EventReader` respectively;
-  otherwise those routes answer 501 (HTTP-010). Only the first variadic
+  enable rename, forget, events, and teams only if the reader also implements
+  `registry.Namer`, `registry.Forgetter`, `registry.EventReader`,
+  `registry.TeamStore` respectively; otherwise those routes answer 501
+  (HTTP-010). Registering a spawn (`POST /v1/agents`) additionally needs the
+  reader to implement `registry.Store` and a non-empty host id from
+  `SetSpawnSupport(hostID, WorkspaceInspector)`; without all three it answers
+  501. The inspector is optional (HTTP-036). Only the first variadic
   `HookWakeFunc` is used; none → `/v1/hooks/wake` answers 503. Renamers are
   set separately via `SetRenamers(map[Provider]provider.Renamer)`; never
   calling it is equivalent to an empty map. The production server passes the
-  SQLite store (all three interfaces) and a renamer for every adapter that
-  implements `provider.Renamer` (Codex today).
-- **Source:** `go/internal/localapi/server.go`; `go/internal/server/run.go`
-- **Verified by:** `go/internal/localapi/server_test.go` TestUnavailableCapabilities (501 and 503 answers); `go/internal/server/run_test.go` TestRunWithDisabledDiscoveryNeverProbesAndKeepsRenamers (production renamers)
+  SQLite store (every one of these interfaces), a renamer for every adapter
+  that implements `provider.Renamer` (Codex today), and
+  `SetSpawnSupport(<host id>, <the workspace inspector>)`.
+- **Source:** `go/internal/localapi/server.go`; `go/internal/localapi/teams.go`;
+  `go/internal/server/run.go`
+- **Verified by:** `go/internal/localapi/server_test.go` TestUnavailableCapabilities (501 and 503 answers); `go/internal/localapi/teams_test.go` TestSpawnIsUnavailableWithoutAHost (spawn 501 without a host id); `go/internal/server/run_test.go` TestRunWithDisabledDiscoveryNeverProbesAndKeepsRenamers (production renamers); `go/internal/cli/teams_test.go` TestSpawnStartsClaudeInTheBackground (the production server registers spawns). The 501 for a reader without `TeamStore` is UNTESTED.
 
 #### HTTP-009 Method enforcement
 - **Behavior:** When a handler requires a method and the request uses another,
   it MUST respond 405 with header `Allow: <the single required method>` and
-  JSON error `method_not_allowed` / `method not allowed`. For
+  JSON error `method_not_allowed` / `method not allowed`. `/v1/agents`
+  accepts GET and POST, and answers any other method with
+  `Allow: GET, POST`. For
   `/v1/agents/{id}` DELETE is dispatched before the GET check, so any other
   method gets `Allow: GET` (DELETE is accepted but not advertised). HEAD is
   not special-cased and gets 405 on every route.
-- **Source:** `go/internal/localapi/server.go` (requireMethod, handleAgent)
-- **Verified by:** `go/internal/localapi/server_test.go` TestErrorCatalogOverRawHTTP (405 and `Allow` on every route, including HEAD)
+- **Source:** `go/internal/localapi/server.go` (requireMethod, handleAgents, handleAgent)
+- **Verified by:** `go/internal/localapi/server_test.go` TestErrorCatalogOverRawHTTP (405 and `Allow` on every route, including HEAD and `DELETE /v1/agents`); `go/internal/localapi/teams_test.go` TestTeamAndSpawnErrorCatalog (`GET /v1/agents/{id}/team`)
 
 #### HTTP-010 Error catalog
 - **Behavior:** All handler errors MUST be written by `writeError` as JSON
@@ -881,25 +956,36 @@ Conventions used below:
   | 400 | `invalid_agent_id` | `an agent ID is required` | `/v1/agents/` with empty suffix, or more than 2 path segments after `/v1/agents/` (any method) |
   | 400 | `invalid_agent_name` | `request body must contain a name` | name body fails to decode (empty, malformed, unknown field, wrong type, >4096 bytes) |
   | 400 | `invalid_agent_name` | `agent name must be at most 120 characters` | trimmed name > 120 runes |
-  | 400 | `invalid_provider` | `provider must be claude or codex` | events `provider` not empty/`claude`/`codex` |
+  | 400 | `invalid_provider` | `provider must be claude or codex` | events `provider` not empty/`claude`/`codex`; spawn `provider` not `claude`/`codex` |
+  | 400 | `invalid_team` | `request body must contain a team` | team body fails to decode (empty, malformed, unknown field, wrong type, >4096 bytes) |
+  | 400 | `invalid_team` | `a team name is 1 to 48 characters from A-Za-z0-9._-, not starting with - or ., and not none` | a team name that is not valid (API-034), on the team route or in a spawn |
+  | 400 | `invalid_team` | `a lead needs a team` | team body with `lead: true` and an empty `team` |
+  | 400 | `invalid_spawn` | `request body must describe a spawned agent` | spawn body fails to decode (empty, malformed, unknown field, wrong type, >64 KiB) |
+  | 400 | `invalid_spawn` | `a native session ID is required` | spawn `native_session_id` blank after trimming, or over 512 runes |
+  | 400 | `invalid_parent` | `the parent agent was not found` | spawn `parent_id` names no agent |
   | 400 | `invalid_limit` | `limit must be between 1 and 200` | events `limit` not an integer in [1,200] |
-  | 404 | `agent_not_found` | `agent was not found` | get/delete/name/agent-events with unknown id |
-  | 404 | `endpoint_not_found` | `endpoint was not found` | `/v1/agents/{id}/<anything other than events or name>` (any method) |
+  | 404 | `agent_not_found` | `agent was not found` | get/delete/name/team/agent-events with unknown id |
+  | 404 | `endpoint_not_found` | `endpoint was not found` | `/v1/agents/{id}/<anything other than events, name or team>` (any method) |
   | 405 | `method_not_allowed` | `method not allowed` | HTTP-009 |
+  | 409 | `not_in_team` | `<id> is not in team <team>` | team body with `lead: true` for an agent that is not in that team |
   | 500 | `registry_error` | `could not list agents` | list or initial watch list failed |
-  | 500 | `registry_error` | `could not read agent` | `Get` failed (agent route, agent-events existence check) |
+  | 500 | `registry_error` | `could not read agent` | `Get` failed (agent route, agent-events existence check, a spawn's parent); `SetTeam` or `SetLead` failed on the team route |
+  | 500 | `registry_error` | `could not register the spawned agent` | a spawn's lookup, insert or overlay update failed |
+  | 500 | `registry_error` | `could not set the team's lead` | a spawn registered, but making its parent the lead failed (HTTP-037) |
   | 500 | `registry_error` | `could not forget agent` | `Forget` failed |
   | 500 | `registry_error` | `could not name agent` | `SetUserName` failed |
   | 500 | `registry_error` | `could not list events` | `ListEvents` failed |
   | 500 | `streaming_unavailable` | `response streaming is unavailable` | writer is not an `http.Flusher` |
   | 501 | `agent_forget_unavailable` | `forgetting agents is unavailable` | no Forgetter |
   | 501 | `agent_naming_unavailable` | `agent naming is unavailable` | no Namer |
+  | 501 | `agent_teams_unavailable` | `agent teams are unavailable` | no TeamStore (team route) |
+  | 501 | `agent_spawn_unavailable` | `registering spawned agents is unavailable` | no Store, no TeamStore, or no host id (HTTP-008) |
   | 501 | `events_unavailable` | `event queries are unavailable` | no EventReader |
   | 503 | `hook_ingestion_unavailable` | `hook ingestion is unavailable` | no HookWakeFunc |
 
   Internal error details MUST NOT be included in the message.
-- **Source:** `go/internal/localapi/server.go`
-- **Verified by:** `go/internal/localapi/server_test.go` TestErrorCatalogOverRawHTTP (every 400, 404, and 405 row), TestUnavailableCapabilities (501 and 503 rows). The 500 rows (`registry_error`, `streaming_unavailable`) are UNTESTED.
+- **Source:** `go/internal/localapi/server.go`; `go/internal/localapi/teams.go`
+- **Verified by:** `go/internal/localapi/server_test.go` TestErrorCatalogOverRawHTTP (every 400, 404, and 405 row of the routes it had before teams), TestUnavailableCapabilities (501 and 503 rows); `go/internal/localapi/teams_test.go` TestTeamAndSpawnErrorCatalog (every `invalid_team`, `invalid_spawn`, `invalid_parent` and `not_in_team` row), TestSpawnIsUnavailableWithoutAHost (`agent_spawn_unavailable`). The 500 rows (`registry_error`, `streaming_unavailable`) and `agent_teams_unavailable` are UNTESTED.
 
 #### HTTP-011 Success encoding
 - **Behavior:** JSON success responses MUST be written with
@@ -920,12 +1006,13 @@ Conventions used below:
 - **Verified by:** `go/internal/localapi/server_test.go` TestClientAndServerOverUnixSocket; `go/internal/server/run_test.go` TestRunServesInitialDiscovery
 
 #### HTTP-013 `GET /v1/agents`
-- **Behavior:** Query `all`: exactly the string `true` sets
+- **Behavior:** (`POST` on this path is HTTP-036; any other method is 405
+  `Allow: GET, POST`.) Query `all`: exactly the string `true` sets
   `IncludeNotLive`; any other value (`1`, `TRUE`, `yes`, empty, absent)
   means false. MUST return 200 `AgentList` with the registry's `List` result
   in registry order (REG-005), `[]` when empty. List error → 500
   `registry_error`/`could not list agents`. No pagination, no limit, no other
-  filters (bucket filtering is CLI-side).
+  filters (bucket and team filtering are CLI-side).
 - **Source:** `go/internal/localapi/server.go`
 - **Decision:** D-019
 - **Verified by:** `go/internal/localapi/server_test.go` TestClientAndServerOverUnixSocket (empty list), TestAllQueryIsExactlyTrue (`all` absent, `1`, `TRUE`, `true`)
@@ -936,14 +1023,15 @@ Conventions used below:
   `suffix == ""` or more than 2 parts → 400 `invalid_agent_id`. Leading and
   trailing slashes are ignored (`/v1/agents/abc/` ≡ `/v1/agents/abc`). Part 1
   is the agent id, used verbatim (no validation of UUID shape). With 2 parts,
-  part 2 MUST be `events` or `name`, else 404 `endpoint_not_found`. Path is
+  part 2 MUST be `events`, `name` or `team`, else 404 `endpoint_not_found`. Path is
   the decoded `URL.Path`; the Go client escapes ids with `url.PathEscape`.
 - **Source:** `go/internal/localapi/server.go` (handleAgent)
 - **Verified by:** `go/internal/localapi/server_test.go` TestErrorCatalogOverRawHTTP (empty suffix, three segments, unknown second segment)
 
 #### HTTP-015 `GET /v1/agents/{id}`
 - **Behavior:** MUST return 200 with the `Agent` from `registry.Get(id)`
-  (including `user_name` overlay and read-time bucket). `ErrNotFound` → 404
+  (including the `user_name`, `team`, `lead` and `parent_id` overlays and the
+  read-time bucket). `ErrNotFound` → 404
   `agent_not_found`; other errors → 500 `registry_error`/`could not read agent`.
   Methods other than GET/DELETE → 405 `Allow: GET`.
 - **Source:** `go/internal/localapi/server.go`
@@ -1020,6 +1108,98 @@ Conventions used below:
   first 300 runes followed by `…` (U+2026).
 - **Source:** `go/internal/localapi/server.go` (boundedSyncError)
 - **Verified by:** `go/internal/localapi/rename_test.go` TestRenamePushesNameToProvidersThatSupportIt (whitespace collapsed; 400-rune tail cut to 300 runes plus `…`)
+
+#### HTTP-035 `PUT /v1/agents/{id}/team`
+- **Behavior:** Order of checks MUST be: method PUT (else 405 `Allow: PUT`) →
+  TeamStore present (else 501 `agent_teams_unavailable`) → body read through
+  `http.MaxBytesReader(4096)` and decoded with `DisallowUnknownFields` into
+  `AgentTeamUpdate` (any decode error → 400 `invalid_team`/
+  `request body must contain a team`) → a non-empty `team` that is not a
+  valid name (API-034) → 400 `invalid_team` with the name rule. Then:
+
+  | Body | Action | Result |
+  |---|---|---|
+  | `lead` false, `team` a name | `SetTeam(id, team)` | 200, the agent in that team |
+  | `lead` false, `team` empty | `SetTeam(id, "")` | 200, the agent in no team |
+  | `lead` true, `team` empty | none | 400 `invalid_team`/`a lead needs a team` |
+  | `lead` true, `team` a name | `Get(id)`; if its `team` differs → 409 `not_in_team`/`<id> is not in team <team>`; else `SetLead(id)` | 200, the agent with `lead: true` |
+
+  Unknown agent id → 404 `agent_not_found`, after the validation errors. Any
+  other registry error → 500 `registry_error`/`could not read agent`. The
+  name is not trimmed: `{}` and `null` decode to an empty team and take the
+  agent out of its team. The effects of `SetTeam` and `SetLead` on the lead
+  are REG-022. Success responds 200 with the updated `Agent`.
+- **Source:** `go/internal/localapi/teams.go` (handleAgentTeam)
+- **Decision:** D-071
+- **Verified by:** `go/internal/localapi/teams_test.go` TestTeamMembershipAndLead (set, move, clear, lead, lead outside the team), TestTeamAndSpawnErrorCatalog (405, every 400, 409, 404 with and without `lead`). The 501 and 500 answers are UNTESTED.
+
+#### HTTP-036 `POST /v1/agents` — registering a spawned agent
+- **Behavior:** The route records a provider session the caller started, so
+  that the agent has its team and parent. It MUST NOT start, signal or
+  contact a provider. Order of checks: Store, TeamStore and host id present
+  (else 501 `agent_spawn_unavailable`) → body read through
+  `http.MaxBytesReader(65536)` and decoded with `DisallowUnknownFields` into
+  `AgentSpawn` (any decode error → 400 `invalid_spawn`/
+  `request body must describe a spawned agent`) → `provider` is `claude` or
+  `codex` (else 400 `invalid_provider`) → trimmed `native_session_id` is 1 to
+  512 runes (else 400 `invalid_spawn`/`a native session ID is required`) →
+  `team` is empty, `none`, or a valid name (else 400 `invalid_team`) →
+  trimmed `name` is at most 120 runes (else 400 `invalid_agent_name`) → a
+  non-empty `parent_id` names an existing agent (else 400 `invalid_parent`).
+
+  The agent's team is then worked out (HTTP-037) and the row is found or
+  made, by `GetByNativeIdentity(<host id>, provider, <session id>)`:
+
+  - **A row exists** (a hook or a snapshot saw the session first): its team is
+    set with `SetTeam` and its parent with `SetParent`. Nothing else on the
+    row changes, so its `name`, `origin`, previews and workspace stay as the
+    hook or snapshot wrote them, and the `name`, `directory` and `prompt` of
+    the request are not used.
+  - **No row exists:** a new agent is stored with a new `id` (API-032), the
+    host id, `provider`, the session id, `name` = the trimmed request name,
+    `origin` = `spawn`, `live_state` = `live`, `runtime_state` = `starting`,
+    `activity_state` = `unknown`, `attention` = `{"type":"none"}`,
+    `created_at` = `first_seen_at` = `last_seen_at` = now (UTC), and the team
+    and parent. A non-blank `prompt` becomes `initial_request` with `source`
+    = `spawn`, cut to its first 2048 runes with `truncated` set when longer.
+    A non-blank `directory` becomes `workspace`: the inspector's description
+    with owner `unknown` when an inspector is set and returns one, else
+    `{"path": <directory>, "owner": "unknown", "observed_at": now}`. Derived
+    fields follow API-031, so the row reads `display_state` `idle`, `bucket`
+    `quiet` until a hook or a snapshot reports the session.
+
+  Success MUST respond **201** with the `Agent` as stored, in both cases.
+  A registry failure → 500 `registry_error`/
+  `could not register the spawned agent`. A later hook or snapshot for the
+  same session finds the row by its natural key (REG-007) and keeps its `id`,
+  `origin`, team, lead and parent (REG-021).
+- **Source:** `go/internal/localapi/teams.go` (handleSpawn, registerSpawn);
+  `go/internal/server/run.go`
+- **Decision:** D-076
+- **Verified by:** `go/internal/localapi/teams_test.go` TestSpawnRegistrationRules (new row fields, the row a hook made first, a long prompt, no directory), TestTeamAndSpawnErrorCatalog (every 400), TestSpawnIsUnavailableWithoutAHost (501); `go/internal/cli/teams_test.go` TestSpawnStartsClaudeInTheBackground (the production server, with the workspace inspector). The 201 status and the 500 answers are UNTESTED.
+
+#### HTTP-037 Team and lead of a spawned agent
+- **Behavior:** With `parent` the agent named by `parent_id` (none when it is
+  empty), the spawned agent's team MUST be:
+
+  | `team` in the request | Team of the spawned agent |
+  |---|---|
+  | a name | that team |
+  | `none` | no team |
+  | empty | the parent's team; no team when there is no parent or it is in none |
+
+  After the row is stored, exactly one rule can change another agent: when
+  the request **names** a team, there is a parent, the parent is in **no**
+  team, and no agent (live or not) is that team's lead, the parent MUST be
+  put in the team and made its lead. In every other case no other agent
+  changes: a parent that is already in a team stays there and is not made
+  lead, a team that has a lead keeps it, and an inherited team never changes
+  its lead. The spawned agent itself is never a lead. A failure of this step
+  → 500 `registry_error`/`could not set the team's lead`; the spawned agent
+  is already stored. The check and the two writes are not one transaction.
+- **Source:** `go/internal/localapi/teams.go` (handleSpawn, teamHasLead)
+- **Decision:** D-071
+- **Verified by:** `go/internal/localapi/teams_test.go` TestSpawnRegistrationRules (named, inherited, `none`, nothing to inherit, the parent made lead, a led team, a parent in another team); `go/internal/cli/teams_test.go` TestSpawnStartsClaudeInTheBackground. The 500 answer is UNTESTED.
 
 #### HTTP-021 `GET /v1/events` and `GET /v1/agents/{id}/events`
 - **Behavior:** Order of checks MUST be: path/method (GET) → EventReader
@@ -1112,7 +1292,8 @@ Conventions used below:
 
   Every other difference IS semantic and MUST emit a frame, including:
   membership (row added/removed, e.g. a row becoming `not_live` in the default
-  view), list order, `user_name`, `name`, any state/attention field,
+  view), list order, `user_name`, `team`, `lead`, `parent_id`, `name`, any
+  state/attention field,
   `attention.since`, `display_state`, `bucket`, `first_seen_at`,
   `last_activity_at`, `created_at`, `ended_at`, `capabilities`,
   `native_state` bytes, `process_id`, preview text/source/truncation,
@@ -1160,12 +1341,15 @@ Conventions used below:
   | `GetAgent(ctx, id)` | `GET /v1/agents/<PathEscape(id)>` | `Agent` |
   | `RenameAgent(ctx, id, name)` | `PUT /v1/agents/<PathEscape(id)>/name`, `Content-Type: application/json`, body `{"name":"<name>"}` (name sent untrimmed) | `AgentNameResult{Agent, ProviderSync (header), ProviderSyncError (header)}` |
   | `SetAgentName(ctx, id, name)` | same as `RenameAgent` | `Agent` only (headers discarded) |
+  | `SetAgentTeam(ctx, id, team)` | `PUT /v1/agents/<PathEscape(id)>/team`, `Content-Type: application/json`, body `{"team":"<team>"}` (empty takes the agent out of its team) | `Agent` |
+  | `SetTeamLead(ctx, id, team)` | same route, body `{"team":"<team>","lead":true}` | `Agent` |
+  | `RegisterSpawn(ctx, AgentSpawn)` | `POST /v1/agents`, `Content-Type: application/json`, body the `AgentSpawn` | `Agent` |
   | `ForgetAgent(ctx, id)` | `DELETE /v1/agents/<PathEscape(id)>` | error only; body not decoded |
   | `ListEvents(ctx, agentID, provider, limit)` | `GET /v1/events`, or `/v1/agents/<PathEscape(agentID)>/events` when `agentID != ""`; query from `url.Values` (keys sorted: `limit`, `provider`); `provider` only if non-empty; `limit` only if > 0 (so ≤0 ⇒ server default 50) | `AgentEventList` |
   | `WatchAgents(ctx, includeNotLive, handle)` | `GET /v1/agents/watch` (+`?all=true`) | streams; see HTTP-034 |
   | `WakeHooks(ctx)` | `POST /v1/hooks/wake`, no body | error only |
 - **Source:** `go/internal/localapi/client.go`
-- **Verified by:** `go/internal/localapi/server_test.go` TestClientAndServerOverUnixSocket, TestClientAndServerListAgentEvents, TestForgetAgentRemovesTheRowOverTheSocket, TestWatchAgentsStreamsSemanticSnapshots; `go/internal/localapi/rename_test.go` TestRenamePushesNameToProvidersThatSupportIt
+- **Verified by:** `go/internal/localapi/server_test.go` TestClientAndServerOverUnixSocket, TestClientAndServerListAgentEvents, TestForgetAgentRemovesTheRowOverTheSocket, TestWatchAgentsStreamsSemanticSnapshots; `go/internal/localapi/rename_test.go` TestRenamePushesNameToProvidersThatSupportIt; `go/internal/localapi/teams_test.go` TestTeamMembershipAndLead, TestSpawnRegistrationRules
 
 #### HTTP-032 Client error mapping
 - **Behavior:** For all non-watch JSON calls (`doJSON`):
@@ -1178,6 +1362,8 @@ Conventions used below:
   | 2xx but body fails to decode into the target | `decode noc server response: <err>` | false |
   | request construction fails | `create request: <err>` | false |
   | `RenameAgent` JSON encode fails | `encode agent name: <err>` | false |
+  | `SetAgentTeam`/`SetTeamLead` JSON encode fails | `encode agent team: <err>` | false |
+  | `RegisterSpawn` JSON encode fails | `encode spawned agent: <err>` | false |
 
   `WakeHooks` maps transport errors the same way but never decodes error
   bodies: any non-2xx → `noc server: unexpected HTTP status <Status>`.
@@ -1196,6 +1382,7 @@ Conventions used below:
   | Caller | Timeout | Source |
   |---|---|---|
   | `ls`, `show`, `attach` lookup, `forget`, `stop` lookup, `events`, `server status` style requests | `requestTimeout` = 3 s | `go/internal/cli/run.go` |
+  | `team` (one 3 s budget for the whole command), `teams`, and each of `spawn`'s two server phases (finding the caller, registering) | `requestTimeout` = 3 s | `go/internal/cli/teams.go` |
   | `rename` (covers the server's 5 s provider push) | `renameRequestTimeout` = 10 s | `go/internal/cli/run.go` |
   | hook ingest context (SQLite open, host ID, enqueue, wake) / wake notify | `hookIngestTimeout` = 900 ms / `hookWakeTimeout` = 150 ms; reading stdin is not interrupted by it, so it is not an overall bound (HK-005) | `go/internal/cli/run.go` |
   | server liveness probe | `serverProbeTimeout` = 300 ms | `go/internal/cli/server_lifecycle.go` |
@@ -1232,11 +1419,12 @@ Conventions used below:
 #### REG-001 Not-found sentinel
 - **Behavior:** `registry.ErrNotFound` (`agent not found`) MUST be returned
   (directly, matchable with `errors.Is`) by `Get`, `GetByNativeIdentity`,
-  `SetUserName`, and `Forget` when no row matches, by both implementations.
+  `SetUserName`, `SetTeam`, `SetLead`, `SetParent`, and `Forget` when no row
+  matches, by both implementations.
   The HTTP layer maps it to 404 `agent_not_found`.
 - **Source:** `go/internal/registry/registry.go`;
   `go/internal/storage/sqlite/store.go`
-- **Verified by:** `go/internal/localapi/server_test.go` TestForgetAgentRemovesTheRowOverTheSocket; `go/internal/storage/sqlite/store_test.go` TestStorePersistsHostAndAgents, TestForgetDeletesOnlyTheNamedAgent; `go/internal/registry/registry_test.go` TestMemoryProviderRenameReplacesUserName
+- **Verified by:** `go/internal/localapi/server_test.go` TestForgetAgentRemovesTheRowOverTheSocket; `go/internal/storage/sqlite/store_test.go` TestStorePersistsHostAndAgents, TestForgetDeletesOnlyTheNamedAgent; `go/internal/storage/sqlite/teams_test.go` TestTeamLeadAndParentAreStoredBesideTheSnapshot (the three team methods); `go/internal/registry/registry_test.go` TestMemoryProviderRenameReplacesUserName
 
 #### REG-002 Interfaces
 - **Behavior:** The registry contract MUST consist of:
@@ -1245,6 +1433,7 @@ Conventions used below:
   |---|---|
   | `Reader` | `List(ctx, ListOptions) ([]Agent, error)`; `Get(ctx, id) (Agent, error)` |
   | `Namer` | `SetUserName(ctx, id, name) (Agent, error)` |
+  | `TeamStore` | `SetTeam(ctx, id, team) (Agent, error)`; `SetLead(ctx, id) (Agent, error)`; `SetParent(ctx, id, parentID) (Agent, error)` |
   | `Forgetter` | `Forget(ctx, id) error` |
   | `Pruner` | `PruneRetired(ctx, endedBefore time.Time) (int, error)` |
   | `EventReader` | `ListEvents(ctx, EventListOptions) ([]AgentEvent, error)` |
@@ -1253,8 +1442,9 @@ Conventions used below:
 
   `ListOptions{IncludeNotLive bool}`;
   `EventListOptions{AgentID string, Provider Provider, Limit int}`.
-  `registry.Memory` implements Store, Namer, Forgetter, Pruner (not
-  EventReader or ObservationStore). The SQLite `Store` implements all seven.
+  `registry.Memory` implements Store, Namer, TeamStore, Forgetter, Pruner
+  (not EventReader or ObservationStore). The SQLite `Store` implements all
+  eight.
   Both sets are compile-time asserted. The production server uses SQLite
   only; Memory is used by tests.
 - **Source:** `go/internal/registry/registry.go`;
@@ -1323,7 +1513,9 @@ Conventions used below:
   (after API-031 derivations) keyed by `id`; it does not merge fields. Merging
   with the previous row is the writer's job (reconcile/hooks). SQLite also
   updates the indexed columns `host_id`, `provider`, `native_session_id`,
-  `live_state`, `display_state`, `last_seen_at` (RFC 3339 Nano UTC).
+  `live_state`, `display_state`, `last_seen_at` (RFC 3339 Nano UTC). The
+  overlays are the exceptions: `user_name` (REG-010, REG-011) and `team`,
+  `lead`, `parent_id` (REG-021).
 - **Source:** `go/internal/storage/sqlite/store.go`; `go/internal/registry/registry.go`
 - **Verified by:** `go/internal/storage/sqlite/store_test.go` TestStorePersistsHostAndAgents
 
@@ -1368,12 +1560,57 @@ Conventions used below:
 - **Decision:** D-042
 - **Verified by:** UNTESTED end-to-end.
 
+#### REG-021 `team`, `lead` and `parent_id` are overlays
+- **Behavior:** Like `user_name`, the three are kept outside the stored
+  snapshot. SQLite blanks them in the snapshot JSON and keeps them in the
+  columns `team`, `team_lead` and `parent_id`
+  ([04-server.md](04-server.md) DB-026, DB-027); every read overlays them, with
+  `lead` reported `true` only when `team_lead` is set **and** `team` is not
+  empty. `Upsert` treats them as follows, in both implementations:
+
+  | Row | `team`, `parent_id` | `lead` |
+  |---|---|---|
+  | new (no row with that `id`) | taken from the incoming agent | always `false`, whatever the incoming agent carries |
+  | existing | the stored values are kept; the incoming ones are ignored | the stored value is kept |
+
+  So the snapshots that hooks and reconciliation write can neither set nor
+  erase a team, a lead or a parent, and a spawn registration (HTTP-036) can
+  give a new row its team and parent in one write. A provider rename does not
+  affect them. They survive a server restart.
+- **Source:** `go/internal/storage/sqlite/store.go` (Upsert, scanAgent);
+  `go/internal/registry/registry.go` (Memory.Upsert)
+- **Decision:** D-071
+- **Verified by:** `go/internal/storage/sqlite/teams_test.go` TestTeamLeadAndParentAreStoredBesideTheSnapshot (new row, snapshot JSON without them, upsert of an existing row, restart); `go/internal/localapi/teams_test.go` TestTeamMembershipAndLead (Memory: an upsert keeps the team). Memory's new-row rule is covered only through TestSpawnRegistrationRules.
+
+#### REG-022 `SetTeam`, `SetLead`, `SetParent`
+- **Behavior:** All three return the updated agent, return `ErrNotFound` for
+  an unknown id, store their argument verbatim (name validation is the HTTP
+  handler's), and MUST NOT change any other field or call a provider.
+
+  - `SetTeam(id, team)` puts the agent in `team`, moving it out of any other;
+    `""` takes it out. An agent whose team **changes** stops being a lead;
+    setting the team it is already in keeps its lead mark.
+  - `SetLead(id)` marks the agent as the lead of the team it is in and clears
+    the mark on every other agent of that team, so a team has at most one
+    lead; SQLite does both in one transaction. An agent in no team →
+    `registry.ErrNoTeam` (`agent is not in a team`), and nothing changes.
+  - `SetParent(id, parentID)` records the agent that spawned this one; `""`
+    clears it. The parent id is not checked against the registry.
+
+  A team needs no lead, and removing the lead from a team (by moving or
+  clearing it) leaves the team without one.
+- **Source:** `go/internal/registry/registry.go`; `go/internal/storage/sqlite/store.go`
+- **Decision:** D-071
+- **Verified by:** `go/internal/storage/sqlite/teams_test.go` TestTeamLeadAndParentAreStoredBesideTheSnapshot (every rule, `ErrNoTeam`, `ErrNotFound`, one lead in the list after a restart); `go/internal/localapi/teams_test.go` TestTeamMembershipAndLead (Memory, through the API). Memory's `SetParent` is covered only through TestSpawnRegistrationRules.
+
 #### REG-014 Forget
 - **Behavior:** `Forget(id)` MUST delete only the row with that `id` and
   return `ErrNotFound` if none was deleted. It MUST NOT touch the provider,
   other rows, or the observation journal. Because the natural-key mapping is
   deleted with the row, a still-live session that reappears via hook or
-  snapshot is allocated a **new** noc `id` and loses its `user_name`.
+  snapshot is allocated a **new** noc `id` and loses its `user_name`, its
+  team, its lead mark and its parent. Other agents that name the forgotten
+  one in `parent_id` keep that value.
 - **Source:** `go/internal/registry/registry.go`; `go/internal/storage/sqlite/store.go`
 - **Decision:** D-040, D-041
 - **Verified by:** `go/internal/storage/sqlite/store_test.go` TestForgetDeletesOnlyTheNamedAgent;
@@ -1393,7 +1630,8 @@ Conventions used below:
 
   Age is measured from `last_seen_at`, not from retirement. SQLite implements
   the same predicate in SQL (NeverEngaged as trimmed `$.name` empty AND
-  trimmed `$.initial_request.text` empty; user_name already checked).
+  trimmed `$.initial_request.text` empty; user_name already checked). Being
+  in a team, leading one, or having a parent does not protect a row.
 - **Source:** `go/internal/registry/registry.go`; `go/internal/storage/sqlite/store.go`
 - **Decision:** D-041, D-047
 - **Verified by:** `go/internal/registry/registry_test.go` TestPruneRetiredKeepsLiveAndNamedRows;
@@ -1506,6 +1744,18 @@ Implementation choices not recorded in [`docs/DECISIONS.md`](../DECISIONS.md):
     are not time-sortable; nothing orders by id except as a tie-break.
 12. **Client classifies every transport failure, including timeouts, as a
     connection error** so the CLI can print one "Is the server running?" hint.
+13. **Team, lead and parent in their own columns**, for the reason the user
+    name has one (item 7): snapshot replacement cannot erase them. Unlike the
+    user name, a new row may take its team and parent from the agent passed
+    to `Upsert`, so a spawn registration is one insert (`store.go`, `Upsert`).
+14. **A spawn registration finds or makes the row** (`teams.go`,
+    `registerSpawn`). The caller starts the provider first and registers
+    second, so a hook or a snapshot may have created the row already; the
+    registration then only adds the team and parent, and the agent keeps one
+    `id` either way.
+15. **Teams are summarised by the CLI, not the server.** A team is only a
+    name on agents, so `noc teams` counts the rows of `GET /v1/agents?all=true`
+    and there is no team route to keep in step.
 
 ## 02 · Verification procedures
 
@@ -1537,11 +1787,16 @@ Expected: all `ok`. Test names:
   `TestListenRefusesNonSocketPath`, `TestListenReplacesStaleSocket`,
   `TestListenDetectsLiveServer`, `TestListenCreatesPrivateParent`,
   `TestRenamePushesNameToProvidersThatSupportIt`,
-  `TestRenameEmptyObjectBodyClears`.
+  `TestRenameEmptyObjectBodyClears`, `TestTeamMembershipAndLead`,
+  `TestTeamAndSpawnErrorCatalog`, `TestSpawnRegistrationRules`,
+  `TestSpawnIsUnavailableWithoutAHost`.
 - `go/internal/registry`: `TestPruneRetiredKeepsLiveAndNamedRows`,
   `TestMemoryProviderRenameReplacesUserName`.
 - `go/internal/identity` (run with `go test ./internal/identity/...`):
   `TestNewUUIDIsVersion4`.
+- `go/internal/storage/sqlite` (teams): `TestTeamLeadAndParentAreStoredBesideTheSnapshot`.
+- `go/internal/cli` (run with `go test ./internal/cli/...`; team names and
+  the `TeamList` document): `TestValidTeamNames`, `TestSummarizeAndRenderTeams`.
 
 ### Manual (isolated; never touches the real registry)
 
@@ -1595,7 +1850,8 @@ Unset Zellij/Claude environment so hook ingestion records no bindings.
 5. Error catalog (HTTP-007, HTTP-009, HTTP-010, HTTP-014). Each `curl -si`:
    | Request | Expected status, headers, body `code` |
    |---|---|
-   | `-X POST http://m/v1/agents` | 405, `Allow: GET`, `method_not_allowed` |
+   | `-X DELETE http://m/v1/agents` | 405, `Allow: GET, POST`, `method_not_allowed` |
+   | `-X POST http://m/v1/agents` (no body) | 400 `invalid_spawn` |
    | `-X POST http://m/v1/agents/$ID` | 405, `Allow: GET` |
    | `http://m/v1/agents/` | 400 `invalid_agent_id` |
    | `http://m/v1/agents/a/b/c` | 400 `invalid_agent_id` |
@@ -1615,6 +1871,19 @@ Unset Zellij/Claude environment so hook ingestion records no bindings.
    | `'{"name":"  Example label  "}'` | 200, `Noc-Provider-Name-Sync: unsupported`, body `"user_name":"Example label"` |
    | `'{}'` | 200, `Noc-Provider-Name-Sync: not_attempted`, `user_name` absent |
    | same body to `/v1/agents/missing/name` | 404 `agent_not_found` |
+   Teams and spawn registration (HTTP-035–HTTP-037, REG-021, REG-022),
+   run before step 9 forgets the agent:
+   | Request | Expected |
+   |---|---|
+   | `-X PUT -d '{"team":"auth","lead":true}' http://m/v1/agents/$ID/team` | 409 `not_in_team`, message `<ID> is not in team auth` |
+   | `-X PUT -d '{"team":"none"}' http://m/v1/agents/$ID/team` | 400 `invalid_team` |
+   | `-X PUT -d '{"team":"auth"}' http://m/v1/agents/$ID/team` | 200, body `"team":"auth"`, no `lead` |
+   | `-X PUT -d '{"team":"auth","lead":true}' http://m/v1/agents/$ID/team` | 200, body `"team":"auth","lead":true` |
+   | `-X PUT -d '{"team":""}' http://m/v1/agents/$ID/team` | 200, neither `team` nor `lead` in the body |
+   | `-X POST -d '{"provider":"claude","native_session_id":"s-1","team":"auth","parent_id":"'$ID'","prompt":"Example"}' http://m/v1/agents` | 201; body `"origin":"spawn"`, `"runtime_state":"starting"`, `"team":"auth"`, `"parent_id":"<ID>"`, `initial_request.source` `spawn`; then `GET /v1/agents/$ID` shows `"team":"auth","lead":true` |
+   | `-X POST -d '{"provider":"claude","native_session_id":"s-2","parent_id":"gone"}' http://m/v1/agents` | 400 `invalid_parent` |
+   Forget the spawned row afterwards (`-X DELETE http://m/v1/agents/<its id>`)
+   so that step 9 leaves an empty registry.
 7. Events (HTTP-021, API-021): `curl -s --unix-socket "$S" http://m/v1/events`
    → one event `{"id":"hook-<32 hex>","agent_id":"$ID","event_type":"turn.prompted","source":"hook","native_event":"UserPromptSubmit","live_state":"live",…}`
    and no prompt text anywhere in the body. `?limit=0`, `?limit=201`,
@@ -1674,6 +1943,13 @@ Behaviors with no automated test:
   `create request` and `encode agent name` errors (HTTP-032); a nil watch
   handler and a mid-stream decode error (HTTP-034); the caller timeout
   constants (HTTP-033).
+- Teams and spawn registration: `agent_teams_unavailable` (HTTP-008); the
+  500 answers of the team route and of `POST /v1/agents`, and the 201 status
+  (the Go client accepts any 2xx) (HTTP-035–HTTP-037); the `encode agent
+  team` and `encode spawned agent` client errors (HTTP-032); golden JSON for
+  `AgentTeamUpdate`, `AgentSpawn`, `Team` and `TeamList`; a team change
+  emitting a watch frame (HTTP-027); `registry.Memory`'s team rules other
+  than through the API tests (REG-021, REG-022).
 - Registry: `registry.Memory` under concurrent use (REG-003), a stored
   snapshot that fails to decode (REG-006), read-time bucket recomputation
   (API-031), a new id after forget and rediscovery (REG-014), and the
@@ -1716,6 +1992,28 @@ Behaviors with no automated test:
 - **`display_state` is not recomputed on read.** A stored row keeps the
   display state derived at its last `Upsert`. Code:
   `go/internal/storage/sqlite/store.go` (scanAgent).
+- **A spawn registration is trusted.** `POST /v1/agents` records what the
+  caller says: it does not ask the provider whether the session exists. A
+  row made this way (`origin` `spawn`, `runtime_state` `starting`) that no
+  hook or snapshot ever confirms is never aged out, because reconciliation
+  leaves unconfirmed rows without a process id alone
+  ([04-server.md](04-server.md)); it stays, shown as quiet, until
+  `noc forget`. Code: `go/internal/localapi/teams.go` (registerSpawn).
+- **Marking a lead and the spawn lead rule are not atomic.** The team route
+  reads the agent, checks its team, and then calls `SetLead`; the spawn
+  route lists agents to see whether the team has a lead and then writes
+  twice. A concurrent team change between the steps can make an agent the
+  lead of a team it has just been moved into, or give a team a lead that the
+  check said it lacked. `SetLead` itself keeps one lead per team. Code:
+  `go/internal/localapi/teams.go` (handleAgentTeam, handleSpawn).
+- **A registration for a row that already exists replaces its team and
+  parent and nothing else.** An empty resolved team takes the existing row
+  out of its team, an empty `parent_id` clears its parent, and the request's
+  `name`, `directory` and `prompt` are dropped. Code:
+  `go/internal/localapi/teams.go` (registerSpawn).
+- **A team body with no `team` key takes the agent out of its team.** `{}`
+  and `null` decode to an empty team and succeed, as with the name route.
+  Code: `go/internal/localapi/teams.go` (handleAgentTeam).
 - **Events re-attach after forget.** `agent_id` on an event is resolved at
   query time by natural key, so after a forget and rediscovery the older
   observations appear under the new agent id. Code:

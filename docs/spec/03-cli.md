@@ -9,7 +9,8 @@ readiness pipe, the PID record, duplicate-instance rejection, stale-record
 handling, `server stop`, `server restart`, `server status`), the resolution of
 every configuration path and environment override, and the provider-command
 planning that `noc attach`, `noc stop`, and `noc rename` perform in the
-CLI process. Server internals (registry, discovery, HTTP routing) are covered
+CLI process, the team commands, and `noc spawn`, which starts a provider
+session from the CLI process. Server internals (registry, discovery, HTTP routing) are covered
 in [04-server.md](04-server.md), [02-api.md](02-api.md), [05-providers.md](05-providers.md)
 and [06-hooks.md](06-hooks.md), and are referenced here only where the CLI's
 observable behaviour depends on them.
@@ -17,11 +18,12 @@ observable behaviour depends on them.
 Source files covered:
 
 - `go/cmd/noc/main.go`
-- `go/internal/cli/run.go`
+- `go/internal/cli/run.go`, `go/internal/cli/search.go`, `go/internal/cli/teams.go`
 - `go/internal/cli/server_lifecycle.go`
 - `go/internal/cli/server_process_unix.go`
 - `go/internal/cli/server_process_unsupported.go`
-- `go/internal/cli/run_test.go`, `go/internal/cli/server_lifecycle_unix_test.go`
+- `go/internal/cli/run_test.go`, `go/internal/cli/search_test.go`,
+  `go/internal/cli/teams_test.go`, `go/internal/cli/server_lifecycle_unix_test.go`
 - `go/internal/config/paths.go`, `go/internal/config/paths_test.go`
 - `go/internal/buildinfo/buildinfo.go`
 - `go/internal/attach/plan.go`, `go/internal/attach/claude_roster.go`,
@@ -39,15 +41,20 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
 | `noc` | — | Same as `noc ls` with no flags | yes | CLI-002 |
 | `noc help` | `-h`, `--help` | Print usage to stdout | no | CLI-003 |
 | `noc version` | `--version` | Print build version | no | CLI-004 |
-| `noc ls [--json] [--all] [--bucket list] [--socket path]` | `list` | List agents | yes | CLI-013..CLI-017 |
-| `noc search [--json] [--older-than age] [--newer-than age] [--bucket list] [--socket path] [text...]` | `find` | List the agents that match a query | yes | CLI-037..CLI-039 |
+| `noc ls [--json] [--all] [--bucket list] [--team name\|none] [--socket path]` | `list` | List agents | yes | CLI-013..CLI-017, CLI-040 |
+| `noc search [--json] [--older-than age] [--newer-than age] [--bucket list] [--team name\|none] [--socket path] [text...]` | `find` | List the agents that match a query | yes | CLI-037..CLI-039, CLI-040 |
 | `noc show [--json] [--socket path] <agent-id>` | — | Show one agent | yes | CLI-018, CLI-019 |
 | `noc attach [--force] [--socket path] <agent-id>` | — | Open the provider's terminal UI on an agent | yes (lookup only) | ATT-001..ATT-017 |
 | `noc rename [--clear] [--socket path] <agent-id> [name...]` | `name` | Set/clear the user name; push to provider where supported | yes | CLI-027..CLI-029 |
 | `noc stop [--socket path] <agent-id>` | — | Stop a Claude background session via the provider | yes (lookup only) | ATT-018..ATT-021 |
 | `noc forget [--socket path] <agent-id>...` | — | Delete registry rows | yes | CLI-030 |
 | `noc events [--json] [--provider p] [--limit n] [--socket path] [agent-id]` | — | Bounded event diagnostics | yes | CLI-020, CLI-021 |
-| `noc watch [--json] [--all] [--socket path]` | — | Stream registry changes | yes (streaming) | CLI-022..CLI-026 |
+| `noc watch [--json] [--all] [--team name\|none] [--socket path]` | — | Stream registry changes | yes (streaming) | CLI-022..CLI-026, CLI-040 |
+| `noc teams [--json] [--socket path]` | — | Summarise agents by team | yes | CLI-044 |
+| `noc team set [--socket path] <name> [agent-id...]` | — | Put agents in a team | yes | CLI-041..CLI-043 |
+| `noc team clear [--socket path] [agent-id...]` | — | Take agents out of their team | yes | CLI-041..CLI-043 |
+| `noc team lead [--socket path] <name> [agent-id]` | — | Mark a team's lead | yes | CLI-041..CLI-043 |
+| `noc spawn [--provider claude] [--team name\|none] [--name name] [--dir path] [--socket path] <prompt...> [-- provider-arguments]` | — | Start a background Claude session and register it | yes | CLI-045..CLI-047 |
 | `noc doctor [--json] [--socket path] [--database path] [--timeout d]` | — | Installation diagnostics | optional | CLI-031, CLI-032 |
 | `noc setup [--check\|--uninstall] [--json] [--executable path] [claude\|codex]` | — | Manage provider hook handlers | no | CLI-033, CLI-034 |
 | `noc server [launch flags] [--bg]` | `server run`, `server start` | Run the server (foreground, or detached with `--bg`) | — | LIFE-001..LIFE-016 |
@@ -80,15 +87,20 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
     noc server restart
     noc server stop
     noc server status [--json]
-    noc ls [--json] [--all] [--bucket blocked,working,review,quiet]
-    noc search [--json] [--older-than age] [--newer-than age] [--bucket ...] [text...]
+    noc ls [--json] [--all] [--bucket blocked,working,review,quiet] [--team name|none]
+    noc search [--json] [--older-than age] [--newer-than age] [--bucket ...] [--team name|none] [text...]
     noc show [--json] <agent-id>
     noc attach [--force] <agent-id>
     noc rename [--clear] <agent-id> [name]
     noc stop <agent-id>
     noc forget <agent-id> [<agent-id>...]
     noc events [--json] [--provider claude|codex] [--limit count] [agent-id]
-    noc watch [--json] [--all]
+    noc watch [--json] [--all] [--team name|none]
+    noc teams [--json]
+    noc team set <name> [agent-id...]
+    noc team clear [agent-id...]
+    noc team lead <name> [agent-id]
+    noc spawn [--provider claude] [--team name|none] [--name name] [--dir path] <prompt> [-- provider-arguments]
     noc doctor [--json]
     noc setup [--check|--uninstall] [claude|codex]
 
@@ -120,7 +132,7 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
   - Flag parsing stops at the first non-flag argument; flags after a positional are positionals. E.g. `noc attach <id> --force` has two positionals and is a usage error; `noc rename <id> --clear` names the agent `--clear`.
   - `-h`, `-help`, `--help` MUST print `Usage of <flagset name>:` and the flag defaults to stderr and exit **0**.
   - An undefined flag or bad value MUST print `flag provided but not defined: -x` (or the flag package's value error) plus usage to stderr and exit **2**.
-  - Flag-set names (shown in usage) are `noc ls`, `noc search`, `noc show`, `noc attach`, `noc stop`, `noc forget`, `noc rename`, `noc events`, `noc watch`, `noc doctor`, `noc setup`, `noc server`, `noc server status`, `noc server restart`, `noc server stop`, `noc hook ingest`. Note `ls` uses the flag-set name `noc ls` even when invoked as `list`, and `rename` uses `noc rename` even when invoked as `name`.
+  - Flag-set names (shown in usage) are `noc ls`, `noc search`, `noc show`, `noc attach`, `noc stop`, `noc forget`, `noc rename`, `noc events`, `noc watch`, `noc teams`, `noc team <verb>` (the verb as typed), `noc spawn`, `noc doctor`, `noc setup`, `noc server`, `noc server status`, `noc server restart`, `noc server stop`, `noc hook ingest`. Note `ls` uses the flag-set name `noc ls` even when invoked as `list`, and `rename` uses `noc rename` even when invoked as `name`.
 - **Source:** `go/internal/cli/run.go` (newFlagSet, parseFlags); the same pattern is used by every `run*` function
 - **Verified by:** `go/internal/cli/run_test.go` TestValidationPaths (`ls -h`, an undefined flag, `server restart --bg`); `go/internal/cli/server_lifecycle_unix_test.go` TestBackgroundServerLifecycle (restart accepts launch flags and `--timeout`); one-dash spelling and flag-after-positional for `rename` UNTESTED.
 
@@ -130,8 +142,8 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
   | Code | Meaning | Where |
   |---|---|---|
   | 0 | Success; help; `-h` on any flag set; watch ended by signal; `hook ingest` always (except CLI-035) | all |
-  | 1 | Runtime failure: server unreachable, API error, path resolution failure, provider command could not be found/started, lifecycle errors, attach/stop refusals, doctor/setup reports with failures, any `forget` ID failed | `printError`, `printServerError`, `printServerLifecycleError` |
-  | 2 | Usage error: unknown command, unknown `server` subcommand, flag parse error, wrong positional count, invalid flag value caught by validation | all |
+  | 1 | Runtime failure: server unreachable, API error, path resolution failure, provider command could not be found/started, lifecycle errors, attach/stop refusals, doctor/setup reports with failures, any `forget` or `team set`/`team clear` ID failed, `team lead` for an agent outside the team, any `spawn` failure after validation (CLI-047) | `printError`, `printServerError`, `printServerLifecycleError` |
+  | 2 | Usage error: unknown command, unknown `server` or `team` subcommand, flag parse error, wrong positional count, invalid flag value caught by validation (including an invalid team name), a `team` command with no agent ID run outside an agent | all |
   | N ≥ 0 | `attach`: the exit status of the provider child process when it exited normally | ATT-013 |
   | N > 0 | `stop`: the provider child's nonzero exit status | ATT-021 |
   | 130 | `attach`: the child was killed by a signal (`ExitCode() < 0`) **and** the CLI context was cancelled | ATT-013 |
@@ -149,22 +161,22 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
 - **Verified by:** `go/internal/cli/run_test.go` TestBackgroundStartRejectsExistingServerWithStopGuidance (already-running text), TestServerDownShowsConnectionHint (connection hint), TestRunningServerProcessesHookAndExposesPreview (API message); MANUAL M-1.
 
 #### CLI-009 JSON output encoding
-- **Behavior:** Every `--json` flag except `watch --json` MUST write exactly one JSON document using `encoding/json` with two-space indentation (`SetIndent("", "  ")`) followed by a newline. An encode failure MUST print `noc: write JSON: <err>` and exit 1. `watch --json` MUST write compact (unindented) one-object-per-line NDJSON (CLI-025). The JSON shapes are the public `apiv1` types: `ls` → `AgentList` (`schema_version`, `generated_at`, `agents`); `show` → `Agent`; `events` → `AgentEventList`; `server status` → `Health`; `doctor` → `doctor.Report`; `setup` → `setup.Report`.
+- **Behavior:** Every `--json` flag except `watch --json` MUST write exactly one JSON document using `encoding/json` with two-space indentation (`SetIndent("", "  ")`) followed by a newline. An encode failure MUST print `noc: write JSON: <err>` and exit 1. `watch --json` MUST write compact (unindented) one-object-per-line NDJSON (CLI-025). The JSON shapes are the public `apiv1` types: `ls` → `AgentList` (`schema_version`, `generated_at`, `agents`); `show` → `Agent`; `events` → `AgentEventList`; `server status` → `Health`; `teams` → `TeamList`; `doctor` → `doctor.Report`; `setup` → `setup.Report`.
 - **Source:** `go/internal/cli/run.go` (writeJSON, runWatch)
 - **Verified by:** `go/internal/cli/run_test.go` TestRunningServerProcessesHookAndExposesPreview (decodes `ls`, `show`, `events` JSON)
 
 #### CLI-010 Client request timeouts
-- **Behavior:** Client commands MUST bound their API calls: `ls`, `show`, `events`, `forget` (one shared deadline for all IDs), `server status` (shared by its health and list calls), and the agent lookup in `attach`/`stop` use **3 s** (`requestTimeout`). `rename` uses **10 s** (`renameRequestTimeout`) because the server pushes the name to the provider (the server bounds that push at 5 s). `watch` has no deadline. `doctor` uses its `--timeout` (default 15 s) for all diagnostics. `hook ingest` uses a 900 ms context for its SQLite calls and wake (150 ms for the wake call). It is not an overall bound on the process: the stdin read is unbounded and the process-table snapshot (`ps`, killed after 2 s) is not tied to it; both run after the 900 ms clock has started (CLI-036, HK-005).
+- **Behavior:** Client commands MUST bound their API calls: `ls`, `show`, `events`, `forget` (one shared deadline for all IDs), `server status` (shared by its health and list calls), `teams`, `team` (one shared deadline for the whole command, including finding the calling agent), and the agent lookup in `attach`/`stop` use **3 s** (`requestTimeout`). `spawn` uses 3 s for finding its caller and 3 s for registering, and bounds the provider separately (CLI-046). `rename` uses **10 s** (`renameRequestTimeout`) because the server pushes the name to the provider (the server bounds that push at 5 s). `watch` has no deadline. `doctor` uses its `--timeout` (default 15 s) for all diagnostics. `hook ingest` uses a 900 ms context for its SQLite calls and wake (150 ms for the wake call). It is not an overall bound on the process: the stdin read is unbounded and the process-table snapshot (`ps`, killed after 2 s) is not tied to it; both run after the 900 ms clock has started (CLI-036, HK-005).
 - **Source:** `go/internal/cli/run.go` (requestTimeout, renameRequestTimeout, hookIngestTimeout, hookWakeTimeout, defaultServerTimeout); `go/internal/localapi/server.go` (providerRenameTimeout); `go/internal/proclineage/proclineage.go` (snapshotTimeout)
 - **Verified by:** UNTESTED
 
 #### CLI-011 Agent reference resolution
-- **Behavior:** Every `<agent-id>` positional (`show`, `attach`, `stop`, `rename`, `forget`, `events`) MUST be sent verbatim (URL path-escaped) to the server and MUST be matched **only as an exact, full noc agent ID** (a UUID string; SQL `WHERE id = ?`). There is no prefix matching, no matching by name, user name, short ID, or native session ID, and therefore no ambiguity error. A non-matching ID MUST yield HTTP 404 `agent_not_found` → stderr `noc: noc server: agent was not found`, exit 1. An empty string ID yields HTTP 400 → `noc: noc server: an agent ID is required`, exit 1. In particular a leading prefix of a real ID (e.g. the first 8 characters, as frontends often display) MUST NOT resolve: `noc show <8-char-prefix>` → `noc: noc server: agent was not found`, exit 1. The CLI performs no client-side resolution (no list-then-match) before the request, and neither `Store.Get` nor `Store.Forget` uses `LIKE` or prefix comparison.
+- **Behavior:** Every `<agent-id>` positional (`show`, `attach`, `stop`, `rename`, `forget`, `events`, `team`) MUST be sent verbatim (URL path-escaped) to the server and MUST be matched **only as an exact, full noc agent ID** (a UUID string; SQL `WHERE id = ?`). There is no prefix matching, no matching by name, user name, short ID, or native session ID, and therefore no ambiguity error. A non-matching ID MUST yield HTTP 404 `agent_not_found` → stderr `noc: noc server: agent was not found`, exit 1. An empty string ID yields HTTP 400 → `noc: noc server: an agent ID is required`, exit 1. In particular a leading prefix of a real ID (e.g. the first 8 characters, as frontends often display) MUST NOT resolve: `noc show <8-char-prefix>` → `noc: noc server: agent was not found`, exit 1. The CLI performs no client-side resolution (no list-then-match) before the request, and neither `Store.Get` nor `Store.Forget` uses `LIKE` or prefix comparison.
 - **Source:** `go/internal/localapi/client.go` (GetAgent); `go/internal/localapi/server.go` (handleAgent); `go/internal/storage/sqlite/store.go` (Get, Forget)
 - **Verified by:** `go/internal/localapi/server_test.go` TestClientAndServerOverUnixSocket; `go/internal/cli/run_test.go` TestRunningServerProcessesHookAndExposesPreview (`show nope`, `forget nope`); prefix rejection UNTESTED.
 
 #### CLI-012 `--socket` on every client command
-- **Behavior:** `ls`, `show`, `attach`, `stop`, `forget`, `rename`, `events`, `watch`, `doctor`, `server status`, `server stop`, `server restart`, `server` and `hook ingest` MUST accept `--socket <path>` (string) defaulting to the resolved `SocketPath` (CFG-003). Every command that needs paths MUST call `config.ResolvePaths()` before parsing flags; a resolution error MUST print `noc: <err>` and exit 1 (for `hook ingest`, exit 0 silently). `setup` does not resolve paths.
+- **Behavior:** `ls`, `search`, `show`, `attach`, `stop`, `forget`, `rename`, `events`, `watch`, `teams`, `team`, `spawn`, `doctor`, `server status`, `server stop`, `server restart`, `server` and `hook ingest` MUST accept `--socket <path>` (string) defaulting to the resolved `SocketPath` (CFG-003). Every command that needs paths MUST call `config.ResolvePaths()` before parsing flags; a resolution error MUST print `noc: <err>` and exit 1 (for `hook ingest`, exit 0 silently). `setup` does not resolve paths.
 - **Source:** `go/internal/cli/run.go` (every `run*` function)
 - **Verified by:** indirectly by every test that sets `NOC_SOCKET` (`go/internal/cli/run_test.go`)
 
@@ -178,9 +190,10 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
   | `--json` | bool | false | Write the `AgentList` JSON |
   | `--all` | bool | false | Request `GET /v1/agents?all=true` (include retained non-live rows) |
   | `--bucket` | string | `""` | Comma-separated bucket filter (CLI-014) |
+  | `--team` | string | `""` | Team filter (CLI-040) |
   | `--socket` | string | resolved socket | Server socket |
 
-  Any positional MUST print `noc ls: unexpected positional arguments` to stderr, exit 2. The bucket list is validated before contacting the server.
+  Any positional MUST print `noc ls: unexpected positional arguments` to stderr, exit 2. The bucket list and then the team are validated before contacting the server.
 - **Source:** `go/internal/cli/run.go` (runList)
 - **Verified by:** `go/internal/cli/run_test.go` TestValidationPaths (positional, bad bucket); filtering via CLI-014.
 
@@ -191,13 +204,13 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
 - **Verified by:** `go/internal/cli/run_test.go` TestListFiltersAndOrdersByBucket (`"review, Blocked"` accepted, `"bogus"` rejected)
 
 #### CLI-015 `ls` filtering and ordering
-- **Behavior:** After the server responds, the CLI MUST (1) drop agents whose `bucket` is not selected (no-op when the selection is empty) and (2) stable-sort by bucket rank ascending — `blocked`(0), `working`(1), `review`(2), `quiet`(3), any other/empty value (4) — then by recency descending. Recency is the first non-nil of `last_activity_at`, `ended_at`, `created_at`, else `first_seen_at`; `last_seen_at` MUST NOT be used (it is refreshed by every reconciliation). The filtered, re-ordered list is what both human and JSON output show (the JSON `agents` order is the CLI's, not the server's).
+- **Behavior:** After the server responds, the CLI MUST (1) drop agents whose `bucket` is not selected (no-op when the selection is empty), (2) drop agents the team filter does not keep (CLI-040), and (3) stable-sort by bucket rank ascending — `blocked`(0), `working`(1), `review`(2), `quiet`(3), any other/empty value (4) — then by recency descending. Recency is the first non-nil of `last_activity_at`, `ended_at`, `created_at`, else `first_seen_at`; `last_seen_at` MUST NOT be used (it is refreshed by every reconciliation). The filtered, re-ordered list is what both human and JSON output show (the JSON `agents` order is the CLI's, not the server's).
 - **Source:** `go/internal/cli/run.go` (runList, filterBuckets, sortByBucket, agentRecency)
 - **Decision:** D-046, D-048
 - **Verified by:** `go/internal/cli/run_test.go` TestListFiltersAndOrdersByBucket; `go/internal/cli/run_test.go` TestRecencyIgnoresWhenNocLastLooked
 
 #### CLI-016 `ls` human output
-- **Behavior:** With zero agents (after filtering) MUST print exactly `No live agents.` (also with `--all` or `--bucket`). Otherwise MUST print a `text/tabwriter` table (minwidth 0, tabwidth 4, padding 2, pad char space, no flags) with header `ID  PROVIDER  BUCKET  STATE  WORKSPACE  NAME` and one row per agent: `id`, `provider`, `bucket`, `display_state`, `workspace.path` or `-` when workspace is nil or path empty, display name or `-`. Display name = `user_name` if non-empty else provider `name` (D-035/D-042 overlay). No column is truncated; no timestamps are printed.
+- **Behavior:** With zero agents (after filtering) MUST print exactly `No live agents.` (also with `--all` or `--bucket`). Otherwise MUST print a `text/tabwriter` table (minwidth 0, tabwidth 4, padding 2, pad char space, no flags) with header `ID  PROVIDER  BUCKET  STATE  WORKSPACE  NAME` and one row per agent: `id`, `provider`, `bucket`, `display_state`, `workspace.path` or `-` when workspace is nil or path empty, display name or `-`. Display name = `user_name` if non-empty else provider `name` (D-035/D-042 overlay). When any listed agent is in a team the table gains a `TEAM` column after `ID` (CLI-040). No column is truncated; no timestamps are printed.
 - **Source:** `go/internal/cli/run.go` (renderAgents, agentDisplayName)
 - **Decision:** D-035, D-042
 - **Verified by:** `go/internal/cli/run_test.go` TestSingleBinaryServerAndDefaultClient (empty message); table layout UNTESTED; MANUAL M-3.
@@ -209,25 +222,26 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
 - **Verified by:** `go/internal/cli/run_test.go` TestRunningServerProcessesHookAndExposesPreview
 
 #### CLI-037 `search` query
-- **Behavior:** `noc search` (alias `find`) takes the flags `--json`, `--older-than <age>`, `--newer-than <age>`, `--bucket <list>` (CLI-014) and `--socket`, then any number of positional words. It builds one query; an agent matches when every part holds:
-  - **Text.** Each positional is lower-cased and split on whitespace into terms. Every term MUST occur, case-insensitively, as a substring of the agent's text: its id, user name, name, provider, native session id and short id, model, display state, bucket, summary, attention detail, initial request text, and workspace path, root path and branch.
+- **Behavior:** `noc search` (alias `find`) takes the flags `--json`, `--older-than <age>`, `--newer-than <age>`, `--bucket <list>` (CLI-014), `--team <name|none>` (CLI-040) and `--socket`, then any number of positional words. It builds one query; an agent matches when every part holds:
+  - **Text.** Each positional is lower-cased and split on whitespace into terms. Every term MUST occur, case-insensitively, as a substring of the agent's text: its id, user name, name, team, provider, native session id and short id, model, display state, bucket, summary, attention detail, initial request text, and workspace path, root path and branch.
   - **Age.** An agent's age is the time since its recency (CLI-015: last activity, else ended, else created, else first seen; never when noc last looked). With an older-than bound the age MUST be at least the bound; with a newer-than bound, at most the bound.
   - **Ages** are a positive whole number followed by `d` (days; also the default with no letter), `w` (weeks) or `h` (hours), case-insensitive, at most `100000`.
   - **Bounds in the text.** A term `older:<age>` or `newer:<age>` that parses sets that bound (overriding the flag) and is not matched as text; one that does not parse is an ordinary term, so a query being typed never fails.
+  - **Team in the text.** A term `team:<name>` with a non-empty name is not matched as text: the agent's team MUST equal the name exactly, compared case-insensitively (terms are lower-cased), and `team:none` keeps only agents in no team. The name is not validated, so a name no team has matches nothing. Several such terms must all hold. A bare `team:` is an ordinary term.
 
-  An unparsable flag value MUST print `noc search: invalid age "<value>" (want a number of days such as 14, or 14d, 2w, 36h)` and exit 2. An older-than bound greater than the newer-than bound MUST print `noc search: no agent is both older than <age> and newer than <age>` and exit 2. Bucket errors are as in CLI-014 with the `noc search:` prefix. All of this is validated before contacting the server.
+  An unparsable flag value MUST print `noc search: invalid age "<value>" (want a number of days such as 14, or 14d, 2w, 36h)` and exit 2. An older-than bound greater than the newer-than bound MUST print `noc search: no agent is both older than <age> and newer than <age>` and exit 2. Bucket errors are as in CLI-014 and team-flag errors as in CLI-040, with the `noc search:` prefix. All of this is validated before contacting the server.
 - **Source:** `go/internal/cli/search.go` (runSearch, parseSearchQuery, parseAge, agentSearchText, searchQuery.matches)
 - **Decision:** D-065
-- **Verified by:** `go/internal/cli/search_test.go` TestParseAge, TestParseSearchQuery, TestSearchAgentsByTextAndAge, TestSearchRejectsBadFlags
+- **Verified by:** `go/internal/cli/search_test.go` TestParseAge, TestParseSearchQuery, TestSearchAgentsByTextAndAge, TestSearchRejectsBadFlags; `go/internal/cli/teams_test.go` TestTeamCommandsListsAndFilters (the team as text, `team:<name>` exact and case-insensitive, `team:none`). A bare `team:` and two team terms are UNTESTED.
 
 #### CLI-038 `search` results
-- **Behavior:** `search` MUST read every agent the server retains (as `ls --all`), keep those in the selected buckets that match the query, and order them as CLI-015. With no words and no bounds every agent matches. `--json` MUST write the same `AgentList` document as `ls --json` (CLI-017), holding the matches.
+- **Behavior:** `search` MUST read every agent the server retains (as `ls --all`), keep those in the selected buckets and kept by the team flag that match the query, and order them as CLI-015. With no words and no bounds every agent matches. `--json` MUST write the same `AgentList` document as `ls --json` (CLI-017), holding the matches.
 - **Source:** `go/internal/cli/search.go` (runSearch, searchAgents)
 - **Decision:** D-065
-- **Verified by:** `go/internal/cli/search_test.go` TestSearchAgentsByTextAndAge; the server round trip UNTESTED
+- **Verified by:** `go/internal/cli/search_test.go` TestSearchAgentsByTextAndAge; `go/internal/cli/teams_test.go` TestTeamCommandsListsAndFilters (the server round trip, `--json`, `--team` with text)
 
 #### CLI-039 `search` human output
-- **Behavior:** With no match it MUST print `No agents match.`. Otherwise a table with the columns `ID`, `PROVIDER`, `BUCKET`, `STATE`, `AGE`, `WORKSPACE`, `NAME`, as CLI-016 plus `AGE`: the agent's age in its largest whole unit, `<n>w` from 14 days, `<n>d` from 1 day, `<n>h` from 1 hour, else `<n>m` (`0m` for a time in the future).
+- **Behavior:** With no match it MUST print `No agents match.`. Otherwise a table with the columns `ID`, `PROVIDER`, `BUCKET`, `STATE`, `AGE`, `WORKSPACE`, `NAME`, as CLI-016 (including its `TEAM` column after `ID` when any match is in a team) plus `AGE`: the agent's age in its largest whole unit, `<n>w` from 14 days, `<n>d` from 1 day, `<n>h` from 1 hour, else `<n>m` (`0m` for a time in the future).
 - **Source:** `go/internal/cli/search.go` (renderSearchResults, formatAge)
 - **Verified by:** `go/internal/cli/search_test.go` TestSearchAgentsByTextAndAge
 
@@ -239,14 +253,14 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
 #### CLI-019 `show` human output
 - **Behavior:** MUST print a two-column tabwriter (same parameters as CLI-016) of `Label:<TAB>value` lines in this order; conditional lines are omitted when their value is empty/nil:
   1. `ID:`, `Provider:`, `Native session:`, `Host:`, `State:` (display_state), `Runtime:` (runtime_state), `Activity:` (activity_state) — always.
-  2. `User name:` if `user_name`; `Provider name:` if `name`; `Model:` if `model`; `Reasoning effort:` if `reasoning_effort`.
+  2. `User name:` if `user_name`; `Provider name:` if `name`; `Team:` if `team`, written `<team>` or, for the team's lead, `<team> (lead)`; `Parent:` if `parent_id`; `Model:` if `model`; `Reasoning effort:` if `reasoning_effort`.
   3. If `initial_request` non-nil: `Initial request:` text and `Initial request source:` source.
   4. If `summary` non-empty: `Current summary:` and, if `summary_source` non-empty, `Summary source:`.
   5. If `workspace` non-nil: `Directory:` path (always, even if empty), then `Workspace root:` if root_path, `Workspace kind:` if kind, `Branch:` if branch.
   6. One `Frontend:` line per frontend binding: `<kind>[:<session>][/<pane_id>] (<state>)`.
   Bucket, live state, capabilities, timestamps, and native state are not shown in human form.
 - **Source:** `go/internal/cli/run.go` (renderAgent)
-- **Verified by:** `go/internal/cli/run_test.go` TestRenderAgentIncludesDetailPreviewMetadata
+- **Verified by:** `go/internal/cli/run_test.go` TestRenderAgentIncludesDetailPreviewMetadata; `go/internal/cli/teams_test.go` TestTeamCommandsListsAndFilters (`auth (lead)`). The `Parent:` line is UNTESTED.
 
 #### CLI-020 `events` flags and validation
 - **Behavior:** Flags:
@@ -270,10 +284,10 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
 - **Verified by:** `go/internal/cli/run_test.go` TestRenderEventsShowsSafeTimeline
 
 #### CLI-022 `watch` flags
-- **Behavior:** Flags: `--json` (bool), `--all` (bool; adds `?all=true` to `/v1/agents/watch`), `--socket`. Any positional MUST print `noc watch: unexpected positional arguments`, exit 2. The stream request has no timeout.
+- **Behavior:** Flags: `--json` (bool), `--all` (bool; adds `?all=true` to `/v1/agents/watch`), `--team` (CLI-040), `--socket`. Any positional MUST print `noc watch: unexpected positional arguments`, exit 2; the team is validated next, before the request. The stream request has no timeout. With `--team`, every received snapshot is reduced to the agents the filter keeps before anything else is done with it, so an agent that joins or leaves the team shows as `ADDED` or `REMOVED` (CLI-023).
 - **Source:** `go/internal/cli/run.go` (runWatch); `go/internal/localapi/client.go` (WatchAgents)
 - **Decision:** D-031
-- **Verified by:** `go/internal/cli/run_test.go` TestValidationPaths (positional); `go/internal/localapi/server_test.go` TestWatchAgentsStreamsSemanticSnapshots (transport)
+- **Verified by:** `go/internal/cli/run_test.go` TestValidationPaths (positional); `go/internal/cli/teams_test.go` TestTeamCommandsListsAndFilters (invalid `--team`); `go/internal/localapi/server_test.go` TestWatchAgentsStreamsSemanticSnapshots (transport). Filtering a stream by team is UNTESTED.
 
 #### CLI-023 `watch` human output
 - **Behavior:** On the first snapshot MUST print `Watching agents; press Ctrl-C to stop.` then the CLI-016 table (or `No live agents.`) of that snapshot **in server order** (no CLI-015 sort). For each later snapshot MUST diff by agent ID against the previous snapshot and print one tabwriter row (no header) per change: `<HH:MM:SS>  <KIND>  <id>  <provider>  <state>  <workspace or ->  <name>`, where HH:MM:SS is the snapshot's `generated_at` in local time; KIND is `ADDED`, `UPDATED` (semantic change, CLI-024), or `REMOVED`; rows sorted by KIND lexically (`ADDED` < `REMOVED` < `UPDATED`) then ID. For UPDATED, state is `<old> -> <new>` when display_state changed, and name is `<old or -> -> <new or ->` when the display name changed. A snapshot with no changes prints nothing.
@@ -287,7 +301,7 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
 - **Verified by:** `go/internal/cli/run_test.go` TestWatchAgentsEqualIgnoresReconciliationTimestamps
 
 #### CLI-025 `watch --json`
-- **Behavior:** MUST write every received `AgentList` snapshot, unmodified and unfiltered, as one compact JSON line (NDJSON) as it arrives; no banner and no diffing.
+- **Behavior:** MUST write every received `AgentList` snapshot as one compact JSON line (NDJSON) as it arrives; no banner and no diffing. The snapshot is unmodified except that with `--team` its `agents` hold only the agents the filter keeps (CLI-022); a snapshot is written even when the filter leaves its agents unchanged from the previous line.
 - **Source:** `go/internal/cli/run.go` (runWatch)
 - **Decision:** D-031
 - **Verified by:** UNTESTED (CLI)
@@ -332,6 +346,114 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
 - **Source:** `go/internal/cli/run.go` (runForget); `go/internal/localapi/client.go` (ForgetAgent)
 - **Decision:** D-040, D-041
 - **Verified by:** `go/internal/localapi/server_test.go` TestForgetAgentRemovesTheRowOverTheSocket (transport); `go/internal/cli/run_test.go` TestRunningServerProcessesHookAndExposesPreview (`forget <id> nope`), TestValidationPaths (usage); MANUAL M-4.
+
+## Teams and spawn
+
+A team is a name that agents share, and one of its agents may be its lead
+([02-api.md](02-api.md) API-034, REG-022). The CLI puts agents in teams, lists
+and filters by team, and starts new agents that join one.
+
+#### CLI-040 The `--team` filter and the `TEAM` column
+- **Behavior:** `ls`, `search` and `watch` take `--team <value>` (string, default `""`). The value MUST be empty (no filter), `none`, or a valid team name (API-034); anything else MUST print `noc <ls|search|watch>: invalid team "<value>": a team name is 1 to 48 characters from A-Za-z0-9._-, not starting with - or ., and not none` to stderr and exit 2, before the server is contacted. `--team <name>` keeps exactly the agents whose `team` equals the name (case-sensitive); `--team none` keeps the agents in no team. A valid name that no agent carries keeps nothing and is not an error. The filter applies to the human and the JSON output alike.
+
+  When at least one agent in a table is in a team, the tables of `ls`, `search` and the first `watch` snapshot MUST gain a `TEAM` column after `ID`: the team's name, `<name>*` for the team's lead, and `-` for an agent in no team. When none is, the tables are exactly as without teams.
+- **Source:** `go/internal/cli/teams.go` (parseTeamFilter, filterTeam, anyInTeam, teamCell); `go/internal/cli/run.go` (runList, renderAgents, runWatch); `go/internal/cli/search.go` (runSearch, renderSearchResults)
+- **Decision:** D-071
+- **Verified by:** `go/internal/cli/teams_test.go` TestTeamCommandsListsAndFilters (`ls` with and without the column, the three cell forms, `--team` a name, `none`, an unknown name, invalid values on all three commands, `search --team`). The `search` table's column and the `watch` table's column are UNTESTED.
+
+#### CLI-041 `team` arguments
+- **Behavior:** `noc team <verb> [--socket path] ...` with the verbs `set`, `clear` and `lead`. Checks, in order:
+  1. No verb MUST print the usage below to stderr and exit 2.
+  2. Flags after the verb are parsed (CLI-006) with the flag-set name `noc team <verb>`; the only flag is `--socket`.
+  3. `set` needs a team name and then takes any number of agent IDs; `lead` needs a team name and takes at most one agent ID; `clear` takes any number of agent IDs and no name. A missing name, or more than one ID for `lead`, MUST print the usage and exit 2. Any other verb MUST print `noc team: unknown command "<verb>"` and then the usage, exit 2.
+  4. A team name that is not valid (API-034) MUST print `noc team <verb>: invalid team "<name>": a team name is 1 to 48 characters from A-Za-z0-9._-, not starting with - or ., and not none` and exit 2.
+
+  All of this happens before the server is contacted. The usage is exactly:
+  ```text
+  usage: noc team set <name> [<agent-id>...]
+         noc team clear [<agent-id>...]
+         noc team lead <name> [<agent-id>]
+
+  With no agent ID, the command acts on the agent it is run inside.
+  ```
+- **Source:** `go/internal/cli/teams.go` (runTeam, teamUsage)
+- **Decision:** D-071
+- **Verified by:** `go/internal/cli/teams_test.go` TestTeamCommandsListsAndFilters (no verb, unknown verb, `set` with no name, `set none`, an invalid name, `lead` with no name and with two IDs). Exact usage text UNTESTED.
+
+#### CLI-042 `team` actions and output
+- **Behavior:** With no agent ID given, the command acts on the calling agent (CLI-043); when there is none it MUST print `noc team <verb>: no agent ID was given and this is not running inside an agent` and exit 2. One 3 s deadline covers the whole command.
+
+  | Verb | For each agent ID, in order | stdout on success |
+  |---|---|---|
+  | `set <name>` | `PUT /v1/agents/<id>/team` with `{"team":"<name>"}`: the agent joins the team, leaving any other | `<id> is in team <name>` |
+  | `clear` | the same request with `{"team":""}` | `<id> is in no team` |
+  | `lead <name>` | `GET /v1/agents/<id>`; if its team is not `<name>`, print `noc: <id> is not in team <name>` and exit 1 without changing anything; else `PUT /v1/agents/<id>/team` with `{"team":"<name>","lead":true}` | `<id> leads team <name>` |
+
+  For `set` and `clear`, a failing ID prints the CLI-008 error and the command continues with the next; the exit is 1 if any ID failed, else 0. For `lead`, any error ends the command with exit 1. What these do to a team's lead (moving teams drops the mark, a new lead replaces the old) is [02-api.md](02-api.md) REG-022. The commands change only noc's registry; nothing is sent to a provider.
+- **Source:** `go/internal/cli/teams.go` (runTeam); `go/internal/localapi/client.go` (SetAgentTeam, SetTeamLead)
+- **Decision:** D-071
+- **Verified by:** `go/internal/cli/teams_test.go` TestTeamCommandsListsAndFilters (every output line, `lead` outside the team, an unknown agent, no caller, and each verb acting on the caller)
+
+#### CLI-043 The calling agent
+- **Behavior:** `team` with no agent ID, and `spawn` when it records a parent, MUST work out which agent the command is running inside, taking the first of these that applies:
+  1. **The Claude session.** When `CLAUDE_CODE_SESSION_ID` is set (non-blank after trimming), the agent whose provider is `claude` and whose `native_session_id` equals it, among every agent the server retains. Claude sets this variable in the commands a session runs, so it names the session nearest to the command.
+  2. **`NOC_AGENT_ID`** (trimmed), when set. `noc attach` sets it for the provider it starts (ATT-012). It is used as given, without checking that the agent exists.
+  3. **The provider process.** When `NOC_AGENT_ID` is not set, the nearest ancestor process of this command named `claude` or `codex` (the lineage walk the hook path uses, [06-hooks.md](06-hooks.md) PL-001), matched against the `process_id` of an agent that is not `not_live`.
+
+  When none applies there is no calling agent. The server is asked (`GET /v1/agents?all=true`) only when step 1 or step 3 has something to match; a failure of that request is a server error (CLI-008). The Claude session wins over `NOC_AGENT_ID` because a session started by hand inside another agent's terminal inherits that agent's `NOC_AGENT_ID`, which then names the wrong agent. A background Claude session does not inherit the environment of the command that started it, so `NOC_AGENT_ID` never reaches an agent that `noc spawn` started; step 1 is what identifies it.
+- **Source:** `go/internal/cli/teams.go` (callerAgentID, providerProcessID); `go/internal/proclineage/proclineage.go` (ProviderProcessID)
+- **Decision:** D-076
+- **Verified by:** `go/internal/cli/teams_test.go` TestCallerIsFoundByItsProviderProcess (every order case), TestSpawnStartsClaudeInTheBackground (a spawn from inside a Claude session), TestTeamCommandsListsAndFilters (`NOC_AGENT_ID`). That Claude sets `CLAUDE_CODE_SESSION_ID`, and that a background session lacks `NOC_AGENT_ID`, were observed on Claude Code 2.1.325 and are not tested.
+
+#### CLI-044 `teams`
+- **Behavior:** `noc teams` flags: `--json` (bool), `--socket`. Any positional MUST print `noc teams: unexpected positional arguments`, exit 2. It MUST read every agent the server retains (`GET /v1/agents?all=true`), live or not, and summarise them by team: one row per team name in ascending byte order, then, when at least one agent is in no team, a last row for those agents. Each row counts its agents and, of those, how many are in the `blocked`, `working`, `review` and `quiet` buckets (any other bucket value counts as quiet). A team's lead is the first agent in the server's order that is marked lead.
+
+  Human output: with no agents at all, exactly `No agents.`. Otherwise a tabwriter table (CLI-016 parameters) with header `TEAM  LEAD  AGENTS  BLOCKED  WORKING  REVIEW  QUIET`. `TEAM` is the name, or `(none)` for the last row. `LEAD` is the lead's display name (`user_name`, else `name`), else its id when it has no name, else `-` when the team has no lead.
+
+  `--json` MUST write a `TeamList` ([02-api.md](02-api.md) API-037) per CLI-009, with `generated_at` taken from the server's list and the same rows in the same order; the row for agents in no team has `"team": ""`, and `teams` is `[]` when there are no agents.
+- **Source:** `go/internal/cli/teams.go` (runTeams, summarizeTeams, renderTeams)
+- **Decision:** D-071
+- **Verified by:** `go/internal/cli/teams_test.go` TestSummarizeAndRenderTeams (ordering, counts, an odd bucket, the lead's name and id, `(none)`, `No agents.`, no last row when every agent is in a team), TestTeamCommandsListsAndFilters (the table and `--json` against a server, the positional error)
+
+#### CLI-045 `spawn` arguments and validation
+- **Behavior:** `noc spawn [flags] <prompt...> [-- <provider arguments>]`. The command line is cut at the first argument that is exactly `--`: what is before it is noc's, what is after it is passed to the provider unchanged (CLI-046). Flags, parsed from noc's part with the flag-set name `noc spawn`:
+
+  | Flag | Type | Default | Meaning |
+  |---|---|---|---|
+  | `--provider` | string | `claude` | The provider to start. Only `claude` is built. |
+  | `--team` | string | `""` | A team for the new agent, or `none`. Empty means the calling agent's team ([02-api.md](02-api.md) HTTP-037). |
+  | `--name` | string | `""` | A name for the agent (trimmed). |
+  | `--dir` | string | `""` | The directory to start in; empty means the current directory. |
+  | `--socket` | string | resolved socket | Server socket |
+
+  The prompt is the positionals joined with single spaces and trimmed. Because flag parsing stops at the first positional (CLI-006), a flag written after the prompt is part of the prompt. Checks, in order, all before anything is started:
+  1. An empty prompt MUST print `usage: noc spawn [--provider claude] [--team name|none] [--name name] [--dir path] <prompt> [-- <provider arguments>]`, exit 2.
+  2. A `--team` that is not empty, `none`, or a valid name MUST print `noc spawn: invalid team "<value>": a team name is 1 to 48 characters from A-Za-z0-9._-, not starting with - or ., and not none`, exit 2.
+  3. `--provider codex` MUST print `noc spawn: codex is not supported yet`, exit **1**. Any other provider than `claude` MUST print `noc spawn: unknown provider "<value>" (want claude)`, exit 2.
+  4. The directory is made absolute; one that cannot be opened MUST print `noc: open directory "<path>": <err>`, and a path that is not a directory `noc: "<path>" is not a directory`, exit 1.
+  5. The Claude executable (CFG-009) is resolved with `exec.LookPath`; failure MUST print `noc: find claude executable "<name>": <err>`, exit 1.
+- **Source:** `go/internal/cli/teams.go` (runSpawn, splitProviderArguments, spawnUsage)
+- **Decision:** D-076
+- **Verified by:** `go/internal/cli/teams_test.go` TestSpawnStartsClaudeInTheBackground (no prompt, a flag but no prompt, only provider arguments, an invalid team, an unknown provider, codex, a missing directory, a missing executable, the default directory, and that a refused spawn registers nothing). A path that is not a directory is UNTESTED.
+
+#### CLI-046 `spawn` sequence
+- **Behavior:** After validation `spawn` MUST do the following, in this order. The noc server starts nothing: the provider is a child of this CLI process.
+  1. **Ask the server.** Work out the calling agent (CLI-043). If there is one, `GET /v1/agents/<id>`: a connection error ends the command (CLI-008); any other error, such as an agent the registry no longer knows, means there is no parent. If there is none, `GET /v1/health`, so that an unreachable server ends the command before anything is started. 3 s deadline.
+  2. **Start Claude.** Run `<claude> --bg --permission-mode auto [--name <name>] <prompt> <provider arguments...>` with the directory as its working directory, the CLI's environment unchanged, no stdin, and stdout and stderr captured together. `--name` is present only when a name was given. The provider arguments come last, so that one of them, such as `--permission-mode plan`, overrides what noc set. A **60 s** deadline covers this step and the next. A non-zero exit, a timeout or a failure to start MUST write the captured output to stderr, then `noc: start Claude in the background: <err>`, and exit 1; nothing is registered. This is how a refusal by Claude reaches the user, for example a directory Claude does not trust.
+  3. **Find the session.** Claude chooses the session ID of a background session itself (it ignores `--session-id` with `--bg`) and prints the job's ID. `spawn` MUST read Claude's roster (ATT-004, ATT-005) and take the entry of kind `background` with a non-blank `sessionId` whose `id` occurs in the captured output as a whole word, where a word is a run of `A-Za-z0-9_-`. The read is repeated every 250 ms, for up to **10 s** from the first read, until such an entry is listed. If none is, it MUST write the captured output to stderr, then `noc: Claude started a session, but noc could not identify it, so it has no team or parent: <err>`, and exit 1: the session is running, and nothing is registered.
+  4. **Register it.** `POST /v1/agents` ([02-api.md](02-api.md) HTTP-036) with provider `claude`, the roster entry's `sessionId`, the `--team` value as given, the parent's id, the name, the absolute directory, and the prompt. 3 s deadline. A failure MUST print `noc: Claude started session <job id>, but it has no team or parent:` and then the CLI-008 error, exit 1.
+  5. Print the agent's noc `id` and a newline to stdout, and nothing else; exit 0. Claude's own output is not shown on success.
+
+  The team the agent ends up in, and the one case in which the calling agent becomes a team's lead, are decided by the server (HTTP-037). `spawn` creates no worktree and runs no Git command; it sets no limit on how many agents are started.
+- **Source:** `go/internal/cli/teams.go` (runSpawn, claudeSpawnArguments, startedClaudeSession, awaitClaudeSession); `go/internal/attach/claude_roster.go` (ReadClaudeRoster); `go/internal/localapi/client.go` (RegisterSpawn)
+- **Decision:** D-076
+- **Verified by:** `go/internal/cli/teams_test.go` TestSpawnStartsClaudeInTheBackground, with a fake Claude: the exact command line and working directory, the session ID taken from the roster, the id on stdout, team and parent from inside and outside an agent, an unknown caller, a session the hooks reported first, a provider that fails to start, and a session the roster never lists. The 60 s deadline, the health check with the server down, and a failed registration are UNTESTED. The behaviour of the real `claude --bg` (the printed job ID, the ignored `--session-id`, the untrusted-directory refusal) was observed on Claude Code 2.1.325 and is not tested.
+
+#### CLI-047 `spawn` and the calling agent
+- **Behavior:** A spawn from inside an agent MUST record that agent as the new agent's `parent_id`; a spawn from outside any agent, or from an agent the registry does not know, records none. With no `--team`, the new agent joins the calling agent's team; `--team none` puts it in no team; `--team <name>` puts it in that team. When the calling agent is in no team and names a team that has no lead, the calling agent joins that team and becomes its lead; in every other case the calling agent is unchanged. These are the server's rules ([02-api.md](02-api.md) HTTP-037), stated here for the command's user.
+- **Source:** `go/internal/cli/teams.go` (runSpawn); `go/internal/localapi/teams.go` (handleSpawn)
+- **Decision:** D-071, D-076
+- **Verified by:** `go/internal/cli/teams_test.go` TestSpawnStartsClaudeInTheBackground; `go/internal/localapi/teams_test.go` TestSpawnRegistrationRules
 
 ## Diagnostics, setup, and hook commands (CLI surface)
 
@@ -662,10 +784,10 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
 - **Verified by:** `go/internal/cli/server_lifecycle_unix_test.go` TestBackgroundServerLifecycle (file and directory modes); `go/internal/localapi/server_test.go` TestListenSocketMode; `go/internal/storage/sqlite/store_test.go` TestStorePersistsHostAndAgents (database `0600`); side-file modes MANUAL M-2 (`ls -la` of the temp dirs).
 
 #### CFG-009 Provider executables in the CLI
-- **Behavior:** `attach` MUST start from `{Claude: "claude", Codex: "codex"}` and replace each with `strings.TrimSpace(NOC_CLAUDE_BIN)` / `strings.TrimSpace(NOC_CODEX_BIN)` when non-empty. `stop` honours only `NOC_CLAUDE_BIN`. The final program is resolved with `exec.LookPath` (a value containing `/` is used as a path). The roster read uses the configured name directly (Go resolves it on `PATH`).
-- **Source:** `go/internal/attach/plan.go` (DefaultBinaries); `go/internal/cli/run.go` (providerBinaries, runAttach, runStop)
+- **Behavior:** `attach` MUST start from `{Claude: "claude", Codex: "codex"}` and replace each with `strings.TrimSpace(NOC_CLAUDE_BIN)` / `strings.TrimSpace(NOC_CODEX_BIN)` when non-empty. `stop` honours only `NOC_CLAUDE_BIN`, and so does `spawn`. The final program is resolved with `exec.LookPath` (a value containing `/` is used as a path). The roster read in `attach` uses the configured name directly (Go resolves it on `PATH`); the one in `spawn` uses the resolved path.
+- **Source:** `go/internal/attach/plan.go` (DefaultBinaries); `go/internal/cli/run.go` (providerBinaries, runAttach, runStop); `go/internal/cli/teams.go` (runSpawn)
 - **Decision:** D-025
-- **Verified by:** `go/internal/cli/run_test.go` TestAttachCodexRunsResume (`NOC_CODEX_BIN`), TestAttachClaudeDecisionTable (`NOC_CLAUDE_BIN`)
+- **Verified by:** `go/internal/cli/run_test.go` TestAttachCodexRunsResume (`NOC_CODEX_BIN`), TestAttachClaudeDecisionTable (`NOC_CLAUDE_BIN`); `go/internal/cli/teams_test.go` TestSpawnStartsClaudeInTheBackground (`NOC_CLAUDE_BIN` for `spawn`)
 
 #### CFG-010 Build metadata
 - **Behavior:** See CLI-004. `Version` and `Commit` are the only build-time values the binary reports; `Date` is unused.
@@ -843,6 +965,10 @@ After a plan is chosen (rows 4, 7–9, 11, 12) the common tail applies: executab
 - **`EnsurePrivateDir` never chmods an existing directory.** The caller can intentionally place a socket in an existing directory such as `/tmp`; noc never changes permissions on a directory it did not create.
 - **Attach asks Claude at attach time, and falls back silently.** If Claude cannot be asked, the registry-based plan stands. The roster read is bounded at 5 s (plus a 1 s `WaitDelay`) so a hung provider cannot hang attach.
 - **Attach runs the provider as a child, not via exec(2)**, so it can set `NOC_AGENT_ID` and map exit codes (including 130 on interrupt).
+- **Spawn starts the provider first and registers second.** `claude --bg` picks the session ID, so there is nothing to register until the roster lists the job. The cost is a session that can exist without its team when the roster or the server fails in between; the command says so instead of guessing (CLI-046).
+- **The job is matched by the ID Claude printed, not by the format of the line it printed it in.** Any word of the output that is the `id` of a background roster entry identifies the session, so a change in Claude's wording does not break spawn.
+- **The Claude session outranks `NOC_AGENT_ID`** when working out the calling agent, because the variable is inherited by everything started in an attached terminal while the session ID is set by the session itself (CLI-043).
+- **`noc teams` is computed in the CLI** from the agent list, like the bucket filter, so the server has no team route.
 - **Stop is Claude-background only** because a terminal session is ended with `/exit` and Codex has no equivalent stop; D-043 in `docs/DECISIONS.md` records the product decision.
 
 ## 03 · Verification procedures
@@ -945,6 +1071,8 @@ Then `$M forget $ID nope` → stdout `forgot <ID>`, stderr `noc: noc server: age
 - Lifecycle branches without tests: a corrupt record met during foreground PID acquisition; `EPERM` handling; stop with a missing PID file but a reachable socket; stop timeout; the parent's readiness `error:`/EOF/45 s timeout/context-cancel branches; restart of a record without `mode`; the restart start-failure message; unsupported platforms. No test pins that restart does **not** inherit the old server's flags (LIFE-020): the lifecycle test passes `--discovery=false` to restart explicitly, so a change in either direction would go unnoticed.
 - `runAttach`: untested are `--force` over a running interactive roster entry, the output written when the background restore fails, a workspace path that is not a directory, the roster timeout, and the 130 mapping.
 - `runStop`: only the refusal path is exercised through the CLI; executing `claude stop` and propagating its exit status are untested. `StopPlan` itself is unit-tested.
+- Teams: the exact `team` usage text; the `TEAM` column in the `search` and `watch` tables; `watch --team` on a live stream; the `Parent:` line of `show`; a bare `team:` search term.
+- `runSpawn`: only a fake Claude is used, so the real `claude --bg` output, the ignored `--session-id`, the untrusted-directory refusal, and `CLAUDE_CODE_SESSION_ID` in a real session are untested (observed by hand on Claude Code 2.1.325); also untested are the 60 s start deadline, the health check when the server is down, a registration that fails after the session started, and `--dir` naming a file.
 - `ResolvePaths`: platform defaults (macOS/Linux), the `UserCacheDir` fallback and home-directory failure are untested; overrides and `XDG_*` are covered.
 
 ## Known limitations
@@ -959,3 +1087,9 @@ Then `$M forget $ID nope` → stdout `forgot <ID>`, stderr `noc: noc server: age
 - File privacy depends on noc having created the directory: an existing directory is never tightened, and SQLite's `-wal`/`-shm` side files follow the umask (CFG-007, CFG-008; `go/internal/config/paths.go` EnsurePrivateDir).
 - Unix-socket path length is not checked; an over-long path fails at listen or dial time with the operating system's error (CFG-003).
 - Agent references are exact IDs only; a prefix or a name never resolves (CLI-011).
+- `spawn` starts Claude only; `--provider codex` is refused (CLI-045; `go/internal/cli/teams.go` runSpawn).
+- A spawned session can be left without its team and parent: when Claude starts it but the roster does not list the job within 10 s, or the registration fails, the session keeps running, appears in the registry through its hooks or the next snapshot like any other session, and `spawn` exits 1. `noc team set` then puts it in a team; nothing can add the parent afterwards (CLI-046; `go/internal/cli/teams.go` runSpawn).
+- `spawn` identifies the job by a word of Claude's output that equals the `id` of a background roster entry. Output that happened to contain the ID of a different background job would match that job instead (CLI-046; `go/internal/cli/teams.go` startedClaudeSession).
+- `spawn` passes `--permission-mode auto` unless a provider argument overrides it, and sets no quota: an agent that spawns agents can start as many as it asks for (CLI-046).
+- The calling agent is found from `NOC_AGENT_ID` without checking that the agent exists; `team` then reports the server's `agent was not found`. A Codex session is found only through `NOC_AGENT_ID` or its process ID, and a background Claude session only through `CLAUDE_CODE_SESSION_ID` (CLI-043; `go/internal/cli/teams.go` callerAgentID).
+- `team lead` reads the agent and then marks it; a team change between the two requests is caught by the server's own check, which answers `noc: noc server: <id> is not in team <name>` (CLI-042).

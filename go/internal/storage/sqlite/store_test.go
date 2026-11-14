@@ -333,7 +333,7 @@ func TestMigrationsAreIdempotentAndTolerateNewerDatabases(t *testing.T) {
 	defer again.Close()
 	var n int
 	_ = again.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&n)
-	if n != 4 {
+	if n != 5 {
 		t.Fatalf("migrations rows = %d", n)
 	}
 }

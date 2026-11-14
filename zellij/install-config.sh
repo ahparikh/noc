@@ -21,8 +21,8 @@
 #                           its settings, and the pane holding your session
 #   layouts/noc-inner.kdl   options and key bindings your session has only
 #                           while it runs beside the sidebar
-#   themes/noc-blue.kdl     a blue theme and its dimmed twin; nothing uses
-#                           them until you name them
+#   themes/noc-blue.kdl     a blue theme and its dimmed twin, which your
+#                           session wears beside the sidebar
 #
 # A different file already there is kept beside the new one as <name>.bak.
 set -euo pipefail

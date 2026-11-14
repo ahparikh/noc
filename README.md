@@ -76,8 +76,8 @@ It needs Zellij 0.46 and `noc` installed and set up (above).
 
 ### Set up, once per machine
 
-Everything the sidebar needs is in two layout files, plus an optional theme
-file, in your own Zellij configuration (`~/.config/zellij`). You put them
+Everything the sidebar needs is in two layout files and a theme file, in
+your own Zellij configuration (`~/.config/zellij`). You put them
 there once and keep them with the rest of your dotfiles. Nothing
 regenerates them, and your `config.kdl` is not touched.
 
@@ -85,7 +85,7 @@ regenerates them, and your `config.kdl` is not touched.
 |---|---|
 | `layouts/noc-host.kdl` | The outer session: the sidebar plugin with **all of its settings**, the pane holding your session, and the three keys the outer session owns |
 | `layouts/noc-inner.kdl` | What your session gets only while it runs beside the sidebar: its first tab, Zellij options, and two key bindings the sidebar uses for dimming. Edit freely |
-| `themes/noc-blue.kdl` | Optional: a blue theme and a twin with no focused frame, for dimming |
+| `themes/noc-blue.kdl` | A blue theme and a twin with no focused frame. Your session wears the first while it has the keyboard and the twin while the sidebar does, so only one side looks focused |
 
 **With the script**, straight from GitHub:
 
@@ -106,8 +106,9 @@ differs is kept as `<name>.bak`. From a checkout the same script is
    to `~/.config/zellij/layouts/noc-host.kdl`.
 3. Copy [`zellij/config/layouts/noc-inner.kdl`](zellij/config/layouts/noc-inner.kdl)
    to `~/.config/zellij/layouts/noc-inner.kdl`.
-4. Optionally copy [`zellij/config/themes/noc-blue.kdl`](zellij/config/themes/noc-blue.kdl)
-   to `~/.config/zellij/themes/noc-blue.kdl`.
+4. Copy [`zellij/config/themes/noc-blue.kdl`](zellij/config/themes/noc-blue.kdl)
+   to `~/.config/zellij/themes/noc-blue.kdl`. To keep your own theme
+   instead, see "Dimming" in [docs/ZELLIJ.md](docs/ZELLIJ.md).
 5. Do not edit `config.kdl`: nothing of noc's goes there.
 6. If `noc` is not on the `PATH` Zellij starts with, set `noc_bin` in
    `noc-host.kdl` to its absolute path (`command -v noc`).

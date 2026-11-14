@@ -45,14 +45,18 @@ layout {
                 // newer than the one loaded above. "false" turns that off.
                 update_check "true"
 
-                // Optional: dim the inner session while the sidebar has the
-                // keyboard. `home_theme` is your normal theme; `away_theme`
-                // is a copy of it whose frame_selected colour equals
-                // frame_unselected, so no pane looks focused. Set both or
-                // neither, and name the same two themes in the bindings of
-                // layouts/noc-inner.kdl. themes/noc-blue.kdl is a ready pair.
-                // home_theme "noc-blue"
-                // away_theme "noc-blue-away"
+                // Dim the inner session while the sidebar has the keyboard, so
+                // only the side you are typing in looks focused. The inner
+                // session wears `home_theme` while it has the keyboard and
+                // `away_theme` while the sidebar does; `away_theme` is a copy
+                // whose frame_selected colour equals frame_unselected, so no
+                // pane looks focused. The pair below is in
+                // themes/noc-blue.kdl. To use your own theme, name it and an
+                // away copy of it here and in the bindings of
+                // layouts/noc-inner.kdl. To turn dimming off, comment out
+                // both lines.
+                home_theme "noc-blue"
+                away_theme "noc-blue-away"
 
                 // The keys the sidebar types into the inner session to
                 // switch theme. They must match the two bindings in

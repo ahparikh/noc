@@ -42,9 +42,9 @@ ui {
 }
 
 // Typed by the sidebar, never by you: switch this session's theme when the
-// keyboard leaves it for the sidebar and when it comes back. They do nothing
-// unless home_theme and away_theme are set in layouts/noc-host.kdl; name the
-// same two themes here. The keys must match away_key and home_key there, and
+// keyboard leaves it for the sidebar and when it comes back. The two themes
+// named here must be the home_theme and away_theme of layouts/noc-host.kdl;
+// the bindings do nothing when those are not set. The keys must match away_key and home_key there, and
 // the plugin location must be the one loaded there. These bindings are added
 // to your own; none of yours is replaced.
 keybinds {

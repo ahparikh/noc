@@ -155,10 +155,10 @@ render_shipped() {
 		printf 'pane_frames true\npane_frame_style "full"\n'
 		printf 'ui { pane_frames { rounded_corners true; }; }\n'
 	} >"$OUT/config.kdl"
-	# Dimming on, with the pair above.
+	# Dimming with the pair above.
 	host_layout "$ROOT/config/layouts/noc-host.kdl" "$noc" | sed \
-		-e "s|^\\([[:space:]]*\\)// home_theme \"[^\"]*\"|\\1home_theme \"$home\"|" \
-		-e "s|^\\([[:space:]]*\\)// away_theme \"[^\"]*\"|\\1away_theme \"$away\"|" \
+		-e "s|^\\([[:space:]]*\\)home_theme \"[^\"]*\"|\\1home_theme \"$home\"|" \
+		-e "s|^\\([[:space:]]*\\)away_theme \"[^\"]*\"|\\1away_theme \"$away\"|" \
 		>"$OUT/layouts/$HOST.kdl"
 	local_plugin <"$ROOT/config/layouts/noc-inner.kdl" | sed \
 		-e "s|payload \"theme noc-blue-away\"|payload \"theme $away\"|" \

@@ -2,8 +2,8 @@
 
 `zellij-noc` shows the noc registry as a sidebar beside your own Zellij
 session. From it you open, focus, rename and stop agents. It is one WASM
-plugin, loaded from a release URL, and two layout files (plus an optional
-theme) that live in your dotfiles.
+plugin, loaded from a release URL, and two layout files and a theme that
+live in your dotfiles.
 
 Exact behavior is specified in [spec/07-zellij-panel.md](spec/07-zellij-panel.md)
 (what the sidebar shows and its keys) and
@@ -34,8 +34,7 @@ Requires Zellij 0.46, and `noc` installed and set up (see the
 
 ## Set up
 
-Everything the sidebar needs is in two layout files and an optional theme
-file, all from [`zellij/config/`](../zellij/config/). You put them into
+Everything the sidebar needs is in two layout files and a theme file, all from [`zellij/config/`](../zellij/config/). You put them into
 your Zellij configuration once per machine and keep them with the rest of
 it. Nothing is generated, and your `config.kdl` is not touched.
 
@@ -58,7 +57,7 @@ From a checkout, `make zellij-install-config` runs the same script
    to `~/.config/zellij/layouts/noc-inner.kdl`. It holds what your session
    has only inside the pair (see
    [Settings for the inner session only](#settings-for-the-inner-session-only)).
-3. **Theme** (optional): copy
+3. **Theme**: copy
    [`zellij/config/themes/noc-blue.kdl`](../zellij/config/themes/noc-blue.kdl)
    to `~/.config/zellij/themes/`.
 
@@ -167,16 +166,17 @@ the affected feature. It also says when the inner session is not running.
 
 ### Dimming the inner session
 
-Both sessions draw a focused pane, so by default you see two highlighted
-frames. With a theme pair, the inner session changes theme whenever the
-keyboard is on the sidebar, so only the side you are typing in looks focused.
+Both sessions draw a focused pane, so without help you would see two
+highlighted frames. The inner session therefore changes theme as the
+keyboard moves: it wears `home_theme` while it has the keyboard and
+`away_theme` while the sidebar does, so only the side you are typing in
+looks focused.
 
-`zellij/config/themes/noc-blue.kdl` is a ready-made pair: copy it to
-`~/.config/zellij/themes/`, set `theme "noc-blue"` in your `config.kdl`, and
-in the plugin block of `noc-host.kdl` uncomment `home_theme "noc-blue"` and
-`away_theme "noc-blue-away"`. The bindings in `noc-inner.kdl` already name
-that pair. To do the same
-with your own theme:
+This is on as shipped, with the pair in `themes/noc-blue.kdl`: `noc-blue`
+(Catppuccin Mocha with a blue accent) and `noc-blue-away`. It means your
+session wears `noc-blue` inside the pair, whatever `theme` your `config.kdl`
+names. To turn dimming off, comment out `home_theme` and `away_theme` in
+the plugin block of `noc-host.kdl`. To dim with your own theme instead:
 
 1. In your theme file, copy your theme's block and name the copy
    `<name>-away`. In the copy, set `frame_selected`'s `base` to the same

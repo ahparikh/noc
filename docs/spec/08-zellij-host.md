@@ -190,13 +190,13 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 ## 4. The pair and its static configuration
 
 ### ZX-001 One deployment
-- **Behavior:** The plugin runs in one arrangement: a host session named `noc-host` with one tab holding the panel and the guest pane, and an inner session named `noc` attached in the guest pane. The plugin MUST NOT generate or edit Zellij configuration. Everything of noc's is in two layout files the user copies (ZX-004, ZX-035), by hand or with the installer (ZE-014), plus an optional theme file (ZX-037). Nothing of noc's is in the user's `config.kdl`, which both sessions read unchanged.
+- **Behavior:** The plugin runs in one arrangement: a host session named `noc-host` with one tab holding the panel and the guest pane, and an inner session named `noc` attached in the guest pane. The plugin MUST NOT generate or edit Zellij configuration. Everything of noc's is in two layout files the user copies (ZX-004, ZX-035), by hand or with the installer (ZE-014), plus the theme file the shipped settings name (ZX-037). Nothing of noc's is in the user's `config.kdl`, which both sessions read unchanged.
 - **Source:** `zellij/config/layouts/noc-host.kdl`; `zellij/config/layouts/noc-inner.kdl`
 - **Decision:** D-055, D-056
 - **Verified by:** `zellij/e2e/nested.sh` "host session has the sidebar and one guest pane"
 
 ### ZX-002 The plugin and its settings
-- **Behavior:** `layouts/noc-host.kdl` MUST load the plugin in the panel's pane as `plugin location="<URL>" { … }`, where the URL is a release asset that names the version (`https://github.com/ahparikh/noc/releases/download/v0.1.0/zellij-noc.wasm` as shipped). The block's children are the settings of ZH-017, and this block is the only place they are set; the shipped block sets `noc_bin "noc"`, `guest_session "noc"`, `icons "unicode"`, `poll_interval_ms "1000"`, `update_check "true"` and carries `colors`, `home_theme`, `away_theme`, `away_key`, `home_key` as comments. `guest_session` MUST equal `inner=` in the same file's guest loop.
+- **Behavior:** `layouts/noc-host.kdl` MUST load the plugin in the panel's pane as `plugin location="<URL>" { … }`, where the URL is a release asset that names the version (`https://github.com/ahparikh/noc/releases/download/v0.1.0/zellij-noc.wasm` as shipped). The block's children are the settings of ZH-017, and this block is the only place they are set; the shipped block sets `noc_bin "noc"`, `guest_session "noc"`, `icons "unicode"`, `poll_interval_ms "1000"`, `update_check "true"`, `home_theme "noc-blue"` and `away_theme "noc-blue-away"` (ZX-037), and carries `colors`, `away_key`, `home_key` as comments. `guest_session` MUST equal `inner=` in the same file's guest loop.
 - **Source:** `zellij/config/layouts/noc-host.kdl`
 - **Decision:** D-056
 - **Verified by:** `zellij/e2e/nested.sh` "sidebar lists the registry's agents" (settings from the layout reach the plugin)
@@ -244,7 +244,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** `zellij/e2e/nested.sh` "inner session takes its options from noc-inner.kdl"
 
 ### ZX-037 The shipped theme pair
-- **Behavior:** `themes/noc-blue.kdl` MUST define two Zellij themes: `noc-blue` (Catppuccin Mocha with the accent, and so the selected ribbon and the focused frame, in blue `137 180 250`) and `noc-blue-away`, identical except that `frame_selected`'s `base` equals `frame_unselected`'s (`69 71 90`). Nothing selects them by default: the user names `noc-blue` as `theme`, and the pair as `home_theme` and `away_theme` (ZX-019), so that the inner session's focused frame is drawn in the unfocused colour while the panel has the keyboard.
+- **Behavior:** `themes/noc-blue.kdl` MUST define two Zellij themes: `noc-blue` (Catppuccin Mocha with the accent, and so the selected ribbon and the focused frame, in blue `137 180 250`) and `noc-blue-away`, identical except that `frame_selected`'s `base` equals `frame_unselected`'s (`69 71 90`). The shipped layouts select the pair: `home_theme` and `away_theme` in `noc-host.kdl` and the two payloads in `noc-inner.kdl` (ZX-002, ZX-003), so the inner session wears `noc-blue` while it has the keyboard, whatever `theme` the user's `config.kdl` names, and its focused frame is drawn in the unfocused colour while the panel has it.
 - **Source:** `zellij/config/themes/noc-blue.kdl`
 - **Verified by:** UNTESTED
 
@@ -467,7 +467,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 
 ### ZE-008 Rendering: the layouts
 - **Behavior:** The two layouts are rendered from the source (`zellij/config/layouts/`, or the user's `layouts/` with `--installed`). In both, every quoted plugin location ending `zellij-noc.wasm` becomes `"file:<wasm path>"`.
-  - `<out>/layouts/<host>.kdl` is `noc-host.kdl` with `inner=noc; host=noc-host;` replaced by `inner=<inner>; host=<host>; export ZELLIJ_CONFIG_DIR='<out>';`, so the inner session reads the rendered configuration; every `noc_bin`, `guest_session` and `update_check` line removed; and, directly after the line that opens the plugin block, `noc_bin "<executable of ZE-006>"`, `guest_session "<inner>"` and `update_check "<false with --fake, else true>"`. Without `--installed`, the commented `home_theme` and `away_theme` lines become `home_theme "<home>"` and `away_theme "<away>"` (ZE-007).
+  - `<out>/layouts/<host>.kdl` is `noc-host.kdl` with `inner=noc; host=noc-host;` replaced by `inner=<inner>; host=<host>; export ZELLIJ_CONFIG_DIR='<out>';`, so the inner session reads the rendered configuration; every `noc_bin`, `guest_session` and `update_check` line removed; and, directly after the line that opens the plugin block, `noc_bin "<executable of ZE-006>"`, `guest_session "<inner>"` and `update_check "<false with --fake, else true>"`. Without `--installed`, the `home_theme` and `away_theme` lines name `<home>` and `<away>` (ZE-007).
   - `<out>/layouts/noc-inner.kdl` is `noc-inner.kdl`; without `--installed`, its two payloads `theme noc-blue-away` and `theme noc-blue` name `<away>` and `<home>`.
 
   Rendering MUST fail with `could not point the plugin at <wasm>` when the host layout does not load `file:<wasm>`, `could not point the plugin at <executable>` when `noc_bin` was not set, `could not rename the sessions` when the session names were not replaced, and `could not point the theme bindings at <wasm>` when the inner layout still names a remote `zellij-noc.wasm`.
@@ -616,7 +616,7 @@ sets, each new role would prompt again and replace the recorded grant. All
 three ask for the same six, so the user answers once per location (ZH-002).
 
 **Static configuration.** The user's files are theirs: two layout files and
-an optional theme, readable and removable by hand, and nothing in
+a theme, readable and removable by hand, and nothing in
 `config.kdl`. Nothing is
 generated at run time and nothing edits the user's configuration, so there is
 no installer to keep correct and no hidden state to repair. The plugin is

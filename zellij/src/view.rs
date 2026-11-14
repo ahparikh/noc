@@ -25,6 +25,10 @@ pub struct Theme {
     pub working: PaletteColor,
     pub review: PaletteColor,
     pub quiet: PaletteColor,
+    /// Whether secondary text is also drawn with the terminal's dim
+    /// attribute. The built-in colours are already the intended shade, and
+    /// dimming them makes them unreadable on a dark background.
+    pub dim: bool,
 }
 
 const fn rgb(r: u8, g: u8, b: u8) -> PaletteColor {
@@ -47,7 +51,7 @@ impl Theme {
         let red = rgb(243, 139, 168);
         Theme {
             text: rgb(205, 214, 244),
-            muted: rgb(127, 132, 156),
+            muted: rgb(147, 153, 178),
             accent: blue,
             selected_text: rgb(205, 214, 244),
             selected_background: rgb(49, 50, 68),
@@ -58,7 +62,8 @@ impl Theme {
             blocked: red,
             working: rgb(249, 226, 175),
             review: teal,
-            quiet: rgb(108, 112, 134),
+            quiet: rgb(147, 153, 178),
+            dim: false,
         }
     }
 
@@ -80,7 +85,15 @@ impl Theme {
             working: PaletteColor::EightBit(2),
             review: PaletteColor::EightBit(6),
             quiet: PaletteColor::EightBit(8),
+            dim: true,
         }
+    }
+
+    /// The style of secondary text: labels, second lines, the footer.
+    pub fn muted_style(&self) -> Style {
+        let mut style = Style::fg(self.muted);
+        style.dim = self.dim;
+        style
     }
 
     pub fn group(&self, group: AgentGroup) -> PaletteColor {
@@ -113,11 +126,6 @@ impl Style {
 
     fn bold(mut self) -> Style {
         self.bold = true;
-        self
-    }
-
-    fn dim(mut self) -> Style {
-        self.dim = true;
         self
     }
 
@@ -346,7 +354,7 @@ fn plural(count: usize) -> &'static str {
 // ---- frame ----
 
 fn footer_line(theme: &Theme, text: &str) -> Line {
-    Line::plain(text, Style::fg(theme.muted).dim())
+    Line::plain(text, theme.muted_style())
 }
 
 /// Pad to `rows - 1` and put the footer last, but only if content has not
@@ -416,7 +424,7 @@ fn header_line(header: &str, update: Option<&str>, theme: &Theme, cols: usize) -
 }
 
 fn update_help_lines(version: &str, theme: &Theme) -> Vec<Line> {
-    let muted = Style::fg(theme.muted).dim();
+    let muted = theme.muted_style();
     vec![
         Line::empty(),
         Line::plain(
@@ -469,7 +477,7 @@ fn connection_line(app: &ZellijNoc, theme: &Theme) -> Line {
         }
     };
     let mut style = Style::fg(color);
-    style.dim = dim;
+    style.dim = dim && theme.dim;
     Line::plain(&text, style)
 }
 
@@ -477,7 +485,7 @@ fn connection_line(app: &ZellijNoc, theme: &Theme) -> Line {
 /// them is the place to look for the real ones.
 fn help_lines(theme: &Theme) -> Vec<Line> {
     let heading = Style::fg(theme.accent).bold();
-    let muted = Style::fg(theme.muted).dim();
+    let muted = theme.muted_style();
     let mut lines = vec![Line::plain("In the list", heading)];
     for entry in [
         "j / k       move selection",
@@ -511,7 +519,7 @@ fn help_lines(theme: &Theme) -> Vec<Line> {
 }
 
 fn empty_state_lines(app: &ZellijNoc, theme: &Theme) -> Vec<Line> {
-    let muted = Style::fg(theme.muted).dim();
+    let muted = theme.muted_style();
     let mut lines = Vec::new();
     match &app.connection {
         Connection::ServerUnavailable => {
@@ -621,7 +629,7 @@ fn agent_secondary_line(app: &ZellijNoc, theme: &Theme, agent: &Agent, selected:
     if selected {
         Line::plain(&text, Style::selected(theme)).filled(Style::fill(theme))
     } else {
-        Line::plain(&text, Style::fg(theme.muted).dim())
+        Line::plain(&text, theme.muted_style())
     }
 }
 
@@ -678,10 +686,7 @@ fn agent_list_lines(app: &ZellijNoc, theme: &Theme, cols: usize) -> (Vec<Line>, 
 // ---- details ----
 
 fn label_line(label: &str, value: &str, theme: &Theme) -> Line {
-    Line::plain(
-        &format!("{}{value}", pad(label, 10)),
-        Style::fg(theme.muted).dim(),
-    )
+    Line::plain(&format!("{}{value}", pad(label, 10)), theme.muted_style())
 }
 
 fn append_preview(
@@ -694,10 +699,7 @@ fn append_preview(
 ) {
     lines.push(Line::plain(label, Style::fg(theme.info).bold()));
     for text in wrap(value, cols.saturating_sub(2)).into_iter().take(max) {
-        lines.push(Line::plain(
-            &format!("  {text}"),
-            Style::fg(theme.muted).dim(),
-        ));
+        lines.push(Line::plain(&format!("  {text}"), theme.muted_style()));
     }
 }
 
@@ -810,7 +812,9 @@ fn agent_detail_lines(
 }
 
 fn rule(theme: &Theme, cols: usize) -> Line {
-    Line::plain(&"\u{2500}".repeat(cols), Style::fg(theme.accent).dim())
+    let mut style = Style::fg(theme.accent);
+    style.dim = theme.dim;
+    Line::plain(&"\u{2500}".repeat(cols), style)
 }
 
 fn inline_detail_lines(
@@ -838,7 +842,7 @@ fn inline_detail_lines(
                 &format!("Quiet \u{b7} {}", age.label()),
                 Style::fg(theme.accent).bold(),
             ));
-            let muted = Style::fg(theme.muted).dim();
+            let muted = theme.muted_style();
             for text in [
                 "Conversations with no process.",
                 "Enter opens this section; Enter on",
@@ -1319,12 +1323,17 @@ mod tests {
             narrow[5].trim_end(),
             "This panel will reconnect automatical\u{2026}"
         );
-        // The offline line is not dim; other connection lines are.
-        let raw = render(&mut app, &Theme::default(), 14, 42);
+        // Following the Zellij theme, the offline line is not dim and other
+        // connection lines are.
+        let zellij = Theme::from_mode_info(&ModeInfo::default());
+        let raw = render(&mut app, &zellij, 14, 42);
         assert!(!raw[12].contains("\x1b[2;"));
         let mut app = app_with("[]");
-        let raw = render(&mut app, &Theme::default(), 14, 42);
+        let raw = render(&mut app, &zellij, 14, 42);
         assert!(raw[12].contains("\x1b[2;"));
+        // The built-in colours do not dim it either way.
+        let raw = render(&mut app, &Theme::default(), 14, 42);
+        assert!(!raw[12].contains("\x1b[2;"));
     }
 
     #[test]
@@ -1515,7 +1524,12 @@ mod tests {
         assert!(raw[0].contains("38;2;243;139;168"), "Blocked is red");
         assert!(raw[3].contains("38;2;249;226;175"), "Working is yellow");
         assert!(raw[6].contains("38;2;148;226;213"), "Review is teal");
-        assert!(raw[9].contains("38;2;108;112;134"), "Quiet is grey");
+        assert!(raw[9].contains("38;2;147;153;178"), "Quiet is grey");
+        // The built-in colours are never dimmed: dim grey on a dark
+        // background cannot be read.
+        assert!(!raw
+            .iter()
+            .any(|l| l.contains("\x1b[2;") || l.contains(";2;38;")));
         // Following Zellij's theme puts the groups on fixed ANSI entries.
         let zellij = Theme::from_mode_info(&ModeInfo::default());
         let raw = render(&mut app, &zellij, 40, 38);

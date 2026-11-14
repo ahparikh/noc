@@ -854,7 +854,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   | Role | Default (RGB) | With `colors "zellij"` |
   |---|---|---|
   | `text` | `205,214,244` | `text_unselected.base` |
-  | `muted` | `127,132,156` | `list_unselected.base` |
+  | `muted` | `147,153,178` | `list_unselected.base` |
   | `accent` | `137,180,250` (blue) | `text_unselected.emphasis_0` |
   | `selected_text` | `205,214,244` | `list_selected.base` |
   | `selected_background` | `49,50,68` | `list_selected.background` |
@@ -865,13 +865,18 @@ Public API fields that are not modelled are silently ignored, e.g.
   | `blocked` | `243,139,168` (red) | palette `1` |
   | `working` | `249,226,175` (yellow) | palette `2` |
   | `review` | `148,226,213` (teal) | palette `6` |
-  | `quiet` | `108,112,134` (grey) | palette `8` |
+  | `quiet` | `147,153,178` (grey) | palette `8` |
+
+  The built-in theme MUST NOT use the terminal's dim attribute anywhere: its
+  greys are already the intended shade, and dimmed they cannot be read on a
+  dark background. Wherever this file calls text `dim`, that applies only
+  with `colors "zellij"`.
 
   The details window uses the same theme; the panel passes `colors "zellij"`
   to it when that is set.
 - **Source:** `zellij/src/view.rs` (Theme::herdr, Theme::from_mode_info); `zellij/src/app.rs` (Config::from_map); callers `zellij/src/main.rs` (on_mode_update), `zellij/src/details.rs` (update_details), `zellij/src/panel.rs` (open_details_window)
 - **Decision:** D-063
-- **Verified by:** `zellij/src/view.rs` selected_rows_highlight_both_lines_and_group_colours_are_fixed (both themes' group and selection colours); `zellij/src/app.rs` parses_bounded_poll_configuration (the setting); the `ModeUpdate` switch UNTESTED
+- **Verified by:** `zellij/src/view.rs` selected_rows_highlight_both_lines_and_group_colours_are_fixed (both themes' group and selection colours; no dim attribute with the built-in theme); `zellij/src/app.rs` parses_bounded_poll_configuration (the setting); the `ModeUpdate` switch UNTESTED
 
 #### ZR-019 SGR encoding
 - **Behavior:** A styled span MUST be `ESC[` + `;`-joined codes in the order

@@ -17,7 +17,8 @@ layout {
         pane size=38 {
             // The sidebar. The plugin is loaded from a release: Zellij
             // downloads a URL once and keeps it, so upgrading means changing
-            // the version here and in layouts/noc-inner.kdl. Zellij asks for
+            // the version here and in layouts/noc-inner.kdl, which running
+            // the setup script again does for you. Zellij asks for
             // the plugin's permissions once per location, in the sidebar.
             // Every setting of the sidebar is in this block.
             plugin location="https://github.com/ahparikh/noc/releases/download/v0.1.3/zellij-noc.wasm" {

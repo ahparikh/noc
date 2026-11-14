@@ -191,7 +191,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 ## 4. The pair and its static configuration
 
 ### ZX-001 One deployment
-- **Behavior:** The plugin runs in one arrangement: a host session named `noc-host` with one tab holding the panel and the guest pane, and an inner session named `noc` attached in the guest pane. The plugin MUST NOT generate or edit Zellij configuration. Everything of noc's is in two layout files the user copies (ZX-004, ZX-035), by hand or with the installer (ZE-014), plus the theme file the shipped settings name (ZX-037). Nothing of noc's is in the user's `config.kdl`, which both sessions read unchanged.
+- **Behavior:** The plugin runs in one arrangement: a host session named `noc-host` with one tab holding the panel and the guest pane, and an inner session named `noc` attached in the guest pane. The plugin MUST NOT generate or edit Zellij configuration. Everything of noc's is in two layout files the user copies (ZX-004, ZX-035), by hand or with the installer (ZE-016), plus the theme file the shipped settings name (ZX-037). Nothing of noc's is in the user's `config.kdl`, which both sessions read unchanged.
 - **Source:** `zellij/config/layouts/noc-host.kdl`; `zellij/config/layouts/noc-inner.kdl`
 - **Decision:** D-055, D-056
 - **Verified by:** `zellij/e2e/nested.sh` "host session has the sidebar and one guest pane"
@@ -442,7 +442,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
   | `e2e` | `make zellij-e2e` | `build`, then `e2e/nested.sh` |
   | `dev` / `dev-stop` | `make dev` / `make dev-stop` | `build`, then `./dev.sh start` / `./dev.sh stop`; the root `dev` also builds `go/bin/noc` |
   | (none) | `make dev-installed` | builds `go/bin/noc` and the plugin, then `zellij/dev.sh --installed start` |
-  | (none) | `make zellij-install-config` | `zellij/install-config.sh` (ZE-014) |
+  | (none) | `make zellij-install-config` | `zellij/install-config.sh` (ZE-016) |
   | `clean` | `make zellij-clean` | `cargo clean` |
 
 - **Source:** `zellij/Makefile`; root `Makefile`
@@ -456,7 +456,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 ## 11. The development pair
 
 ### ZE-005 Commands and names
-- **Behavior:** `zellij/dev.sh [--fake|--installed] [start|render|stop|status]` (default `start`) runs a copy of the pair that uses this checkout's builds. Without `--installed` the configuration is rendered from `zellij/config/` (ZE-007, ZE-008); with it, from the user's Zellij configuration directory (ZE-015). `render` writes the source in use, `shipped` or `installed`, to `<out>/mode`, after removing the previous `config.kdl`, host layout, inner layout and every symbolic link from `<out>` and `<out>/layouts`. The inner session is `$NOC_DEV_NAME` (default `noc-dev`) and the host is `<inner>-host`. The script MUST exit `1` with `dev.sh: NOC_DEV_NAME must be a plain name` when the name is empty or has a character outside `A-Za-z0-9._-`, and with `dev.sh: NOC_DEV_NAME=noc is the daily pair; pick another name` when it is `noc`. An unknown command prints the usage to stderr and exits `2`. Every `zellij` call is made with `ZELLIJ`, `ZELLIJ_SESSION_NAME` and `ZELLIJ_PANE_ID` removed from the environment.
+- **Behavior:** `zellij/dev.sh [--fake|--installed] [start|render|stop|status]` (default `start`) runs a copy of the pair that uses this checkout's builds. Without `--installed` the configuration is rendered from `zellij/config/` (ZE-007, ZE-008); with it, from the user's Zellij configuration directory (ZE-017). `render` writes the source in use, `shipped` or `installed`, to `<out>/mode`, after removing the previous `config.kdl`, host layout, inner layout and every symbolic link from `<out>` and `<out>/layouts`. The inner session is `$NOC_DEV_NAME` (default `noc-dev`) and the host is `<inner>-host`. The script MUST exit `1` with `dev.sh: NOC_DEV_NAME must be a plain name` when the name is empty or has a character outside `A-Za-z0-9._-`, and with `dev.sh: NOC_DEV_NAME=noc is the daily pair; pick another name` when it is `noc`. An unknown command prints the usage to stderr and exits `2`. Every `zellij` call is made with `ZELLIJ`, `ZELLIJ_SESSION_NAME` and `ZELLIJ_PANE_ID` removed from the environment.
 - **Source:** `zellij/dev.sh`
 - **Verified by:** `zellij/e2e/nested.sh` (runs under `NOC_DEV_NAME=noc-e2e`); error paths UNTESTED
 
@@ -489,20 +489,23 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Source:** `zellij/dev.sh`
 - **Verified by:** UNTESTED (by construction of ZE-005..ZE-009)
 
-### ZE-015 Rendering from the installed configuration
+### ZE-017 Rendering from the installed configuration
 - **Behavior:** With `--installed` the source is `$ZELLIJ_CONFIG_DIR`, or `~/.config/zellij`. Rendering MUST fail with `missing <source>/layouts/<name> (run: make zellij-install-config)` when `noc-host.kdl` or `noc-inner.kdl` is absent, and with `<source>/layouts/noc-host.kdl does not load zellij-noc.wasm (run: make zellij-install-config)` when the host layout has no such plugin location. Every entry of the source directory except `layouts` (so `config.kdl`, `themes` and the rest), and every entry of its `layouts` except the two noc layouts, is symbolically linked into `<out>` under the same name; the user's `config.kdl` is used as it is. The two layouts are rendered as in ZE-008.
 - **Source:** `zellij/dev.sh` (`render_installed`, `host_layout`, `local_plugin`)
 - **Decision:** D-062
 - **Verified by:** UNTESTED
 
-### ZE-014 The configuration installer
-- **Behavior:** `zellij/install-config.sh [--check]` copies `layouts/noc-host.kdl`, `layouts/noc-inner.kdl` and `themes/noc-blue.kdl` into `$ZELLIJ_CONFIG_DIR`, or `~/.config/zellij`. It MUST NOT read or write `config.kdl`. Any other argument prints `usage: install-config.sh [--check]` and exits `2`.
-  1. It is run either from a checkout (also as root `make zellij-install-config`) or piped from GitHub: `curl -fsSL https://raw.githubusercontent.com/ahparikh/noc/main/zellij/install-config.sh | bash`, with `bash -s -- --check` for the check. When it is a file with `config/layouts/noc-host.kdl` beside it, it installs the files beside it. Otherwise it MUST first download the three files into a temporary directory, removed on exit, from `$NOC_CONFIG_URL`, or else `https://raw.githubusercontent.com/<NOC_REPO, default ahparikh/noc>/<NOC_REF, default main>/zellij/config`; print `from       <base>`; and stop with `install-config.sh: could not download <url>`, exit `1`, having changed nothing, if any download fails.
-  2. For each file it prints `unchanged  <path>` when the destination is identical, `add        <path>` when it does not exist, or `replace    <path> (previous kept as <name>.bak)` after copying the existing file to `<path>.bak`.
-  3. With `--check` it prints the same lines, changes nothing, and ends with `(--check: nothing was changed)`. Otherwise it ends by naming the file that holds the settings, the start command (ZX-008) and `zellij kill-session noc`. It never edits a shell profile.
+### ZE-016 The configuration installer
+- **Behavior:** `zellij/install-config.sh [--check]` installs `layouts/noc-host.kdl`, `layouts/noc-inner.kdl` and `themes/noc-blue.kdl` into `$ZELLIJ_CONFIG_DIR`, or `~/.config/zellij`, and brings an existing installation up to date. It MUST NOT read or write `config.kdl`. Any other argument prints `usage: install-config.sh [--check]` and exits `2`.
+  1. **Source.** Run as a file with `config/layouts/noc-host.kdl` beside it (a checkout; also root `make zellij-install-config`) it uses the files beside it. Otherwise (piped: `curl -fsSL https://raw.githubusercontent.com/ahparikh/noc/main/zellij/install-config.sh | bash`, with `bash -s -- --check` for the check) it MUST download the three files into a temporary directory, removed on exit, from `$NOC_CONFIG_URL`, or else from `https://raw.githubusercontent.com/<NOC_REPO, default ahparikh/noc>/<ref>/zellij/config`, where `<ref>` is `$NOC_REF` or, when that is unset, the tag GitHub's `releases/latest` redirects to, so that the layouts name a published plugin. It prints `from       <source>`. It MUST stop, having changed nothing, with `install-config.sh: could not find the latest release of <repo> (set NOC_REF to a tag or branch)` when there is no such redirect, and with `install-config.sh: could not download <url>` when a download fails, both exit `1`.
+  2. **Host layout.** When the destination exists and loads `zellij-noc.wasm`, the file installed is the new layout with the user's settings: every setting of ZH-017 that is set (not commented out) in the user's plugin block is given the user's value, in place where the new layout sets it, uncommented where the new layout only mentions it, and added at the end of the plugin block otherwise; and `inner=noc; host=noc-host;` in the guest loop is replaced by the user's `inner=…; host=…;` when theirs differs. Nothing else of the user's file is carried over. Otherwise the new layout is installed as it is.
+  3. **Inner layout.** When the destination exists and differs from the new layout in more than its plugin locations, the user's file MUST be kept: only its plugin locations are set to the new one, and the new layout is written beside it as `noc-inner.kdl.new`. Otherwise the new layout is installed.
+  4. **Theme.** The new file is installed.
+  5. **Reporting.** For each file it prints `unchanged  <path>` when the result is identical to what is there; `add        <path>` when there was none; `update     <path>[, keeping your <names>] (previous kept as <name>.bak)` after copying the existing file to `<path>.bak`, where `<names>` lists, sorted, the settings whose value differs from the new layout's own and `session names`; for a kept inner layout, `update     <path>: plugin location only, the rest is yours (previous kept as noc-inner.kdl.bak)` or, when nothing changed, `kept       <path> (yours differs from the new file)`, each followed by a line naming the `.new` file.
+  6. With `--check` it prints the same lines, changes nothing, and ends with `(--check: nothing was changed)`. Otherwise it ends by naming the plugin version installed, the file that holds the settings, and the two commands that restart the pair (ZX-008). It never edits a shell profile.
 - **Source:** `zellij/install-config.sh`; root `Makefile` (`zellij-install-config`)
 - **Decision:** D-062
-- **Verified by:** MANUAL: serve `zellij/config/` over HTTP and run `cat zellij/install-config.sh | NOC_CONFIG_URL=http://127.0.0.1:<port> ZELLIJ_CONFIG_DIR=<empty dir> bash`, then again with `-s -- --check`; no automated test
+- **Verified by:** MANUAL: with `ZELLIJ_CONFIG_DIR` set to scratch directories, run it on an empty one, on a copy of an older installation, on a copy with settings, session names and `noc-inner.kdl` edited, each twice, and piped (`cat zellij/install-config.sh | bash -s -- --check`) against the latest release; `zellij --config-dir <dir> setup --check` accepts the result. No automated test
 
 ## 12. End-to-end harness
 
@@ -691,7 +694,11 @@ Neither the unit tests nor `nested.sh` cover:
   panel, so an agent recognised only by its pane title is recognised by the
   title it had at first.
 - The plugin URL is written three times: once in `noc-host.kdl` and twice
-  in `noc-inner.kdl`. Upgrading means changing all three.
+  in `noc-inner.kdl`. Upgrading means changing all three, which the
+  installer does (ZE-016).
+- The installer carries over only settings that are set. A shipped default
+  the user turned off by commenting it out comes back on an upgrade; an
+  empty value (`home_theme ""`) keeps it off.
 - `w` and `D` do not check that permissions were granted before acting, unlike
   Enter, `p` and `s`.
 - The inner session is local and single: remote inner sessions and several

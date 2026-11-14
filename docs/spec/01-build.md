@@ -201,7 +201,7 @@ Sources: `Makefile`, `go/Makefile`, `go/go.mod`,
   listed for it, and which installs that file as `noc`. It builds nothing
   and installs nothing else: the Zellij files are the user's own
   configuration, set up separately
-  ([08-zellij-host.md](08-zellij-host.md) ZE-014).
+  ([08-zellij-host.md](08-zellij-host.md) ZE-016).
   It MUST exit 2 when the tag does not start with `v` and a digit, and 1
   with `<file> has no checksum for <asset>` when one is missing. The
   release workflow writes this to `Formula/noc.rb`, commits it to `main` as
@@ -219,7 +219,7 @@ Sources: `Makefile`, `go/Makefile`, `go/go.mod`,
   binary, and none writes outside the repository except
   `make zellij-install-config`, which the user runs to copy the Zellij
   files into their own configuration
-  ([08-zellij-host.md](08-zellij-host.md) ZE-014). Daily use installs a
+  ([08-zellij-host.md](08-zellij-host.md) ZE-016). Daily use installs a
   released binary with Homebrew (BLD-051) or `install.sh` (BLD-046) and
   loads the released plugin by URL (BLD-048); development runs the checkout
   through `make dev` (BLD-049).
@@ -360,7 +360,7 @@ Variables: `CARGO` (BLD-012), `WASM_TARGET` (`wasm32-wasip1`).
   Nothing in this repository copies the plugin into a user's Zellij
   configuration directory, and nothing is generated there: the user copies
   the layout files, by hand or with the installer
-  ([08-zellij-host.md](08-zellij-host.md) ZE-014). Upgrading the plugin
+  ([08-zellij-host.md](08-zellij-host.md) ZE-016). Upgrading the plugin
   means changing the tag in that URL, in both layouts.
 - **Source:** `zellij/config/layouts/noc-host.kdl`; `zellij/config/layouts/noc-inner.kdl`
 - **Decision:** D-034

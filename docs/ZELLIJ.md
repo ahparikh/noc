@@ -207,20 +207,35 @@ the plugin block of `noc-host.kdl`. To dim with your own theme instead:
 
 ### Installing the files
 
-The script is [`zellij/install-config.sh`](../zellij/install-config.sh).
-Piped from GitHub it first downloads the files it installs, from the branch
-or tag named by `NOC_REF` (default `main`); run from a checkout it uses the
-files beside it. It writes to `$ZELLIJ_CONFIG_DIR`, or `~/.config/zellij`:
+The script is [`zellij/install-config.sh`](../zellij/install-config.sh). It
+sets a machine up the first time and upgrades it every time after: run the
+same command.
 
-- `layouts/noc-host.kdl`, `layouts/noc-inner.kdl` and
-  `themes/noc-blue.kdl` are copied. A different file already there is kept
-  beside the new one as `<name>.bak`.
-- Nothing else is read or written. In particular it does not touch
-  `config.kdl` or your shell profile.
+Piped from GitHub it downloads the files of the **latest release** (or of
+the tag or branch in `NOC_REF`), so the layouts it installs load a plugin
+that is published. Run from a checkout it uses the files beside it. It
+writes to `$ZELLIJ_CONFIG_DIR`, or `~/.config/zellij`:
 
-It ends by printing the start line. Because your settings live in the
-layouts it copies, running it again replaces them with the shipped files
-(yours are kept as `.bak`): after the first time, edit the files instead.
+- **`layouts/noc-host.kdl`**: the new file, with your settings. Every
+  setting you had set in the plugin block is carried over (`noc_bin`,
+  `colors`, `icons` and the rest), as are your session names if you changed
+  them, and it tells you which. Anything else you edited in that file (the
+  host session's keys, for example) is not carried over; it is in the
+  `.bak`.
+- **`layouts/noc-inner.kdl`**: replaced when yours is the shipped file.
+  When you have edited it, yours is kept, only the plugin location in its
+  two bindings is updated, and the new file is left beside it as
+  `noc-inner.kdl.new` to compare.
+- **`themes/noc-blue.kdl`**: replaced when it differs.
+
+Whatever it replaces is kept beside the new file as `<name>.bak`. Nothing
+else is read or written: not `config.kdl`, not your shell profile. It ends
+by naming the plugin version now installed and how to restart the pair.
+
+One thing to know: a setting counts as yours only while it is set. If you
+turned a shipped default off by commenting it out, an upgrade brings the
+default back. To keep it off, set it to an empty value instead, for example
+`home_theme ""` and `away_theme ""` to keep dimming off.
 
 ### Settings for the inner session only
 
@@ -273,16 +288,18 @@ line (`v0.1.2 is available`, or that yours is the latest). Nothing is
 downloaded. If `curl` or the network is missing, no
 marker shows. `update_check "false"` turns the check off.
 
-To upgrade, change the version in the plugin URL, which appears once in
-`noc-host.kdl` and twice in `noc-inner.kdl`, and start the pair again
+To upgrade, run the setup script again (it installs the latest release's
+layouts and keeps your settings, see
+[Installing the files](#installing-the-files)), then start the pair again
 (`zellij kill-session noc`, then the start line):
 
 ```sh
-sed -i.bak 's|/download/v[0-9.]*/zellij-noc.wasm|/download/vX.Y.Z/zellij-noc.wasm|' \
-  ~/.config/zellij/layouts/noc-host.kdl ~/.config/zellij/layouts/noc-inner.kdl
+curl -fsSL https://raw.githubusercontent.com/ahparikh/noc/main/zellij/install-config.sh | bash
 ```
- Because the location changed, Zellij asks
-for the plugin's permissions once more.
+
+Because the plugin's location changed, Zellij asks for its permissions once
+more. By hand, the same upgrade is changing the version in the plugin URL,
+which appears once in `noc-host.kdl` and twice in `noc-inner.kdl`.
 
 To avoid the download and the repeated prompt, download `zellij-noc.wasm`
 from the release to a fixed path and use `location="file:/that/path"`.

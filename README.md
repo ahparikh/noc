@@ -94,8 +94,8 @@ curl -fsSL https://raw.githubusercontent.com/ahparikh/noc/main/zellij/install-co
 ```
 
 Add `-s -- --check` after `bash` to see what it would do without changing
-anything. It only copies those three files; one that is already there and
-differs is kept as `<name>.bak`. From a checkout the same script is
+anything. It installs those three files from the latest release, and is
+also how you upgrade later (below). From a checkout the same script is
 `make zellij-install-config`.
 
 **By hand, or by an agent.** These steps are the whole installation:
@@ -161,16 +161,21 @@ both sessions, quit your session or run `zellij kill-session noc`.
 Zellij downloads a plugin URL once and keeps it, so the URL names the
 version. When a newer release exists the sidebar's status line shows `↑`
 beside its dot; click the line (or press `i`) to see both versions, and
-press `u` to check at once. To upgrade, change the version in the plugin URL (once in
-`noc-host.kdl`, twice in `noc-inner.kdl`) and restart the pair:
+press `u` to check at once.
+
+To upgrade, run the setup script again and restart the pair:
 
 ```sh
-sed -i.bak 's|/download/v[0-9.]*/zellij-noc.wasm|/download/vX.Y.Z/zellij-noc.wasm|' \
-  ~/.config/zellij/layouts/noc-host.kdl ~/.config/zellij/layouts/noc-inner.kdl
+curl -fsSL https://raw.githubusercontent.com/ahparikh/noc/main/zellij/install-config.sh | bash
+zellij kill-session noc
 ```
 
-Zellij asks for the plugin's permissions again, because its location
-changed.
+It installs the latest release's layouts, which load the latest plugin, and
+keeps the settings you changed in `noc-host.kdl`. If you edited
+`noc-inner.kdl`, yours is kept and only its plugin location is updated.
+Whatever it replaces is kept as `<name>.bak`. Zellij asks for the plugin's
+permissions again, because its location changed. `brew upgrade noc`
+upgrades the binary.
 
 [docs/ZELLIJ.md](docs/ZELLIJ.md) has the rest: every setting, all the keys,
 dimming, settings for your session only, and troubleshooting.

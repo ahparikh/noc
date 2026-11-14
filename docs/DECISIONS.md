@@ -626,9 +626,12 @@ session's first tab comes from this file, not from `default_layout`.
 ### D-062: an installer the user runs, and a dev mode on their own config
 
 `zellij/install-config.sh`, run straight from GitHub or as
-`make zellij-install-config`, copies the layouts and the theme into the
-user's Zellij configuration directory. It copies and nothing more: it
-does not touch `config.kdl`, and a file it replaces is kept as `.bak`. The dev
+`make zellij-install-config`, installs the layouts and the theme into the
+user's Zellij configuration directory, and is run again to upgrade: it
+fetches the latest release's files, carries the user's plugin settings into
+the new host layout, and leaves an inner layout the user has edited alone
+apart from its plugin location. It does not touch `config.kdl`, and a file
+it replaces is kept as `.bak`. The dev
 pair can render from that installed configuration (`make dev-installed`)
 instead of the checkout's files (`make dev`).
 
@@ -640,12 +643,15 @@ configuration change against a clean one.
 The files are not part of the Homebrew package: they are set up once and
 then belong to the user's own configuration, which they keep under version
 control themselves, while the binary is what gets upgraded.
+Upgrading by hand means changing a version in three places, which is the
+kind of step that gets done halfway; one command that is the same for
+setup and upgrade does not.
 **Consequence:** the installer is the one thing in the repository that
-writes to the user's configuration, and only when they run it. Because the
-user's settings live in the files it copies, running it again replaces
-them (keeping `.bak`), so it is a first-time tool. Upgrading the plugin
-version stays a manual edit of the URL, in three places across the two
-layouts.
+writes to the user's configuration, and only when they run it. It takes
+its files from the latest release, not from `main`, so a change to the
+shipped layouts reaches users with the next release. Edits to the host
+layout other than the plugin's settings and the session names are not
+carried over (they are in the `.bak`).
 
 ### D-063: the sidebar has its own colours
 

@@ -345,12 +345,12 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 ### ZX-025 Which agent is in a pane
 - **Behavior:** A plugin pane or an exited pane holds no agent. Otherwise the first match wins:
   1. the agent whose remembered pane (ZX-023) is this pane;
-  2. the agent named by the pane's command, when the command has at least three tokens (quotes stripped), its second-to-last token is `attach`, and the basename of its first token equals the basename of `noc_bin`; the agent id is the last token;
+  2. the agent named by a command of the pane: first the command the pane was started with (`terminal_command`), then the command running in it now (`pane_command`, which for a shell pane is the command typed into it). A command names an agent when it has at least three tokens (quotes stripped), its second-to-last token is `attach`, and the basename of its first token equals the basename of `noc_bin`; the agent id is the last token. Failing that, it names the single agent whose non-blank native session id or native short id equals one of the command's words, a word being a whitespace-separated token with quotes stripped, cut to what follows its last `=`; no match when several agents qualify. So `claude attach 2f5ac2d2` and `claude --resume=<session id>` typed into a shell are recognised;
   3. the single non-Quiet agent whose user name or name equals the pane title after removing a leading `NOC: ` and any leading non-alphanumeric characters; no match when several agents qualify;
   4. the agent with the most recently observed Zellij binding for this pane id whose session is empty or equals `guest_session`.
 
   Bindings of agents that are not live, and bindings in state `disconnected`, are never used.
-- **Source:** `zellij/src/panes.rs` (`agent_in_pane`, `attached_agent_id`, `agent_named_by_pane_title`); `zellij/src/model.rs` (`zellij_bindings`)
+- **Source:** `zellij/src/panes.rs` (`agent_in_pane`, `agent_named_by_pane_command`, `agent_named_by_command`, `attached_agent_id`, `agent_named_by_pane_title`); `zellij/src/model.rs` (`zellij_bindings`)
 - **Verified by:** `zellij/src/panes.rs` `identifies_the_agent_in_a_pane_from_launches_commands_and_bindings`, `recognizes_attach_commands_for_any_agent`, `recognises_a_pane_by_the_title_the_panel_gave_it`, `matches_a_hand_attached_pane_by_its_claude_title`; `zellij/src/model.rs` `zellij_bindings_skip_ended_and_disconnected_agents`
 
 ## 8. Opening agents in the inner session
@@ -362,7 +362,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** `zellij/e2e/nested.sh` "Enter opens the agent in a new inner tab named after it"
 
 ### ZX-027 Enter: focus the agent's existing pane
-- **Behavior:** With no agent selected the notice is `no agent is selected`. Otherwise the panel MUST look for the agent's live pane in the last inner snapshot, first match winning: its remembered pane if still present and not exited; a non-exited pane whose command attaches that agent (ZX-025 rule 2); a pane named by one of the agent's bindings whose session equals a non-empty `guest_session` and whose pane is present and not exited. If found it MUST run `action focus-pane-id terminal_<N>` in the inner session.
+- **Behavior:** With no agent selected the notice is `no agent is selected`. Otherwise the panel MUST look for the agent's live pane in the last inner snapshot, first match winning: its remembered pane if still present and not exited; a non-exited pane one of whose commands names that agent (ZX-025 rule 2); a pane named by one of the agent's bindings whose session equals a non-empty `guest_session` and whose pane is present and not exited. If found it MUST run `action focus-pane-id terminal_<N>` in the inner session.
 - **Source:** `zellij/src/guest.rs` (`guest_open_agent`, `guest_agent_pane`, `focus_pane_args`)
 - **Verified by:** `zellij/src/guest.rs` `finds_an_agents_inner_pane_in_order`, `builds_inner_session_commands`; `zellij/e2e/nested.sh` "Enter on an agent that is already open focuses it instead of opening a copy"
 
@@ -372,10 +372,10 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** `zellij/src/guest.rs` `builds_inner_session_commands`, `agent_cwd_is_the_trimmed_workspace_path`; `zellij/src/panes.rs` `tab_names_are_the_agent_title_cut_to_a_limit`, `names_another_running_session_only_when_it_is_live_and_not_ours`; `zellij/e2e/nested.sh` "Enter opens the agent in a new inner tab named after it", "the new tab runs noc attach for that agent", "exactly one tab was added"
 
 ### ZX-036 Tab names follow the agent
-- **Behavior:** After each successful read of the inner session the panel MUST work out, for every inner tab (by the `tab_id` and `tab_name` of its panes), which agents run in it (ZX-025, over the tab's panes that have not exited). A tab with exactly one agent whose name equals that agent's tab name (ZX-028: the title cut to `32` characters plus `…`) is remembered as named after that agent. A tab with exactly one agent and a different name MUST be renamed to the agent's tab name when either the panel remembers that tab under that agent with the name it has now, or the name is one Zellij assigned (`Tab #` followed only by digits); it is then remembered under the new name. Any other tab MUST be left alone and forgotten: a tab with no agent or several, and a tab the user named or renamed. The rename runs `action rename-tab --tab-id <id> -- <name>` in the inner session and does not move the host keyboard; its result is ignored. So a tab the panel opened, or one Zellij named, follows a rename in the registry within one read (ZX-020).
+- **Behavior:** After each successful read of the inner session the panel MUST work out, for every inner tab (by the `tab_id` and `tab_name` of its panes), which agents run in it (ZX-025, over the tab's panes that have not exited). The panel remembers, per tab, the name it last gave the tab or found to be its agent's, and, while a rename it asked for has not shown, the name the tab had before. A remembered tab that shows a name that is neither MUST be forgotten: someone else named it. A tab with exactly one agent whose name equals that agent's tab name (ZX-028: the title cut to `32` characters plus `…`) is remembered under that name. A tab with exactly one agent and a different name MUST be renamed to the agent's tab name when the panel remembers the tab, or the name is one Zellij assigned (`Tab #` followed only by digits); it is then remembered under the new name, and the rename is not sent again while the remembered name is the wanted one. A tab with no agent or several is not renamed, and stays remembered for as long as it shows the remembered name, so a tab the panel named follows the next agent to run alone in it. A tab the user named or renamed MUST be left alone. The rename runs `action rename-tab --tab-id <id> -- <name>` in the inner session and does not move the host keyboard; its result is ignored. So a tab the panel opened, or one Zellij named, follows a rename in the registry within one read (ZX-020).
 - **Source:** `zellij/src/guest.rs` (`tab_renames`, `rename_tab_args`, `on_guest_snapshot`); `zellij/src/panes.rs` (`is_default_tab_name`, `agent_tab_name`)
 - **Decision:** D-064
-- **Verified by:** `zellij/src/guest.rs` `tab_names_follow_the_agent_unless_the_user_named_the_tab`; `zellij/e2e/nested.sh` "the tab is renamed when the agent's name changes"
+- **Verified by:** `zellij/src/guest.rs` `tab_names_follow_the_agent_unless_the_user_named_the_tab`; `zellij/e2e/nested.sh` "the tab is renamed when the agent's name changes", "a tab whose shell runs a command naming an agent is named after it"
 
 ### ZX-029 `p` and `s`: a pane beside, or stacked
 - **Behavior:** With an agent selected and a non-blank native session id (same notices as above otherwise), the panel MUST run, in the inner session, `run --name "NOC: <title>" [--cwd <path>] [--stacked] -- <noc_bin> attach <id>`, with `--stacked` for `s` only, and pass the agent id in the command context under `zellij-noc-guest-agent`. These always open a new pane, even when the agent already has one.
@@ -519,7 +519,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** MANUAL: `make zellij-e2e`
 
 ### ZE-012 Start-up, welcome screen and permissions
-- **Behavior:** The harness MUST wait up to 30 s for each session to be listed and not `EXITED`, else print `nested.sh: the pair did not start; last screen:` with the last 15 screen lines and exit `1`. It then presses `Escape`, up to four times `1.5` s apart, while either session's client list shows `zellij:configuration` (Zellij's welcome screen). If the screen then contains `asks permission to`, it MUST print `nested.sh: the plugin is waiting for its permissions.` and `Run 'make dev' once, answer the prompt in the sidebar with y, then run this again.` and exit `1`. It MUST NOT edit Zellij's permission cache.
+- **Behavior:** The harness MUST wait up to 30 s for each session to be listed and not `EXITED`, else print `nested.sh: the pair did not start; last screen:` with the last 15 screen lines and exit `1`. It then presses `Escape`, up to four times `1.5` s apart, while either session's client list shows `zellij:configuration` (Zellij's welcome screen). If the screen then contains `Allow? (y/n)` (the last line of the permission prompt, which wraps in the sidebar), it MUST print `nested.sh: the plugin is waiting for its permissions.` and `Run 'make dev' once, answer the prompt in the sidebar with y, then run this again.` and exit `1`. It MUST NOT edit Zellij's permission cache.
 - **Source:** `zellij/e2e/nested.sh` (`start_pair`, `dismiss_welcome`)
 - **Verified by:** MANUAL: `make zellij-e2e` on a machine with no grant
 
@@ -543,17 +543,18 @@ pane, tab, focus and theme state stays in the plugin (D-036).
   | 13 | exactly one tab was added | inner tab count rose by 1 |
   | 14 | Enter on an agent that is already open focuses it instead of opening a copy | inner tab count unchanged |
   | 15 | the tab is renamed when the agent's name changes | after the fake registry reports the agent as `Renamed agent`, an inner tab has that name within 10 s |
-  | 16 | D opens the floating details window | a floating plugin pane titled with `E2E agent` exists in the host |
-  | 17 | q closes it | no visible floating plugin pane remains |
-  | 18 | / lists the agents that match what is typed | with the keyboard on the panel, after `/`, `second` and `Enter` the screen shows `1 match` within 8 s |
-  | 19 | Esc ends the search | after `Esc` the screen shows `2 agents` within 8 s |
-  | 20 | Alt-o hides the sidebar | a host tab reports `is_fullscreen_active` true |
-  | 21 | Alt-o shows it again | it reports false |
-  | 22 | Alt-d detaches the host client | host client count is 0 |
-  | 23 | both sessions keep running | both listed and not `EXITED` |
-  | 24 | the inner client stays attached in the guest pane | inner client count is 1 |
-  | 25 | starting again attaches to the running pair | host client count is 1 within 10 s |
-  | 26 | ending the inner session ends the host session | after `kill-session <inner>`, the host is gone within 10 s (skipped with `--keep`) |
+  | 16 | a tab whose shell runs a command naming an agent is named after it | after a new inner tab's shell is given `cat - 5e55a2b0` (the second agent's native short id), an inner tab `Second agent` exists within 15 s; the tab is then closed |
+  | 17 | D opens the floating details window | a floating plugin pane titled with `E2E agent` exists in the host |
+  | 18 | q closes it | no visible floating plugin pane remains |
+  | 19 | / lists the agents that match what is typed | with the keyboard on the panel, after `/`, `second` and `Enter` the screen shows `1 match` within 8 s |
+  | 20 | Esc ends the search | after `Esc` the screen shows `2 agents` within 8 s |
+  | 21 | Alt-o hides the sidebar | a host tab reports `is_fullscreen_active` true |
+  | 22 | Alt-o shows it again | it reports false |
+  | 23 | Alt-d detaches the host client | host client count is 0 |
+  | 24 | both sessions keep running | both listed and not `EXITED` |
+  | 25 | the inner client stays attached in the guest pane | inner client count is 1 |
+  | 26 | starting again attaches to the running pair | host client count is 1 within 10 s |
+  | 27 | ending the inner session ends the host session | after `kill-session <inner>`, the host is gone within 10 s (skipped with `--keep`) |
 
   It ends with `nested: all checks passed` and exit `0`, or `nested: <N> check(s) failed` and exit `1`.
 - **Source:** `zellij/e2e/nested.sh`
@@ -697,6 +698,10 @@ Neither the unit tests nor `nested.sh` cover:
   it: a title its program sets later is not seen, by the user or by the
   panel, so an agent recognised only by its pane title is recognised by the
   title it had at first.
+- An agent started by hand in a shell pane is recognised by its command
+  only when the command carries its native session id (`claude attach
+  <id>`, `claude --resume <id>`). A plain `claude` is recognised by its
+  binding from the hooks, or not at all.
 - The plugin URL is written three times: once in `noc-host.kdl` and twice
   in `noc-inner.kdl`. Upgrading means changing all three, which the
   installer does (ZE-016).

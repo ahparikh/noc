@@ -674,7 +674,11 @@ terminal, set `colors "zellij"`.
 The panel renames an inner tab to its agent's current name when the tab
 holds exactly one agent and its name is either the one the panel last gave
 or saw there, or one Zellij made up (`Tab #3`). A tab the user named is
-never renamed.
+never renamed. The panel's memory of a name belongs to the tab, not to the
+agent, so a tab it named goes on to the next agent that runs alone in it.
+An agent is found in a pane by, among other things, the command running
+there: `noc attach <id>`, or any command carrying the agent's native
+session id, such as a `claude attach <id>` typed into a shell.
 
 **Why:** an agent's name changes (a rename in noc, or the provider's own
 title for the conversation), and a tab bar that still shows the old name

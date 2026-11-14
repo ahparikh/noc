@@ -130,7 +130,9 @@ ends it. The same search is `noc search` in a shell.
 
 A tab that holds one agent is named after it and renamed when the agent's
 name changes. That applies to tabs the sidebar opened and to tabs still
-called `Tab #N`; a tab you named yourself keeps your name.
+called `Tab #N`; a tab you named yourself keeps your name. An agent you
+attach by hand in a shell (`claude attach <id>`) counts like one the
+sidebar opened.
 
 ## Configuration reference
 

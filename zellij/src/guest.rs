@@ -4,7 +4,7 @@
 
 use crate::app::{is_plain_name, Config, PaneTitles};
 use crate::model::{parse_terminal_pane_id, Agent};
-use crate::panes::{attached_agent_id, compact_error, LaunchedPane, ScanPane};
+use crate::panes::{agent_named_by_pane_command, compact_error, LaunchedPane, ScanPane};
 use crate::{ctx, now_secs, State, PIPE_RELAY};
 use std::collections::BTreeMap;
 use zellij_tile::prelude::*;
@@ -33,9 +33,8 @@ pub struct GuestState {
     pub in_flight: bool,
     pub last_read: Option<f64>,
     pub launched: BTreeMap<String, LaunchedPane>,
-    /// Inner tabs named after an agent, by tab id: the agent and the name
-    /// the tab had when the panel last looked or renamed it.
-    pub named_tabs: BTreeMap<u32, (String, String)>,
+    /// Inner tabs whose name is the panel's to change, by tab id.
+    pub named_tabs: BTreeMap<u32, TabName>,
     /// For each pane the panel has seen: the title it had by itself, and
     /// the name the panel gave it (empty when it gave none).
     pub titles: BTreeMap<u32, (String, String)>,
@@ -44,6 +43,15 @@ pub struct GuestState {
     /// Whether the last snapshot showed a client attached to the inner session.
     pub client_seen: bool,
     pub failing_since: Option<f64>,
+}
+
+/// A tab name the panel gave, or found to be an agent's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabName {
+    pub name: String,
+    /// The name the tab had when the panel asked for `name`, until a
+    /// snapshot shows the rename.
+    pub before: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -109,17 +117,18 @@ pub fn keyboard_signal(config: &Config, to_guest: bool) -> Vec<u8> {
 }
 
 /// The inner tabs whose name should follow their agent, as `(tab id, new
-/// name)`. A tab is the panel's to name when exactly one agent runs in it
-/// and its name is the one the panel knows it by (`named`), or one Zellij
-/// made up (`Tab #3`). A tab the user named themselves is left alone.
-/// `named` is brought up to date with what the snapshot shows.
+/// name)`. A tab's name is the panel's to change when it is one the panel
+/// gave or found to be an agent's (`named`), or one Zellij made up
+/// (`Tab #3`); the tab is renamed while exactly one agent runs in it. A tab
+/// the user named themselves is left alone. `named` is brought up to date
+/// with what the snapshot shows.
 pub fn tab_renames(
     agents: &[Agent],
     snapshot: &GuestSnapshot,
     launched: &BTreeMap<String, LaunchedPane>,
     guest_session: &str,
     noc_bin: &str,
-    named: &mut BTreeMap<u32, (String, String)>,
+    named: &mut BTreeMap<u32, TabName>,
 ) -> Vec<(u32, String)> {
     // tab id -> (current name, the agents in it)
     let mut tabs: BTreeMap<u32, (&str, Vec<&Agent>)> = BTreeMap::new();
@@ -139,24 +148,40 @@ pub fn tab_renames(
     named.retain(|tab, _| tabs.contains_key(tab));
     let mut renames = Vec::new();
     for (tab, (name, agents_in_tab)) in tabs {
+        match named.get_mut(&tab) {
+            Some(known) if known.name == name => known.before = None,
+            // A rename the panel asked for has not shown yet.
+            Some(known) if known.before.as_deref() == Some(name) => {}
+            // Someone else named the tab: it is theirs.
+            Some(_) => {
+                named.remove(&tab);
+            }
+            None => {}
+        }
         let [agent] = agents_in_tab.as_slice() else {
-            named.remove(&tab);
             continue;
         };
         let want = crate::panes::agent_tab_name(agent);
         if want.is_empty() {
             continue;
         }
-        let known = named
-            .get(&tab)
-            .is_some_and(|(id, last)| id == &agent.id && last == name);
+        let known = named.get(&tab).map(|known| known.name.as_str());
         if name == want {
-            named.insert(tab, (agent.id.clone(), want));
-        } else if known || crate::panes::is_default_tab_name(name) {
-            named.insert(tab, (agent.id.clone(), want.clone()));
+            named.entry(tab).or_insert(TabName {
+                name: want,
+                before: None,
+            });
+        } else if known == Some(want.as_str()) {
+            // Asked for already.
+        } else if known.is_some() || crate::panes::is_default_tab_name(name) {
+            named.insert(
+                tab,
+                TabName {
+                    name: want.clone(),
+                    before: Some(name.to_string()),
+                },
+            );
             renames.push((tab, want));
-        } else {
-            named.remove(&tab);
         }
     }
     renames
@@ -270,8 +295,8 @@ pub fn agent_cwd(agent: &Agent) -> Option<String> {
     (!path.is_empty()).then(|| path.to_string())
 }
 
-/// An agent's live pane in the inner session: launched pane, attach command,
-/// then a binding to exactly that session.
+/// An agent's live pane in the inner session: launched pane, a command that
+/// names it, then a binding to exactly that session.
 pub fn guest_agent_pane(
     agent: &Agent,
     snapshot: &GuestSnapshot,
@@ -284,14 +309,12 @@ pub fn guest_agent_pane(
             return Some(l.id);
         }
     }
-    if let Some(pane) = snapshot.panes.iter().find(|p| {
-        !p.exited
-            && p.terminal_command
-                .as_deref()
-                .and_then(|c| attached_agent_id(c, noc_bin))
-                .as_deref()
-                == Some(agent.id.as_str())
-    }) {
+    let one = std::slice::from_ref(agent);
+    if let Some(pane) = snapshot
+        .panes
+        .iter()
+        .find(|p| !p.exited && agent_named_by_pane_command(one, p, noc_bin).is_some())
+    {
         return Some(pane.id);
     }
     agent.zellij_bindings().into_iter().find_map(|b| {
@@ -815,6 +838,50 @@ mod tests {
             (6, "Tab #6", "noc attach a2"),
         ];
         assert!(renames(&after, &shared).is_empty());
+
+        // The agent is renamed again before the first rename shows: the tab
+        // still follows, and stays the panel's.
+        let last = [agent("a1", "Last name")];
+        let slow = [(8, "Old name", "noc attach a1")];
+        assert!(renames(&before, &slow).is_empty());
+        assert_eq!(renames(&after, &slow), [(8, "New name".to_string())]);
+        assert_eq!(renames(&last, &slow), [(8, "Last name".to_string())]);
+        assert!(renames(&last, &[(8, "Last name", "noc attach a1")]).is_empty());
+        assert_eq!(
+            renames(&after, &[(8, "Last name", "noc attach a1")]),
+            [(8, "New name".to_string())]
+        );
+        // A tab the panel named goes on to another agent once the first
+        // has left it, also with no agent in between.
+        let moved = [(9, "Tab #9", "noc attach a1")];
+        assert_eq!(renames(&after, &moved), [(9, "New name".to_string())]);
+        assert!(renames(&after, &[(9, "New name", "")]).is_empty());
+        assert_eq!(
+            renames(&after, &[(9, "New name", "noc attach a2")]),
+            [(9, "Other".to_string())]
+        );
+        // A hand-attached agent, known only by the command in its shell.
+        let native = [
+            parse_agent(r#"{"id":"n1","name":"By hand","native_short_id":"2f5ac2d2"}"#).unwrap(),
+        ];
+        let by_hand = GuestSnapshot {
+            clients: 1,
+            focused: Some(0),
+            panes: vec![ScanPane {
+                tab_id: Some(10),
+                tab_name: "Tab #10".to_string(),
+                pane_command: Some("claude attach 2f5ac2d2".to_string()),
+                ..ScanPane::default()
+            }],
+        };
+        assert_eq!(
+            tab_renames(&native, &by_hand, &launched, "inner", "noc", &mut named),
+            [(10, "By hand".to_string())]
+        );
+        assert_eq!(
+            guest_agent_pane(&native[0], &by_hand, &launched, "inner", "noc"),
+            Some(0)
+        );
 
         assert_eq!(
             rename_tab_args(7, "-x"),

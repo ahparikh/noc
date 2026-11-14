@@ -119,6 +119,9 @@ The plugin depends on `zellij-tile` 0.46.0 and is used with Zellij 0.46.
 | `attention` | `Attention` | `{kind:"", detail:""}` | Blocked secondary line |
 | `workspace` | `Option<Workspace>` | `None` | repo/branch/worktree/cwd, `w` directory, attach cwd |
 | `frontend_bindings` | `Vec<FrontendBinding>` | `[]` | details `pane` line; pane resolution in the inner session |
+| `team` | `String` | `""` | team grouping, the team on the secondary line (ZM-025) |
+| `lead` | `bool` | `false` | the lead's place and mark (ZM-025) |
+| `parent_id` | `String` | `""` | parsed, not displayed |
 
 Nested types (all fields default to `""`/`false` when missing):
 
@@ -363,6 +366,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   | `update_check` | on | exactly `false` → off | whether the header can show `↑ vX.Y.Z` (ZR-002) |
   | `colors` | built-in | exactly `zellij` → follow the Zellij theme | ZR-018 |
   | `pane_titles` | show | exactly `name` → name the inner session's panes; exactly `hide` → blank their titles | [08-zellij-host.md](08-zellij-host.md) ZX-038 |
+  | `group_by` | status | exactly `team` → group by team; any other value is `status` | how the list is grouped when the panel starts (ZG-017) |
 
   What the theme and key settings do is specified in
   [08-zellij-host.md](08-zellij-host.md); the user-facing reference is
@@ -403,6 +407,20 @@ Public API fields that are not modelled are silently ignored, e.g.
 
 ---
 
+### 1.11 Teams
+
+#### ZM-025 Team and lead
+- **Behavior:** An agent's team is its `team` field with surrounding
+  whitespace trimmed; an empty result means the agent is in no team. An
+  agent is its team's lead when `lead` is true and it is in a team; `lead`
+  on an agent in no team is ignored. The panel compares team names exactly,
+  never changes them, and reads nothing else about teams: which agents are
+  in a team, and which one leads it, is decided by `noc`
+  ([03-cli.md](03-cli.md)).
+- **Source:** `zellij/src/model.rs` (Agent::team_name, Agent::is_lead)
+- **Decision:** D-071
+- **Verified by:** `zellij/src/model.rs` reads_the_team_and_the_lead_mark
+
 ## 2. Grouping, sorting, sections, selection (`model.rs`, `app.rs`)
 
 ### 2.1 Sorting
@@ -432,7 +450,10 @@ Public API fields that are not modelled are silently ignored, e.g.
 - **Behavior:** `ZellijNoc.agents` MUST hold every agent of the last
   snapshot except those in the stopped set (ZG-012), for lookups.
   `ZellijNoc.items` MUST hold the visible rows in order, each either
-  `Agent(index into agents)` or `Section { age, count, expanded }`;
+  `Agent(index into agents)` or `Section { age, count, expanded }`, or,
+  when the list is grouped by team (ZG-017), `Team { team, count, expanded,
+  blocked, working, review }` or `TeamQuiet { team, count, expanded }`,
+  where `team` indexes `ZellijNoc.teams`, the team names in list order;
   `selected_index` indexes `items`.
 - **Source:** `zellij/src/app.rs` (ZellijNoc, ListItem)
 - **Decision:** D-049
@@ -510,22 +531,80 @@ Public API fields that are not modelled are silently ignored, e.g.
   Quiet agent within 7 days, add its section to the expanded set and rebuild;
   then select its row, clear the pending `g`, and return `true`; return
   `false` (selection unchanged) if the agent is unknown or older than 7 days.
+  When the list is grouped by team and the agent is not a row, it instead
+  opens the agent's team and, for a Quiet agent that is not the lead, that
+  team's Quiet row, and rebuilds; an agent that still is not a row (a Quiet
+  agent in no team, older than 7 days) returns `false`.
   The panel uses this to make the selection follow the inner session's
   focused pane (except while the panel itself has the keyboard), so focusing
   a Quiet agent's pane opens its section. How the focused pane is read and
   matched to an agent is in [08-zellij-host.md](08-zellij-host.md).
 - **Source:** `zellij/src/app.rs` (select_agent); caller `zellij/src/guest.rs` (follow_guest_focus)
-- **Verified by:** `zellij/src/app.rs` selects_listed_agents_by_id_only; `zellij/src/app.rs` quiet_agents_fold_into_collapsed_time_sections
+- **Verified by:** `zellij/src/app.rs` selects_listed_agents_by_id_only; `zellij/src/app.rs` quiet_agents_fold_into_collapsed_time_sections; `zellij/src/app.rs` teams_group_by_name_with_the_lead_first_and_quiet_agents_in_one_row, team_groups_fold_and_keep_their_state_across_snapshots
 
 #### ZG-011 Initial state
 - **Behavior:** A new panel MUST start with `selected_index = 0`,
   `show_details = true`, `show_help = false`, connection `Connecting`, no
   notice, no settings or inner-session problem, no pending stop or rename,
-  all sections collapsed, spinner frame 0, `last_render_rows = 20`.
+  all sections collapsed, every team open and every team's Quiet row
+  closed, the grouping set by `group_by` (ZM-023), spinner frame 0,
+  `last_render_rows = 20`.
 - **Source:** `zellij/src/app.rs` (ZellijNoc::new)
 - **Verified by:** `zellij/src/app.rs` a_new_panel_starts_with_the_documented_defaults
 
-### 2.4 Snapshot application side effects
+### 2.4 Grouping by team
+
+#### ZG-017 Two groupings
+- **Behavior:** The list is grouped by `status` (ZG-004: Blocked, Working,
+  Review, Quiet) or by `team` (ZG-018). The grouping starts as the
+  `group_by` setting and `v` switches it (ZK-029). Switching MUST rebuild
+  the rows and keep the selected agent selected; a selected row that does
+  not exist in the other grouping (a section, a team heading, a team's
+  Quiet row) leaves the selection at the same index, clamped as in ZG-009.
+  While the list holds search results (ZK-026) it is the flat list of
+  matches in either grouping; the grouping in effect returns when the
+  search ends. Which sections and teams are open is kept separately for
+  each grouping and survives switching.
+- **Source:** `zellij/src/app.rs` (GroupBy, by_team, toggle_group_by, rebuild_items)
+- **Decision:** D-070
+- **Verified by:** `zellij/src/app.rs` switching_the_grouping_keeps_the_selected_agent, parses_bounded_poll_configuration
+
+#### ZG-018 Rows when grouped by team
+- **Behavior:** Grouped by team, `rebuild_items` MUST emit one group per
+  team, ordered by team name (byte order), then one group for the agents in
+  no team when there are any. A Quiet agent in no team that is older than 7
+  days is not part of that group (as in ZG-006); every agent of a named
+  team is part of its group, whatever its age. Each group is:
+  1. a `Team` row carrying the number of agents in the group and how many
+     of them are Blocked, Working and Review;
+  2. only when the team is open:
+     - the team's lead (ZM-025), whatever its state; if several agents are
+       marked lead, the first in `agents` order;
+     - the other agents that are not Quiet, in `agents` order (so Blocked,
+       then Working, then Review, ZG-001);
+     - when any other agent is Quiet, one `TeamQuiet` row with their count,
+       followed, only when that row is open, by those agents in `agents`
+       order.
+
+  A team with no agents has no group. `ZellijNoc.teams` holds the group
+  names in order, the agents in no team as the empty name.
+- **Source:** `zellij/src/app.rs` (rebuild_team_items)
+- **Decision:** D-070, D-071
+- **Verified by:** `zellij/src/app.rs` teams_group_by_name_with_the_lead_first_and_quiet_agents_in_one_row
+
+#### ZG-019 Teams start open; open state persists
+- **Behavior:** Every team's group MUST start open and every team's Quiet
+  row closed. The panel remembers, by team name, the teams the user folded
+  and the Quiet rows the user opened, across snapshots and across switching
+  the grouping, until the plugin is reloaded; a team that disappears and
+  comes back is as it was left. Selection is preserved across snapshots by
+  identity as in ZG-008: an agent by id, a `Team` or `TeamQuiet` row by
+  team name.
+- **Source:** `zellij/src/app.rs` (folded_teams, open_team_quiet, selection_key, position_of)
+- **Decision:** D-070
+- **Verified by:** `zellij/src/app.rs` team_groups_fold_and_keep_their_state_across_snapshots
+
+### 2.5 Snapshot application side effects
 
 #### ZG-012 Stopped agents stay hidden until the registry drops them
 - **Behavior:** `apply_snapshot` MUST first drop from the stopped set every id
@@ -614,7 +693,8 @@ Public API fields that are not modelled are silently ignored, e.g.
   Otherwise it MUST show, on the left, `{N} agent{s}` (`s` omitted only when
   `N == 1`; accent colour, bold), where `N` is the number of non-Quiet agent
   rows plus the sum of all Quiet section counts (open or closed); Quiet
-  agents older than 7 days and stopped agents are not counted. While the
+  agents older than 7 days and stopped agents are not counted. Grouped by
+  team, `N` is the sum of the team headings' counts (ZG-018). While the
   list holds search results (ZK-026) the count is `{N} match` or
   `{N} matches`, `N` being the number of rows, followed by two spaces and
   `/ {query}`. At the right edge it MUST show the status dot `●` (ZR-003),
@@ -685,7 +765,7 @@ Public API fields that are not modelled are silently ignored, e.g.
 
 #### ZR-005 Help view
 - **Behavior:** When `show_help` is true the body (ZR-033) MUST be, instead
-  of the list, and with no details block: `In the list` (accent, bold); the 17 entries below
+  of the list, and with no details block: `In the list` (accent, bold); the 18 entries below
   (muted, dim); an empty line; `Anywhere` (accent, bold); then the three
   fixed `Anywhere` entries (muted, dim). Help is shown regardless of whether
   there are agents.
@@ -695,7 +775,8 @@ Public API fields that are not modelled are silently ignored, e.g.
   gg / G      first / last
   Ctrl-d / u  half page
   Enter / l   open agent, or a section
-  h           close a Quiet section
+  h           close a section or a team
+  v           group by team / status
   p           open as a pane here
   s           open stacked here
   w           shell in its worktree
@@ -779,7 +860,8 @@ Public API fields that are not modelled are silently ignored, e.g.
   list MUST insert `{Group}  {count}` (two spaces), bold, in the group colour
   (ZR-017). Section rows belong to Quiet. Count for Blocked/Working/Review =
   number of that group's agent rows; for Quiet = sum of section counts (so it
-  does not double-count members of an open section).
+  does not double-count members of an open section). Grouped by team these
+  headings are not drawn; the team headings are rows (ZR-035).
 - **Source:** `zellij/src/view.rs` (agent_list_lines, group_count, item_group)
 - **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds; `zellij/src/view.rs` working_agents_spin_and_quiet_agents_fold_into_counted_sections (`Quiet  3` with a section open)
 
@@ -788,7 +870,9 @@ Public API fields that are not modelled are silently ignored, e.g.
 #### ZR-011 Agent primary line
 - **Behavior:** Each agent row's first line MUST be
   `" " + indent + symbol + " " + title`, where indent is two spaces for a
-  Quiet agent (inside an open section) and empty otherwise, symbol per ZR-012,
+  Quiet agent (inside an open section, or under a team's Quiet row) and
+  empty otherwise, and also empty for a team's lead listed first in its
+  group (ZG-018) even when it is Quiet; symbol per ZR-012,
   and title = `Agent::title()` truncated to `cols - prefix_width` (ZR-020);
   the rest of the line is padded with spaces to `cols`. No selection glyph is
   drawn (the leading space keeps alignment; the highlight marks selection).
@@ -811,6 +895,7 @@ Public API fields that are not modelled are silently ignored, e.g.
 #### ZR-013 Agent secondary line
 - **Behavior:** Each agent row's second line MUST be
   `"   " + indent + icon + " " + age_right_aligned_to_3` then, if non-empty,
+  `"  " + team` (ZR-036), then, if non-empty,
   `"  " + rest`, then for a Quiet agent whose `display_state` starts with
   `needs_` the suffix `"  stopped waiting on you"`; trailing whitespace is
   trimmed, then the line is truncated/padded to `cols`. `icon` is
@@ -818,8 +903,9 @@ Public API fields that are not modelled are silently ignored, e.g.
   `age_label(recency(), generated_at)` (three spaces when unknown; `{:>3}`
   pads but does not truncate, so `100d` takes four columns). `rest` is
   `attention.detail.trim()` when the agent is Blocked and that is non-empty,
-  else `workspace_label()` (ZM-017).
-- **Source:** `zellij/src/view.rs` (secondary_text, agent_secondary_line)
+  else `workspace_label()` (ZM-017). `indent` is the primary line's
+  (ZR-011).
+- **Source:** `zellij/src/view.rs` (secondary_text, agent_secondary_line, row_indent)
 - **Decision:** D-048
 - **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds (`   ✳  2m  Bash: make clean`); `zellij/src/view.rs` quiet_agents_rest_even_if_they_stopped_waiting_on_the_user
 
@@ -827,7 +913,9 @@ Public API fields that are not modelled are silently ignored, e.g.
 - **Behavior:** A section row MUST be
   `" " + arrow + " " + label padded to 6 + "  " + count`, arrow `▾` when
   expanded and `▸` when collapsed; e.g. `" ▸ < 24h   1"`, `" ▸ < 7d    1"`.
-  The count follows the label (not right-aligned at the pane edge).
+  The count follows the label (not right-aligned at the pane edge). A
+  team's Quiet row (ZG-018) is drawn the same way with the label `Quiet`:
+  `" ▸ Quiet   2"`.
 - **Source:** `zellij/src/view.rs` (section_line)
 - **Decision:** D-049
 - **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds; `zellij/src/view.rs` working_agents_spin_and_quiet_agents_fold_into_counted_sections
@@ -843,11 +931,43 @@ Public API fields that are not modelled are silently ignored, e.g.
   | secondary line | `muted`, dim | `selected_text` on `selected_background`, not dim; padding on `selected_background` |
   | section row | grey group colour | `selected_text` on `selected_background`, bold; padding on `selected_background` |
   | group heading | group colour, bold (never selected) | — |
+  | team heading: name and count | `accent`, bold | `selected_text` on `selected_background`, bold; padding on `selected_background` |
+  | team heading: counts of a folded team | `muted`, dim | `selected_text` on `selected_background` |
 
   The selected agent's highlight MUST span both of its lines across the full
   width.
 - **Source:** `zellij/src/view.rs` (agent_primary_line, agent_secondary_line, section_line, agent_list_lines)
 - **Verified by:** `zellij/src/view.rs` selected_rows_highlight_both_lines_and_group_colours_are_fixed (background on both lines, heading colours); the remaining cells `UNTESTED`
+
+#### ZR-035 Team heading
+- **Behavior:** A `Team` row MUST be `{team}  {count}` (two spaces), with
+  `no team` as the name of the group of agents in no team. When the team is
+  folded and any of its agents is Blocked, Working or Review, two spaces and
+  the counts follow: `{b} blocked · {w} working · {r} review`, the parts
+  joined by ` · `, a part left out when its count is zero (for example
+  `billing  4  1 blocked · 2 working`). An open team shows no counts. The
+  line is cut to `cols` with `…` (ZR-020), never wrapped. Unlike a status
+  heading (ZR-010) it is a row: it can be selected.
+- **Source:** `zellij/src/view.rs` (team_line, attention_counts, agent_list_lines); `zellij/src/app.rs` (team_title, NO_TEAM)
+- **Decision:** D-070, D-071
+- **Verified by:** `zellij/src/view.rs` team_grouping_shows_headings_the_lead_and_folded_counts
+
+#### ZR-036 The team on the secondary line
+- **Behavior:** The `team` part of an agent's secondary line (ZR-013) MUST
+  be:
+
+  | List | Agent | Text |
+  |---|---|---|
+  | grouped by team | the team's lead | `★ lead` |
+  | grouped by team | any other agent | empty |
+  | grouped by status, or search results | lead of a team | `★ ` + the team name cut to 12 columns |
+  | grouped by status, or search results | in a team, not its lead | the team name cut to 14 columns |
+  | any | in no team | empty |
+
+  Names are cut with `…` (ZR-020). The mark is `★` (U+2605), which no state uses (ZM-012).
+- **Source:** `zellij/src/view.rs` (team_label, secondary_text)
+- **Decision:** D-071
+- **Verified by:** `zellij/src/view.rs` the_status_grouping_names_the_team_on_the_second_line, team_grouping_shows_headings_the_lead_and_folded_counts
 
 ### 3.5 Colour and text primitives
 
@@ -946,9 +1066,15 @@ Public API fields that are not modelled are silently ignored, e.g.
   rule; `Quiet · {label}` (accent, bold); then, muted and dim,
   `Conversations with no process.`, `Enter opens this section; Enter on`,
   `an agent resumes it; h closes.` — the same text whether the section is
-  open or closed.
+  open or closed. When a team heading is selected the block MUST be: the
+  rule; `Team · {team}` (`No team` for the agents in no team; accent,
+  bold); then, muted and dim, `{count} agent{s}.`,
+  `Enter folds or opens this team;`, `v groups by status.`. When a team's
+  Quiet row is selected: the rule; `Quiet · {team}` (`Quiet · no team`);
+  then `Conversations with no process.`, `Enter opens this row; Enter on`,
+  `an agent resumes it; h closes.`.
 - **Source:** `zellij/src/view.rs` (inline_detail_lines)
-- **Verified by:** `zellij/src/view.rs` working_agents_spin_and_quiet_agents_fold_into_counted_sections
+- **Verified by:** `zellij/src/view.rs` working_agents_spin_and_quiet_agents_fold_into_counted_sections; `zellij/src/view.rs` team_grouping_shows_headings_the_lead_and_folded_counts (the team heading); the Quiet row's block `UNTESTED`
 
 #### ZR-024 Agent detail lines
 - **Behavior:** The shared agent detail lines MUST be, in order, omitting any
@@ -1087,10 +1213,13 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 | `?` | — | toggle help |
 | `Esc` | — | close help; cancel pending `g` |
 | `Enter`, `l` | section row | open/close section |
+| `Enter`, `l`, `Space` | team heading, or a team's Quiet row | fold/open it (ZK-008) |
 | `Enter`, `l` | agent row | open or focus the agent in the inner session (ZK-009) |
 | `Space` | section row | open/close section |
 | `Space` | agent row | nothing |
 | `h`, `Left` | section row or agent in a section | close that section, select its row |
+| `h`, `Left` | grouped by team | close the Quiet row or fold the team (ZK-015) |
+| `v` | — | group by team, or by status again (ZK-029) |
 | `p` | agent row | open the agent as a new pane in the inner session (ZK-010) |
 | `s` | agent row | open the agent stacked in the inner session (ZK-011) |
 | `w` | agent row | shell in its workspace, in the inner session (ZK-012) |
@@ -1166,12 +1295,14 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 #### ZK-008 Enter / l / Space
 - **Behavior:** `Enter`, `l` and `Space` MUST cancel a pending `g`; if a
   section row is selected they toggle that section's expanded state, rebuild
-  the rows and keep the selection on the section row. If an agent row is
+  the rows and keep the selection on the section row. A team heading and a
+  team's Quiet row (ZG-018) are toggled the same way: the heading folds or
+  opens the team, the Quiet row opens or closes. If an agent row is
   selected (or nothing), `Enter` and `l` raise the open intent (ZK-009);
   `Space` does nothing.
 - **Source:** `zellij/src/panel.rs` (process_key), `zellij/src/app.rs` (toggle_selected_section)
 - **Decision:** D-049
-- **Verified by:** `zellij/src/panel.rs` navigation_and_intent_keys; `zellij/src/app.rs` quiet_agents_fold_into_collapsed_time_sections; `E2E: zellij/e2e/nested.sh` (Enter opens the Quiet section before opening its agent)
+- **Verified by:** `zellij/src/panel.rs` navigation_and_intent_keys; `zellij/src/app.rs` quiet_agents_fold_into_collapsed_time_sections; `zellij/src/panel.rs` v_switches_the_grouping_and_enter_folds_a_team; `zellij/src/app.rs` team_groups_fold_and_keep_their_state_across_snapshots; `E2E: zellij/e2e/nested.sh` (Enter opens the Quiet section before opening its agent)
 
 #### ZK-009 Open intent (Enter / l on an agent)
 - **Behavior:** The panel MUST, in order:
@@ -1256,10 +1387,24 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 - **Behavior:** `h`/`Left` MUST cancel a pending `g`; if a section row is
   selected, collapse it and keep it selected; if a Quiet agent inside an open
   section is selected, collapse its section and select the section row;
-  otherwise do nothing.
-- **Source:** `zellij/src/app.rs` (collapse_selected)
+  otherwise do nothing. Grouped by team: on a team's Quiet row, or on a
+  Quiet agent that is not the lead, close that Quiet row and select it; on
+  a team heading, or on any other agent, fold the agent's team and select
+  its heading.
+- **Source:** `zellij/src/app.rs` (collapse_selected, collapse_selected_team)
 - **Decision:** D-049
-- **Verified by:** `zellij/src/app.rs` quiet_agents_fold_into_collapsed_time_sections; `zellij/src/panel.rs` navigation_and_intent_keys
+- **Verified by:** `zellij/src/app.rs` quiet_agents_fold_into_collapsed_time_sections; `zellij/src/panel.rs` navigation_and_intent_keys; `zellij/src/app.rs` team_groups_fold_and_keep_their_state_across_snapshots; `zellij/src/panel.rs` v_switches_the_grouping_and_enter_folds_a_team
+
+#### ZK-029 `v`: switch the grouping
+- **Behavior:** `v` MUST cancel a pending `g`, switch the list between the
+  status and the team grouping (ZG-017), and set the notice
+  `grouped by team` or `grouped by status`. It raises no intent and runs no
+  command. Every other key acts on an agent row exactly as in the status
+  grouping; on a team heading or a team's Quiet row the keys that need an
+  agent behave as on a section row (`no agent is selected`).
+- **Source:** `zellij/src/panel.rs` (process_key); `zellij/src/app.rs` (toggle_group_by)
+- **Decision:** D-070
+- **Verified by:** `zellij/src/panel.rs` v_switches_the_grouping_and_enter_folds_a_team; `zellij/src/app.rs` switching_the_grouping_keeps_the_selected_agent
 
 ### 4.5 Stop (`x`)
 
@@ -1568,6 +1713,32 @@ Empty list, before the first snapshot (6 rows):
 │0 agents                             ●│  dot yellow: connecting
 │[?] keys  [d]etails  [D] window       │
 ```
+
+Grouped by team (`v`), the `TEAMS` fixture of `zellij/src/view.rs`: team
+`billing` with its lead `Lead` (Review), `Blocked one`, `Worker one` and one
+Quiet agent; `Auth one` alone in a team with a long name; `Solo` in no team.
+The first heading is selected:
+
+```text
+│a-very-long-team-name  1              │  selected; otherwise accent, bold
+│ ◆ Auth one                           │
+│   ✳  5m                              │
+│billing  4                            │  accent, bold
+│ ◆ Lead                               │  the lead first, whatever its state
+│   ✳  4m  ★ lead  app · main          │
+│ ? Blocked one                        │
+│   ⬡  3m                              │
+│ ⠋ Worker one                         │
+│   ✳  2m  app · main                  │
+│ ▸ Quiet   1                          │  the team's Quiet agents
+│no team  1                            │
+│ ⠋ Solo                               │
+│   ✳  1m                              │
+```
+
+With `billing` folded, at 60 columns: `billing  4  1 blocked · 1 working ·
+1 review`; at 38 columns the same line is cut to
+`billing  4  1 blocked · 1 working · 1…`.
 
 Server offline with no list to keep (10 rows):
 

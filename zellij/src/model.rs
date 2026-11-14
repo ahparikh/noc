@@ -69,6 +69,14 @@ pub struct Agent {
     pub workspace: Option<Workspace>,
     #[serde(default)]
     pub frontend_bindings: Vec<FrontendBinding>,
+    /// The team the agent is in; empty when it is in none.
+    #[serde(default)]
+    pub team: String,
+    /// Whether the agent leads its team.
+    #[serde(default)]
+    pub lead: bool,
+    #[serde(default)]
+    pub parent_id: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -269,6 +277,16 @@ impl Agent {
                 _ => AgentGroup::Quiet,
             },
         }
+    }
+
+    /// The agent's team name, trimmed; empty when it is in no team.
+    pub fn team_name(&self) -> &str {
+        self.team.trim()
+    }
+
+    /// Whether the agent leads a team. An agent in no team leads nothing.
+    pub fn is_lead(&self) -> bool {
+        self.lead && !self.team_name().is_empty()
     }
 
     fn name_is_id_placeholder(&self) -> bool {
@@ -592,6 +610,20 @@ mod tests {
         assert_eq!(session.title(), "abcdef12");
         let bare = parse_agent(r#"{"id":""}"#).unwrap();
         assert_eq!(bare.title(), "unnamed agent");
+    }
+
+    #[test]
+    fn reads_the_team_and_the_lead_mark() {
+        let lead =
+            parse_agent(r#"{"id":"a","team":" auth ","lead":true,"parent_id":"p"}"#).unwrap();
+        assert_eq!(lead.team_name(), "auth");
+        assert!(lead.is_lead());
+        assert_eq!(lead.parent_id, "p");
+        let member = parse_agent(r#"{"id":"b","team":"auth"}"#).unwrap();
+        assert!(!member.is_lead());
+        let alone = parse_agent(r#"{"id":"c","lead":true}"#).unwrap();
+        assert_eq!(alone.team_name(), "");
+        assert!(!alone.is_lead(), "no team, nothing to lead");
     }
 
     #[test]

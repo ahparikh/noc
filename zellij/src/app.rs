@@ -49,7 +49,44 @@ pub enum ListItem {
         count: usize,
         expanded: bool,
     },
+    /// A team's heading when the list is grouped by team. `team` indexes
+    /// `ZellijNoc::teams`.
+    Team {
+        team: usize,
+        count: usize,
+        expanded: bool,
+        blocked: usize,
+        working: usize,
+        review: usize,
+    },
+    /// The Quiet agents of one team, folded into one row.
+    TeamQuiet {
+        team: usize,
+        count: usize,
+        expanded: bool,
+    },
 }
+
+/// How the list is grouped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupBy {
+    /// Blocked, Working, Review, Quiet.
+    Status,
+    /// One group per team, then the agents in no team.
+    Team,
+}
+
+impl GroupBy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            GroupBy::Status => "status",
+            GroupBy::Team => "team",
+        }
+    }
+}
+
+/// The heading of the group of agents that are in no team.
+pub const NO_TEAM: &str = "no team";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
@@ -97,6 +134,8 @@ pub struct Search {
 enum SelectionKey {
     Agent(String),
     Section(QuietAge),
+    Team(String),
+    TeamQuiet(String),
 }
 
 // ---- configuration ----
@@ -139,6 +178,8 @@ pub struct Config {
     /// Follow the Zellij theme instead of the built-in colours.
     pub zellij_colors: bool,
     pub pane_titles: PaneTitles,
+    /// How the list is grouped when the panel starts.
+    pub group_by: GroupBy,
 }
 
 impl Default for Config {
@@ -157,6 +198,7 @@ impl Default for Config {
             update_check: true,
             zellij_colors: false,
             pane_titles: PaneTitles::Show,
+            group_by: GroupBy::Status,
         }
     }
 }
@@ -249,6 +291,10 @@ impl Config {
             Some("name") => PaneTitles::Name,
             _ => PaneTitles::Show,
         };
+        config.group_by = match get("group_by") {
+            Some("team") => GroupBy::Team,
+            _ => GroupBy::Status,
+        };
         config
     }
 
@@ -325,6 +371,11 @@ pub struct ZellijNoc {
     /// The list holds search results: every match is a row, Quiet agents
     /// are not folded into sections, and none is too old to show.
     pub flat: bool,
+    /// How the list is grouped; starts as the `group_by` setting.
+    pub group_by: GroupBy,
+    /// The team names behind `ListItem::Team`, in list order. The agents in
+    /// no team are the empty name, last.
+    pub teams: Vec<String>,
     pub show_details: bool,
     pub show_help: bool,
     /// The status box is open.
@@ -335,13 +386,22 @@ pub struct ZellijNoc {
     pub spinner_frame: usize,
     pub last_render_rows: usize,
     expanded: BTreeSet<QuietAge>,
+    /// Teams whose group is folded; every group starts open.
+    folded_teams: BTreeSet<String>,
+    /// Teams whose Quiet row is open.
+    open_team_quiet: BTreeSet<String>,
     stopped: BTreeSet<String>,
 }
 
 impl ZellijNoc {
     pub fn new(config: Config) -> ZellijNoc {
+        let group_by = config.group_by;
         ZellijNoc {
             config,
+            group_by,
+            teams: Vec::new(),
+            folded_teams: BTreeSet::new(),
+            open_team_quiet: BTreeSet::new(),
             agents: Vec::new(),
             items: Vec::new(),
             selected_index: 0,
@@ -417,7 +477,99 @@ impl ZellijNoc {
         QuietAge::of(age_seconds(agent.recency(), &self.generated_at))
     }
 
+    /// Whether the list shows team groups: grouped by team, and not showing
+    /// search results.
+    pub fn by_team(&self) -> bool {
+        self.group_by == GroupBy::Team && !self.flat
+    }
+
+    /// The name of a team row's team; empty for the agents in no team.
+    pub fn team_name(&self, team: usize) -> &str {
+        self.teams.get(team).map(String::as_str).unwrap_or("")
+    }
+
+    /// The heading text of a team row's team.
+    pub fn team_title(&self, team: usize) -> &str {
+        match self.team_name(team) {
+            "" => NO_TEAM,
+            name => name,
+        }
+    }
+
+    /// One group per team by name, then the agents in no team. In a group:
+    /// the lead, the other agents that are not Quiet in list order, then one
+    /// row that holds the Quiet ones. A Quiet agent in no team that is older
+    /// than seven days is not listed, as in the status grouping.
+    fn rebuild_team_items(&mut self) {
+        let mut members: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        let mut unteamed = Vec::new();
+        for (index, agent) in self.agents.iter().enumerate() {
+            match agent.team_name() {
+                "" => {
+                    if agent.group() != AgentGroup::Quiet || self.quiet_age(agent).is_some() {
+                        unteamed.push(index);
+                    }
+                }
+                name => members.entry(name).or_default().push(index),
+            }
+        }
+        let mut groups: Vec<(String, Vec<usize>)> = members
+            .into_iter()
+            .map(|(name, indexes)| (name.to_string(), indexes))
+            .collect();
+        if !unteamed.is_empty() {
+            groups.push((String::new(), unteamed));
+        }
+        let mut items = Vec::new();
+        let mut teams = Vec::new();
+        for (team, (name, indexes)) in groups.into_iter().enumerate() {
+            let count_of = |group: AgentGroup| {
+                indexes
+                    .iter()
+                    .filter(|&&i| self.agents[i].group() == group)
+                    .count()
+            };
+            let expanded = !self.folded_teams.contains(&name);
+            items.push(ListItem::Team {
+                team,
+                count: indexes.len(),
+                expanded,
+                blocked: count_of(AgentGroup::Blocked),
+                working: count_of(AgentGroup::Working),
+                review: count_of(AgentGroup::Review),
+            });
+            if expanded {
+                let lead = indexes.iter().copied().find(|&i| self.agents[i].is_lead());
+                items.extend(lead.map(ListItem::Agent));
+                let (quiet, active): (Vec<usize>, Vec<usize>) = indexes
+                    .iter()
+                    .filter(|&&i| Some(i) != lead)
+                    .partition(|&&i| self.agents[i].group() == AgentGroup::Quiet);
+                items.extend(active.into_iter().map(ListItem::Agent));
+                if !quiet.is_empty() {
+                    let open = self.open_team_quiet.contains(&name);
+                    items.push(ListItem::TeamQuiet {
+                        team,
+                        count: quiet.len(),
+                        expanded: open,
+                    });
+                    if open {
+                        items.extend(quiet.into_iter().map(ListItem::Agent));
+                    }
+                }
+            }
+            teams.push(name);
+        }
+        self.items = items;
+        self.teams = teams;
+    }
+
     pub fn rebuild_items(&mut self) {
+        if self.by_team() {
+            self.rebuild_team_items();
+            return;
+        }
+        self.teams.clear();
         let mut items = Vec::new();
         let mut sections: BTreeMap<QuietAge, Vec<usize>> = BTreeMap::new();
         for (index, agent) in self.agents.iter().enumerate() {
@@ -455,6 +607,12 @@ impl ZellijNoc {
                 .get(*i)
                 .map(|a| SelectionKey::Agent(a.id.clone())),
             ListItem::Section { age, .. } => Some(SelectionKey::Section(*age)),
+            ListItem::Team { team, .. } => {
+                Some(SelectionKey::Team(self.team_name(*team).to_string()))
+            }
+            ListItem::TeamQuiet { team, .. } => {
+                Some(SelectionKey::TeamQuiet(self.team_name(*team).to_string()))
+            }
         }
     }
 
@@ -464,6 +622,12 @@ impl ZellijNoc {
                 self.agents.get(*i).is_some_and(|a| &a.id == id)
             }
             (ListItem::Section { age, .. }, SelectionKey::Section(want)) => age == want,
+            (ListItem::Team { team, .. }, SelectionKey::Team(want)) => {
+                self.team_name(*team) == want
+            }
+            (ListItem::TeamQuiet { team, .. }, SelectionKey::TeamQuiet(want)) => {
+                self.team_name(*team) == want
+            }
             _ => false,
         })
     }
@@ -481,7 +645,7 @@ impl ZellijNoc {
     pub fn selected_agent(&self) -> Option<&Agent> {
         match self.selected_item()? {
             ListItem::Agent(i) => self.agents.get(i),
-            ListItem::Section { .. } => None,
+            ListItem::Section { .. } | ListItem::Team { .. } | ListItem::TeamQuiet { .. } => None,
         }
     }
 
@@ -496,7 +660,15 @@ impl ZellijNoc {
             return false;
         };
         let target = SelectionKey::Agent(id.to_string());
-        if self.position_of(&target).is_none() {
+        if self.by_team() && self.position_of(&target).is_none() {
+            let agent = &self.agents[index];
+            let team = agent.team_name().to_string();
+            self.folded_teams.remove(&team);
+            if agent.group() == AgentGroup::Quiet && !agent.is_lead() {
+                self.open_team_quiet.insert(team);
+            }
+            self.rebuild_items();
+        } else if self.position_of(&target).is_none() {
             let agent = &self.agents[index];
             let Some(age) = (agent.group() == AgentGroup::Quiet)
                 .then(|| self.quiet_age(agent))
@@ -518,18 +690,86 @@ impl ZellijNoc {
     // ---- sections ----
 
     pub fn toggle_selected_section(&mut self) -> bool {
-        let Some(ListItem::Section { age, .. }) = self.selected_item() else {
-            return false;
+        let key = match self.selected_item() {
+            Some(ListItem::Section { age, .. }) => {
+                if !self.expanded.remove(&age) {
+                    self.expanded.insert(age);
+                }
+                SelectionKey::Section(age)
+            }
+            Some(ListItem::Team { team, .. }) => {
+                let name = self.team_name(team).to_string();
+                if !self.folded_teams.remove(&name) {
+                    self.folded_teams.insert(name.clone());
+                }
+                SelectionKey::Team(name)
+            }
+            Some(ListItem::TeamQuiet { team, .. }) => {
+                let name = self.team_name(team).to_string();
+                if !self.open_team_quiet.remove(&name) {
+                    self.open_team_quiet.insert(name.clone());
+                }
+                SelectionKey::TeamQuiet(name)
+            }
+            _ => return false,
         };
-        if !self.expanded.remove(&age) {
-            self.expanded.insert(age);
-        }
         self.rebuild_items();
-        self.restore_selection(Some(SelectionKey::Section(age)), self.selected_index);
+        self.restore_selection(Some(key), self.selected_index);
         true
     }
 
+    /// Switch between the status and the team grouping, keeping the
+    /// selected agent selected.
+    pub fn toggle_group_by(&mut self) {
+        let selection = self.selection_key();
+        let previous_index = self.selected_index;
+        self.group_by = match self.group_by {
+            GroupBy::Status => GroupBy::Team,
+            GroupBy::Team => GroupBy::Status,
+        };
+        self.rebuild_items();
+        self.restore_selection(selection, previous_index);
+        self.set_notice(format!("grouped by {}", self.group_by.as_str()));
+    }
+
+    /// `h` in the team grouping: on a Quiet row or one of its agents, close
+    /// that row; on a heading or any other agent, fold the team.
+    fn collapse_selected_team(&mut self) {
+        let key = match self.selected_item() {
+            Some(ListItem::Team { team, .. }) => {
+                let name = self.team_name(team).to_string();
+                self.folded_teams.insert(name.clone());
+                SelectionKey::Team(name)
+            }
+            Some(ListItem::TeamQuiet { team, .. }) => {
+                let name = self.team_name(team).to_string();
+                self.open_team_quiet.remove(&name);
+                SelectionKey::TeamQuiet(name)
+            }
+            Some(ListItem::Agent(i)) => {
+                let Some(agent) = self.agents.get(i) else {
+                    return;
+                };
+                let name = agent.team_name().to_string();
+                if agent.group() == AgentGroup::Quiet && !agent.is_lead() {
+                    self.open_team_quiet.remove(&name);
+                    SelectionKey::TeamQuiet(name)
+                } else {
+                    self.folded_teams.insert(name.clone());
+                    SelectionKey::Team(name)
+                }
+            }
+            _ => return,
+        };
+        self.rebuild_items();
+        self.restore_selection(Some(key), self.selected_index);
+    }
+
     pub fn collapse_selected(&mut self) {
+        if self.by_team() {
+            self.collapse_selected_team();
+            return;
+        }
         let age = match self.selected_item() {
             Some(ListItem::Section { age, .. }) => Some(age),
             Some(ListItem::Agent(i)) => self.agents.get(i).and_then(|agent| {
@@ -538,7 +778,7 @@ impl ZellijNoc {
                     .flatten()
                     .filter(|age| self.expanded.contains(age))
             }),
-            None => None,
+            _ => None,
         };
         let Some(age) = age else {
             return;
@@ -698,6 +938,27 @@ mod tests {
                         if *expanded { "open" } else { "shut" }
                     )
                 }
+                ListItem::Team {
+                    team,
+                    count,
+                    expanded,
+                    blocked,
+                    working,
+                    review,
+                } => format!(
+                    "<{} {count} {} {blocked}/{working}/{review}>",
+                    app.team_title(*team),
+                    if *expanded { "open" } else { "shut" }
+                ),
+                ListItem::TeamQuiet {
+                    team,
+                    count,
+                    expanded,
+                } => format!(
+                    "[{} quiet {count} {}]",
+                    app.team_title(*team),
+                    if *expanded { "open" } else { "shut" }
+                ),
             })
             .collect()
     }
@@ -805,6 +1066,126 @@ mod tests {
         assert_eq!(row_ids(&app)[2], "[< 48h 1 open]");
         app.collapse_selected();
         assert_eq!(row_ids(&app)[2], "[< 48h 1 shut]");
+    }
+
+    const TEAMS: &str = r#"[
+        {"id":"solo","name":"Solo","display_state":"working","bucket":"working","last_activity_at":"2026-09-24T11:59:00Z"},
+        {"id":"old","name":"Old","display_state":"idle","bucket":"quiet","ended_at":"2026-09-01T08:00:00Z"},
+        {"id":"w1","name":"Worker one","team":"billing","display_state":"working","bucket":"working","last_activity_at":"2026-09-24T11:58:00Z"},
+        {"id":"b1","name":"Blocked one","team":"billing","display_state":"needs_input","bucket":"blocked","last_activity_at":"2026-09-24T11:57:00Z"},
+        {"id":"lead","name":"Lead","team":"billing","lead":true,"display_state":"ready","bucket":"review","last_activity_at":"2026-09-24T11:56:00Z"},
+        {"id":"q1","name":"Quiet one","team":"billing","display_state":"idle","bucket":"quiet","ended_at":"2026-09-01T08:00:00Z"},
+        {"id":"a1","name":"Auth one","team":"auth","display_state":"ready","bucket":"review","last_activity_at":"2026-09-24T11:55:00Z"},
+        {"id":"qlead","name":"Quiet lead","team":"auth","lead":true,"display_state":"idle","bucket":"quiet","ended_at":"2026-09-24T07:00:00Z"}]"#;
+
+    fn team_panel() -> ZellijNoc {
+        let mut app = panel();
+        app.toggle_group_by();
+        app.apply_snapshot(list(TEAMS), Transport::Poll);
+        app
+    }
+
+    #[test]
+    fn teams_group_by_name_with_the_lead_first_and_quiet_agents_in_one_row() {
+        let mut app = team_panel();
+        // Teams by name; the lead first whatever its state, then blocked,
+        // working, review; a week-old agent in no team is not listed.
+        assert_eq!(
+            row_ids(&app),
+            [
+                "<auth 2 open 0/0/1>",
+                "qlead",
+                "a1",
+                "<billing 4 open 1/1/1>",
+                "lead",
+                "b1",
+                "w1",
+                "[billing quiet 1 shut]",
+                "<no team 1 open 0/1/0>",
+                "solo",
+            ]
+        );
+        // A team's old Quiet agents stay reachable.
+        assert!(app.select_agent("q1"));
+        assert_eq!(row_ids(&app)[7..9], ["[billing quiet 1 open]", "q1"]);
+        assert!(!app.select_agent("old"));
+    }
+
+    #[test]
+    fn team_groups_fold_and_keep_their_state_across_snapshots() {
+        let mut app = team_panel();
+        app.selected_index = 3;
+        assert!(app.toggle_selected_section());
+        assert_eq!(
+            row_ids(&app),
+            [
+                "<auth 2 open 0/0/1>",
+                "qlead",
+                "a1",
+                "<billing 4 shut 1/1/1>",
+                "<no team 1 open 0/1/0>",
+                "solo",
+            ]
+        );
+        assert!(matches!(
+            app.selected_item(),
+            Some(ListItem::Team {
+                expanded: false,
+                ..
+            })
+        ));
+        app.apply_snapshot(list(TEAMS), Transport::Poll);
+        assert_eq!(row_ids(&app)[3], "<billing 4 shut 1/1/1>");
+        // Selecting a member opens its group again.
+        assert!(app.select_agent("w1"));
+        assert_eq!(app.selected_agent().unwrap().id, "w1");
+        // h on a member folds the team and selects its heading.
+        app.collapse_selected();
+        assert_eq!(row_ids(&app)[3], "<billing 4 shut 1/1/1>");
+        assert_eq!(app.selected_index, 3);
+        // h on an agent of an open Quiet row closes that row only.
+        assert!(app.select_agent("q1"));
+        app.collapse_selected();
+        assert!(matches!(
+            app.selected_item(),
+            Some(ListItem::TeamQuiet {
+                expanded: false,
+                ..
+            })
+        ));
+        assert!(app.toggle_selected_section());
+        assert!(matches!(
+            app.selected_item(),
+            Some(ListItem::TeamQuiet { expanded: true, .. })
+        ));
+    }
+
+    #[test]
+    fn switching_the_grouping_keeps_the_selected_agent() {
+        let mut app = panel();
+        app.apply_snapshot(list(TEAMS), Transport::Poll);
+        assert!(!app.by_team());
+        assert!(app.select_agent("w1"));
+        app.toggle_group_by();
+        assert!(app.by_team());
+        assert_eq!(app.notice.as_deref(), Some("grouped by team"));
+        assert_eq!(app.selected_agent().unwrap().id, "w1");
+        app.toggle_group_by();
+        assert_eq!(app.notice.as_deref(), Some("grouped by status"));
+        assert_eq!(app.selected_agent().unwrap().id, "w1");
+        assert!(app.teams.is_empty());
+        // Search results are a flat list in either grouping.
+        app.toggle_group_by();
+        app.search = Some(Search {
+            text: "one".into(),
+            typing: false,
+        });
+        app.apply_snapshot(list(TEAMS), Transport::Poll);
+        assert!(!app.by_team());
+        assert!(app
+            .items
+            .iter()
+            .all(|item| matches!(item, ListItem::Agent(_))));
     }
 
     #[test]
@@ -940,6 +1321,16 @@ mod tests {
         assert!(!Config::from_map(&map(&[("colors", "herdr")])).zellij_colors);
         assert!(Config::from_map(&map(&[("colors", "zellij")])).zellij_colors);
         assert_eq!(defaults.pane_titles, PaneTitles::Show);
+        assert_eq!(defaults.group_by, GroupBy::Status);
+        for (value, want) in [
+            ("team", GroupBy::Team),
+            ("status", GroupBy::Status),
+            ("host", GroupBy::Status),
+        ] {
+            let config = Config::from_map(&map(&[("group_by", value)]));
+            assert_eq!(config.group_by, want, "{value}");
+        }
+        assert!(ZellijNoc::new(Config::from_map(&map(&[("group_by", "team")]))).by_team());
         for (value, want) in [
             ("show", PaneTitles::Show),
             ("hide", PaneTitles::Hide),

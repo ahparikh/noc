@@ -1,6 +1,6 @@
 //! Rendering of the panel and the floating details window.
 
-use crate::app::{Connection, ListItem, QuietAge, Transport, ZellijNoc, SPINNER};
+use crate::app::{Connection, ListItem, Transport, ZellijNoc, SPINNER};
 use crate::model::{age_label, Agent, AgentGroup};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use zellij_tile::prelude::{ModeInfo, PaletteColor};
@@ -381,10 +381,11 @@ fn shown_agent_count(app: &ZellijNoc) -> usize {
     app.items
         .iter()
         .map(|item| match item {
-            ListItem::Agent(i) => {
-                usize::from(app.flat || app.agents[*i].group() != AgentGroup::Quiet)
-            }
-            ListItem::Section { count, .. } => *count,
+            ListItem::Agent(i) => usize::from(
+                !app.by_team() && (app.flat || app.agents[*i].group() != AgentGroup::Quiet),
+            ),
+            ListItem::Section { count, .. } | ListItem::Team { count, .. } => *count,
+            ListItem::TeamQuiet { .. } => 0,
         })
         .sum()
 }
@@ -392,7 +393,9 @@ fn shown_agent_count(app: &ZellijNoc) -> usize {
 fn item_group(app: &ZellijNoc, item: &ListItem) -> AgentGroup {
     match item {
         ListItem::Agent(i) => app.agents[*i].group(),
-        ListItem::Section { .. } => AgentGroup::Quiet,
+        ListItem::Section { .. } | ListItem::Team { .. } | ListItem::TeamQuiet { .. } => {
+            AgentGroup::Quiet
+        }
     }
 }
 
@@ -410,6 +413,7 @@ fn group_count(app: &ZellijNoc, group: AgentGroup) -> usize {
                     0
                 }
             }
+            ListItem::Team { .. } | ListItem::TeamQuiet { .. } => 0,
         })
         .sum()
 }
@@ -623,7 +627,8 @@ fn help_lines(theme: &Theme) -> Vec<Line> {
         "gg / G      first / last",
         "Ctrl-d / u  half page",
         "Enter / l   open agent, or a section",
-        "h           close a Quiet section",
+        "h           close a section or a team",
+        "v           group by team / status",
         "p           open as a pane here",
         "s           open stacked here",
         "w           shell in its worktree",
@@ -705,6 +710,40 @@ fn agent_symbol(app: &ZellijNoc, agent: &Agent) -> String {
     }
 }
 
+/// Quiet agents sit two columns in, under the row that holds them. A team's
+/// lead is listed first in its group whatever its state, so it does not.
+fn row_indent(app: &ZellijNoc, agent: &Agent) -> &'static str {
+    if agent.group() == AgentGroup::Quiet && !(app.by_team() && agent.is_lead()) {
+        "  "
+    } else {
+        ""
+    }
+}
+
+/// The mark of a team's lead, and the most columns a team name takes on an
+/// agent's second line.
+const LEAD_MARK: &str = "\u{2605}";
+const TEAM_LABEL_WIDTH: usize = 14;
+
+/// What an agent's second line says about its team. Under a team heading
+/// only the lead is marked; anywhere else the team is named.
+fn team_label(app: &ZellijNoc, agent: &Agent) -> String {
+    let team = agent.team_name();
+    if team.is_empty() {
+        String::new()
+    } else if app.by_team() {
+        if agent.is_lead() {
+            format!("{LEAD_MARK} lead")
+        } else {
+            String::new()
+        }
+    } else if agent.is_lead() {
+        format!("{LEAD_MARK} {}", truncate(team, TEAM_LABEL_WIDTH - 2))
+    } else {
+        truncate(team, TEAM_LABEL_WIDTH)
+    }
+}
+
 fn agent_primary_line(
     app: &ZellijNoc,
     theme: &Theme,
@@ -713,7 +752,7 @@ fn agent_primary_line(
     cols: usize,
 ) -> Line {
     let group = agent.group();
-    let indent = if group == AgentGroup::Quiet { "  " } else { "" };
+    let indent = row_indent(app, agent);
     let prefix = format!(" {indent}{} ", agent_symbol(app, agent));
     let title = truncate(&agent.title(), cols.saturating_sub(prefix.width()));
     let mut line = if selected {
@@ -736,7 +775,7 @@ fn agent_primary_line(
 
 fn secondary_text(app: &ZellijNoc, agent: &Agent) -> String {
     let group = agent.group();
-    let indent = if group == AgentGroup::Quiet { "  " } else { "" };
+    let indent = row_indent(app, agent);
     let age = age_label(agent.recency(), &app.generated_at);
     let rest = if group == AgentGroup::Blocked && !agent.attention.detail.trim().is_empty() {
         agent.attention.detail.trim().to_string()
@@ -747,9 +786,11 @@ fn secondary_text(app: &ZellijNoc, agent: &Agent) -> String {
         "   {indent}{} {age:>3}",
         agent.provider_icon(app.config.nerd_icons)
     );
-    if !rest.is_empty() {
-        text.push_str("  ");
-        text.push_str(&rest);
+    for part in [team_label(app, agent), rest] {
+        if !part.is_empty() {
+            text.push_str("  ");
+            text.push_str(&part);
+        }
     }
     if group == AgentGroup::Quiet && agent.display_state.starts_with("needs_") {
         text.push_str("  stopped waiting on you");
@@ -766,19 +807,46 @@ fn agent_secondary_line(app: &ZellijNoc, theme: &Theme, agent: &Agent, selected:
     }
 }
 
-fn section_line(
-    theme: &Theme,
-    age: QuietAge,
-    count: usize,
-    expanded: bool,
-    selected: bool,
-) -> Line {
+fn section_line(theme: &Theme, label: &str, count: usize, expanded: bool, selected: bool) -> Line {
     let arrow = if expanded { "\u{25be}" } else { "\u{25b8}" };
-    let text = format!(" {arrow} {}  {count}", pad(age.label(), 6));
+    let text = format!(" {arrow} {}  {count}", pad(label, 6));
     if selected {
         Line::plain(&text, Style::selected(theme).bold()).filled(Style::fill(theme))
     } else {
         Line::plain(&text, Style::fg(theme.group(AgentGroup::Quiet)))
+    }
+}
+
+/// The counts a folded team shows after its heading: `1 blocked · 2 working
+/// · 1 review`, zero counts left out.
+fn attention_counts(blocked: usize, working: usize, review: usize) -> String {
+    [
+        (blocked, "blocked"),
+        (working, "working"),
+        (review, "review"),
+    ]
+    .iter()
+    .filter(|(count, _)| *count > 0)
+    .map(|(count, label)| format!("{count} {label}"))
+    .collect::<Vec<_>>()
+    .join(" \u{b7} ")
+}
+
+/// A team's heading, which is a row of the list: `{team}  {count}`, and
+/// for a folded team what in it needs attention.
+fn team_line(theme: &Theme, title: &str, count: usize, counts: &str, selected: bool) -> Line {
+    let heading = format!("{title}  {count}");
+    let tail = if counts.is_empty() {
+        String::new()
+    } else {
+        format!("  {counts}")
+    };
+    if selected {
+        Line::plain(&heading, Style::selected(theme).bold())
+            .with(&tail, Style::selected(theme))
+            .filled(Style::fill(theme))
+    } else {
+        Line::plain(&heading, Style::fg(theme.accent).bold()).with(&tail, theme.muted_style())
     }
 }
 
@@ -787,9 +855,10 @@ fn agent_list_lines(app: &ZellijNoc, theme: &Theme, cols: usize) -> (Vec<Line>, 
     let mut lines = Vec::new();
     let mut selected_line = None;
     let mut current_group: Option<AgentGroup> = None;
+    let status_headings = !app.by_team();
     for (index, item) in app.items.iter().enumerate() {
         let group = item_group(app, item);
-        if current_group != Some(group) {
+        if status_headings && current_group != Some(group) {
             current_group = Some(group);
             lines.push(Line::plain(
                 &format!("{}  {}", group.title(), group_count(app, group)),
@@ -810,7 +879,43 @@ fn agent_list_lines(app: &ZellijNoc, theme: &Theme, cols: usize) -> (Vec<Line>, 
                 age,
                 count,
                 expanded,
-            } => lines.push(section_line(theme, *age, *count, *expanded, selected)),
+            } => lines.push(section_line(
+                theme,
+                age.label(),
+                *count,
+                *expanded,
+                selected,
+            )),
+            ListItem::Team {
+                team,
+                count,
+                expanded,
+                blocked,
+                working,
+                review,
+            } => {
+                let counts = if *expanded {
+                    String::new()
+                } else {
+                    attention_counts(*blocked, *working, *review)
+                };
+                lines.push(team_line(
+                    theme,
+                    app.team_title(*team),
+                    *count,
+                    &counts,
+                    selected,
+                ));
+            }
+            ListItem::TeamQuiet {
+                count, expanded, ..
+            } => lines.push(section_line(
+                theme,
+                AgentGroup::Quiet.title(),
+                *count,
+                *expanded,
+                selected,
+            )),
         }
     }
     (lines, selected_line.unwrap_or(0))
@@ -979,6 +1084,35 @@ fn inline_detail_lines(
             for text in [
                 "Conversations with no process.",
                 "Enter opens this section; Enter on",
+                "an agent resumes it; h closes.",
+            ] {
+                lines.push(Line::plain(text, muted));
+            }
+        }
+        Some(ListItem::Team { team, count, .. }) => {
+            let title = match app.team_name(team) {
+                "" => "No team".to_string(),
+                name => format!("Team \u{b7} {name}"),
+            };
+            lines.push(Line::plain(&title, Style::fg(theme.accent).bold()));
+            let muted = theme.muted_style();
+            for text in [
+                format!("{count} agent{}.", plural(count)).as_str(),
+                "Enter folds or opens this team;",
+                "v groups by status.",
+            ] {
+                lines.push(Line::plain(text, muted));
+            }
+        }
+        Some(ListItem::TeamQuiet { team, .. }) => {
+            lines.push(Line::plain(
+                &format!("Quiet \u{b7} {}", app.team_title(team)),
+                Style::fg(theme.accent).bold(),
+            ));
+            let muted = theme.muted_style();
+            for text in [
+                "Conversations with no process.",
+                "Enter opens this row; Enter on",
                 "an agent resumes it; h closes.",
             ] {
                 lines.push(Line::plain(text, muted));
@@ -1279,6 +1413,109 @@ mod tests {
         assert_eq!(header(&text), "6 agents");
     }
 
+    const TEAMS: &str = r#"[
+      {"id":"solo","provider":"claude","name":"Solo","display_state":"working","bucket":"working","last_activity_at":"2026-09-24T11:59:00Z"},
+      {"id":"w1","provider":"claude","name":"Worker one","team":"billing","display_state":"working","bucket":"working","last_activity_at":"2026-09-24T11:58:00Z","workspace":{"path":"/code/app","branch":"main"}},
+      {"id":"b1","provider":"codex","name":"Blocked one","team":"billing","display_state":"needs_input","bucket":"blocked","last_activity_at":"2026-09-24T11:57:00Z"},
+      {"id":"lead","provider":"claude","name":"Lead","team":"billing","lead":true,"display_state":"ready","bucket":"review","last_activity_at":"2026-09-24T11:56:00Z","workspace":{"path":"/code/app","branch":"main"}},
+      {"id":"q1","provider":"claude","name":"Quiet one","team":"billing","display_state":"idle","bucket":"quiet","ended_at":"2026-09-24T07:00:00Z"},
+      {"id":"a1","provider":"claude","name":"Auth one","team":"a-very-long-team-name","display_state":"ready","bucket":"review","last_activity_at":"2026-09-24T11:55:00Z"}]"#;
+
+    #[test]
+    fn team_grouping_shows_headings_the_lead_and_folded_counts() {
+        let mut app = app_with(TEAMS);
+        app.toggle_group_by();
+        app.notice = None;
+        let raw = render(&mut app, &Theme::default(), 40, 38);
+        let text = plain(&raw);
+        let rows: Vec<&str> = text.iter().take(15).map(|l| l.trim_end()).collect();
+        assert_eq!(
+            rows,
+            [
+                "a-very-long-team-name  1",
+                " \u{25c6} Auth one",
+                "   \u{2733}  5m",
+                "billing  4",
+                " \u{25c6} Lead",
+                "   \u{2733}  4m  \u{2605} lead  app \u{b7} main",
+                " ? Blocked one",
+                "   \u{2b21}  3m",
+                " \u{280b} Worker one",
+                "   \u{2733}  2m  app \u{b7} main",
+                " \u{25b8} Quiet   1",
+                "no team  1",
+                " \u{280b} Solo",
+                "   \u{2733}  1m",
+                "",
+            ]
+        );
+        assert_eq!(header(&text), "6 agents");
+        // Headings are in the accent colour, bold; the first one is selected.
+        let accent = color_code(Theme::default().accent, false);
+        assert!(raw[3].starts_with(&format!("\u{1b}[1;{accent}mbilling  4")));
+        assert!(raw[11].starts_with(&format!("\u{1b}[1;{accent}mno team  1")));
+        // A heading's details name the team.
+        app.selected_index = 2;
+        let text = plain(&render(&mut app, &Theme::default(), 40, 38));
+        assert!(text.iter().any(|l| l.trim_end() == "Team \u{b7} billing"));
+        assert!(text.iter().any(|l| l.trim_end() == "4 agents."));
+        // Folded, the heading says what in the team needs attention.
+        assert!(app.toggle_selected_section());
+        let text = plain(&render(&mut app, &Theme::default(), 40, 60));
+        assert_eq!(
+            text[3].trim_end(),
+            "billing  4  1 blocked \u{b7} 1 working \u{b7} 1 review"
+        );
+        assert_eq!(text[4].trim_end(), "no team  1");
+        // Too long for the pane, it is cut, not wrapped.
+        let text = plain(&render(&mut app, &Theme::default(), 40, 38));
+        assert_eq!(
+            text[3],
+            "billing  4  1 blocked \u{b7} 1 working \u{b7} 1\u{2026}"
+        );
+        assert_eq!(header(&text), "6 agents");
+        app.selected_index = 3;
+        assert!(app.toggle_selected_section());
+        let text = plain(&render(&mut app, &Theme::default(), 40, 38));
+        assert_eq!(text[4].trim_end(), "no team  1  1 working");
+        // The Quiet row opens like a Quiet section, its agents indented.
+        app.selected_index = 2;
+        assert!(app.toggle_selected_section());
+        assert!(app.select_agent("q1"));
+        let text = plain(&render(&mut app, &Theme::default(), 40, 38));
+        assert_eq!(text[10].trim_end(), " \u{25be} Quiet   1");
+        assert_eq!(text[11].trim_end(), "   \u{25cb} Quiet one");
+        assert_eq!(attention_counts(0, 0, 0), "");
+        assert_eq!(attention_counts(2, 0, 1), "2 blocked \u{b7} 1 review");
+    }
+
+    #[test]
+    fn the_status_grouping_names_the_team_on_the_second_line() {
+        let mut app = app_with(TEAMS);
+        let text = plain(&render(&mut app, &Theme::default(), 40, 38));
+        let second = |title: &str| -> String {
+            let at = text
+                .iter()
+                .position(|l| l.trim_end().ends_with(title))
+                .unwrap();
+            text[at + 1].trim_end().to_string()
+        };
+        assert_eq!(second("Blocked one"), "   \u{2b21}  3m  billing");
+        assert_eq!(
+            second("Worker one"),
+            "   \u{2733}  2m  billing  app \u{b7} main"
+        );
+        assert_eq!(
+            second("Lead"),
+            "   \u{2733}  4m  \u{2605} billing  app \u{b7} main"
+        );
+        assert_eq!(second("Solo"), "   \u{2733}  1m");
+        // A long name is cut, and the line never leaves the pane.
+        assert_eq!(second("Auth one"), "   \u{2733}  5m  a-very-long-t\u{2026}");
+        let narrow = render(&mut app, &Theme::default(), 40, 16);
+        assert!(plain(&narrow).iter().all(|l| l.width() <= 16));
+    }
+
     #[test]
     fn quiet_agents_rest_even_if_they_stopped_waiting_on_the_user() {
         let mut app = app_with(
@@ -1312,18 +1549,20 @@ mod tests {
         let text = plain(&render(&mut app, &Theme::default(), 30, 38));
         assert_eq!(text[0].trim_end(), "In the list");
         assert_eq!(text[1].trim_end(), "j / k       move selection");
-        assert_eq!(text[14].trim_end(), "/           search (also older:14d)");
-        assert_eq!(text[15].trim_end(), "u           check for a new release");
-        assert_eq!(text[16].trim_end(), "i           status and version");
-        assert_eq!(text[17].trim_end(), "? / Esc     close help");
-        assert_eq!(text[18], " ".repeat(38));
-        assert_eq!(text[19].trim_end(), "Anywhere");
-        assert_eq!(text[20].trim_end(), "Alt-m       jump to list and back");
-        assert_eq!(text[21].trim_end(), "Alt-o       hide / show this panel");
-        assert_eq!(text[22].trim_end(), "Alt-d       detach both sessions");
-        assert_eq!(text[23], " ".repeat(38));
+        assert_eq!(text[5].trim_end(), "h           close a section or a team");
+        assert_eq!(text[6].trim_end(), "v           group by team / status");
+        assert_eq!(text[15].trim_end(), "/           search (also older:14d)");
+        assert_eq!(text[16].trim_end(), "u           check for a new release");
+        assert_eq!(text[17].trim_end(), "i           status and version");
+        assert_eq!(text[18].trim_end(), "? / Esc     close help");
+        assert_eq!(text[19], " ".repeat(38));
+        assert_eq!(text[20].trim_end(), "Anywhere");
+        assert_eq!(text[21].trim_end(), "Alt-m       jump to list and back");
+        assert_eq!(text[22].trim_end(), "Alt-o       hide / show this panel");
+        assert_eq!(text[23].trim_end(), "Alt-d       detach both sessions");
+        assert_eq!(text[24], " ".repeat(38));
         assert_eq!(
-            text[24].trim_end(),
+            text[25].trim_end(),
             format!("version     v{}", crate::update::CURRENT)
         );
         // The status line last, above the footer.
@@ -1562,10 +1801,10 @@ mod tests {
         app.show_help = true;
         let text = plain(&render(&mut app, &Theme::default(), 30, 38));
         assert_eq!(
-            text[25].trim_end(),
+            text[26].trim_end(),
             "\u{2191} v0.2.0    newer plugin release;"
         );
-        assert_eq!(text[26].trim_end(), "            set it in the plugin URL");
+        assert_eq!(text[27].trim_end(), "            set it in the plugin URL");
         assert_eq!(text[29].trim_end(), FOOTER);
     }
 

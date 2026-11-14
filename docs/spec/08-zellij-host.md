@@ -146,6 +146,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
   | `away_key`, `home_key` | `Ctrl Alt Shift F11`, `Ctrl Alt Shift F12` | the keys typed into the inner session to switch theme |
   | `update_check` | on | `false` turns the release check (ZH-022) off; any other value does not |
   | `pane_titles` | show | what the frames of the inner session's panes say: `name` names each pane `<host> · <what runs in it>`, `hide` blanks the title, any other value leaves the titles alone (ZX-038) |
+  | `group_by` | `status` | `team` groups the sidebar by team; any other value groups it by status ([07-zellij-panel.md](07-zellij-panel.md) ZG-017) |
   | `colors` | built-in | `zellij` makes the panel follow the Zellij theme; any other value keeps the built-in colours ([07-zellij-panel.md](07-zellij-panel.md) ZR-018) |
   | `agent_id` | empty | details role only |
 

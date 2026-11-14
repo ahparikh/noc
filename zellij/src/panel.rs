@@ -217,6 +217,7 @@ pub fn process_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> (bool, Option<
             app.toggle_selected_section();
         }
         BareKey::Char('h') | BareKey::Left => app.collapse_selected(),
+        BareKey::Char('v') => app.toggle_group_by(),
         BareKey::Char('p') => intent = Some(Intent::Pane { stacked: false }),
         BareKey::Char('s') => intent = Some(Intent::Pane { stacked: true }),
         BareKey::Char('w') => intent = Some(Intent::Worktree),
@@ -869,6 +870,65 @@ mod tests {
         app.select_last();
         process_key(&mut app, &key('n'));
         assert_eq!(app.notice.as_deref(), Some("no agent is selected"));
+    }
+
+    #[test]
+    fn v_switches_the_grouping_and_enter_folds_a_team() {
+        let mut app = ZellijNoc::new(Config::default());
+        let list = parse_snapshot(
+            r#"{"schema_version":1,"generated_at":"2026-09-24T12:00:00Z","agents":[
+            {"id":"a","provider":"claude","name":"A","team":"auth","lead":true,"display_state":"working","bucket":"working","native_session_id":"s-a"},
+            {"id":"b","provider":"claude","name":"B","team":"auth","display_state":"ready","bucket":"review","native_session_id":"s-b"},
+            {"id":"c","provider":"claude","name":"C","display_state":"working","bucket":"working","native_session_id":"s-c"}]}"#,
+        )
+        .unwrap();
+        app.apply_snapshot(list, Transport::Poll);
+        select(&mut app, "b");
+        let (redraw, intent) = process_key(&mut app, &key('v'));
+        assert!(redraw && intent.is_none());
+        assert!(app.by_team());
+        assert_eq!(app.notice.as_deref(), Some("grouped by team"));
+        assert_eq!(app.selected_agent().unwrap().id, "b");
+        // Agent rows keep every key they had.
+        assert_eq!(
+            process_key(&mut app, &bare(BareKey::Enter)).1,
+            Some(Intent::Open)
+        );
+        assert_eq!(process_key(&mut app, &key('w')).1, Some(Intent::Worktree));
+        // Enter on a heading folds the team and opens it again; it never
+        // opens an agent.
+        process_key(&mut app, &key('g'));
+        process_key(&mut app, &key('g'));
+        assert!(matches!(
+            app.selected_item(),
+            Some(ListItem::Team { expanded: true, .. })
+        ));
+        assert_eq!(process_key(&mut app, &bare(BareKey::Enter)).1, None);
+        assert!(matches!(
+            app.selected_item(),
+            Some(ListItem::Team {
+                expanded: false,
+                count: 2,
+                ..
+            })
+        ));
+        assert_eq!(
+            app.items.len(),
+            3,
+            "the heading, then no team and its agent"
+        );
+        assert_eq!(process_key(&mut app, &key('l')).1, None);
+        assert_eq!(app.items.len(), 5);
+        process_key(&mut app, &key('h'));
+        assert_eq!(app.items.len(), 3);
+        // A heading is not an agent.
+        process_key(&mut app, &key('n'));
+        assert_eq!(app.notice.as_deref(), Some("no agent is selected"));
+        process_key(&mut app, &key('v'));
+        assert!(!app.by_team());
+        // With a modifier it is not the binding.
+        let (redraw, _) = process_key(&mut app, &with(&[KeyModifier::Alt], BareKey::Char('v')));
+        assert!(!redraw && !app.by_team());
     }
 
     #[test]

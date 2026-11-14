@@ -44,6 +44,12 @@ layout {
                 // title. "show" leaves the titles programs set.
                 pane_titles "name"
 
+                // How the list is grouped when the sidebar starts: "status"
+                // (Blocked, Working, Review, Quiet) or "team" (one group per
+                // team, then the agents in no team). `v` in the sidebar
+                // switches between the two.
+                group_by "status"
+
                 // How often the sidebar reads `noc ls`, in milliseconds
                 // (250..60000).
                 poll_interval_ms "1000"

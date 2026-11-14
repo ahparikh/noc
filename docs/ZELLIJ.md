@@ -104,8 +104,9 @@ In the sidebar (after `Alt m`):
 | Key | Action |
 |---|---|
 | `j` / `k`, `gg` / `G`, `Ctrl d` / `Ctrl u` | Move |
-| `Enter` / `l` | Open the agent in the inner session (focus it if it is already open), or open a Quiet section |
-| `h` | Close a Quiet section |
+| `Enter` / `l` | Open the agent in the inner session (focus it if it is already open), or open a Quiet section; on a team heading, fold or open the team |
+| `h` | Close a Quiet section; when grouped by team, fold the team |
+| `v` | Group the list by team, or by status again |
 | `p` / `s` | Open the agent as a pane / a stacked pane in the current inner tab |
 | `w` | Open a shell in the agent's worktree |
 | `d` / `D` | Toggle details / open the details window |
@@ -127,6 +128,15 @@ narrows as you type and includes agents too old for the normal view, so
 `/older:3w` finds the conversations you left weeks ago. `Enter` keeps the
 results and gives the keys back to the list, `/` edits the search, `Esc`
 ends it. The same search is `noc search` in a shell.
+
+`v` groups the list by team (`noc team`, `noc spawn --team`): one group per
+team, by name, then the agents in no team under `no team`. In a group the
+team's lead comes first, marked `★ lead`, then the other agents in the
+usual order, with the Quiet ones behind one `Quiet` row. `Enter` on a
+heading folds the team; a folded heading says what in it needs you
+(`billing  4  1 blocked · 2 working`). Grouped by status, an agent in a
+team names it on its second line (`★` before the name for the lead). A
+search shows a flat list in either grouping.
 
 A tab that holds one agent is named after it and renamed when the agent's
 name changes. That applies to tabs the sidebar opened and to tabs still
@@ -158,6 +168,7 @@ pair and start it again.
 | `poll_interval_ms` | `1000` | How often the sidebar reads `noc ls`. Clamped to 250..60000. |
 | `home_theme`, `away_theme` | unset | Optional pair, see below. |
 | `pane_titles` | `show` | What the frames of the inner session's panes say. `name` (the shipped setting) names each pane for its machine and what runs in it: `ohm-2 · claude` for an agent, `ohm-2 · vim` for a pane started with a command, `ohm-2 · zsh` for a shell. `hide` blanks the title, which leaves a small gap in the border. `show` leaves the titles programs set. With `name` or `hide`, a title a program sets later is not shown. |
+| `group_by` | `status` | How the list is grouped when the sidebar starts: `status` (Blocked, Working, Review, Quiet) or `team` (one group per team). `v` switches while it runs. |
 | `colors` | built-in | The sidebar's colours: by default a fixed dark palette (blue header, red Blocked, yellow Working, teal Review, grey Quiet). `zellij` follows your Zellij theme instead; use it on a light terminal. |
 | `update_check` | `true` | `false` stops the sidebar from asking GitHub whether a newer release exists (see [Upgrading the plugin](#upgrading-the-plugin)). |
 | `away_key`, `home_key` | `Ctrl Alt Shift F11`, `Ctrl Alt Shift F12` | The keys the sidebar types into the inner session to switch theme. Function keys `F1`..`F12` with any of `Ctrl`, `Alt`, `Shift`. Change them only if they collide with something. |

@@ -136,7 +136,7 @@ called `Tab #N`; a tab you named yourself keeps your name.
 Everything is in the `plugin` block of `layouts/noc-host.kdl`:
 
 ```kdl
-plugin location="https://github.com/ahparikh/noc/releases/download/v0.1.1/zellij-noc.wasm" {
+plugin location="https://github.com/ahparikh/noc/releases/download/v0.1.2/zellij-noc.wasm" {
     noc_bin "noc"
     guest_session "noc"
     icons "unicode"

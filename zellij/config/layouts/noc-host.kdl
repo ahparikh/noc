@@ -20,7 +20,7 @@ layout {
             // the version here and in layouts/noc-inner.kdl. Zellij asks for
             // the plugin's permissions once per location, in the sidebar.
             // Every setting of the sidebar is in this block.
-            plugin location="https://github.com/ahparikh/noc/releases/download/v0.1.1/zellij-noc.wasm" {
+            plugin location="https://github.com/ahparikh/noc/releases/download/v0.1.2/zellij-noc.wasm" {
                 // The noc executable. A bare name is looked up on the PATH
                 // Zellij was started with; an absolute path always works.
                 noc_bin "noc"

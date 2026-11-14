@@ -152,7 +152,8 @@ plugin: press `Alt m` to move to it and answer `y`.
 | `Alt d` | Detach. Both sessions keep running; the start line attaches again |
 
 In the sidebar: `j`/`k` move, `Enter` opens the agent in a tab of your
-session, `/` searches, `n` renames, `x` stops, `?` lists every key. To end
+session, `/` searches, `n` renames, `x` stops, `u` checks for a newer
+release, `?` lists every key. To end
 both sessions, quit your session or run `zellij kill-session noc`.
 
 ### Upgrade the plugin

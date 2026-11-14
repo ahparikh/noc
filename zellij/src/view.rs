@@ -423,19 +423,25 @@ fn header_line(header: &str, update: Option<&str>, theme: &Theme, cols: usize) -
         .with(&marker, Style::fg(theme.attention).bold())
 }
 
-fn update_help_lines(version: &str, theme: &Theme) -> Vec<Line> {
+/// The plugin's own version, and under it the newer release when one is
+/// known.
+fn version_help_lines(update: Option<&str>, theme: &Theme) -> Vec<Line> {
     let muted = theme.muted_style();
-    vec![
+    let mut lines = vec![
         Line::empty(),
-        Line::plain(
+        Line::plain(&format!("version     v{}", crate::update::CURRENT), muted),
+    ];
+    if let Some(version) = update {
+        lines.push(Line::plain(
             &format!(
                 "{}newer plugin release;",
                 pad(&format!("\u{2191} {version} "), 12)
             ),
             Style::fg(theme.attention),
-        ),
-        Line::plain("            set it in the plugin URL", muted),
-    ]
+        ));
+        lines.push(Line::plain("            set it in the plugin URL", muted));
+    }
+    lines
 }
 
 fn connection_line(app: &ZellijNoc, theme: &Theme) -> Line {
@@ -502,6 +508,7 @@ fn help_lines(theme: &Theme) -> Vec<Line> {
         "x           stop agent (asks y/n)",
         "r           refresh",
         "/           search (also older:14d)",
+        "u           check for a new release",
         "? / Esc     close help",
     ] {
         lines.push(Line::plain(entry, muted));
@@ -884,9 +891,7 @@ pub fn render(app: &mut ZellijNoc, theme: &Theme, rows: usize, cols: usize) -> V
     let body_rows = rows - status.len() - usize::from(footer);
     let (mut body, mut details) = if app.show_help {
         let mut lines = help_lines(theme);
-        if let Some(version) = &app.update {
-            lines.extend(update_help_lines(version, theme));
-        }
+        lines.extend(version_help_lines(app.update.as_deref(), theme));
         (lines, Vec::new())
     } else if app.items.is_empty() {
         (empty_state_lines(app, theme), Vec::new())
@@ -1160,12 +1165,18 @@ mod tests {
         assert_eq!(text[0].trim_end(), "In the list");
         assert_eq!(text[1].trim_end(), "j / k       move selection");
         assert_eq!(text[14].trim_end(), "/           search (also older:14d)");
-        assert_eq!(text[15].trim_end(), "? / Esc     close help");
-        assert_eq!(text[16], " ".repeat(38));
-        assert_eq!(text[17].trim_end(), "Anywhere");
-        assert_eq!(text[18].trim_end(), "Alt-m       jump to list and back");
-        assert_eq!(text[19].trim_end(), "Alt-o       hide / show this panel");
-        assert_eq!(text[20].trim_end(), "Alt-d       detach both sessions");
+        assert_eq!(text[15].trim_end(), "u           check for a new release");
+        assert_eq!(text[16].trim_end(), "? / Esc     close help");
+        assert_eq!(text[17], " ".repeat(38));
+        assert_eq!(text[18].trim_end(), "Anywhere");
+        assert_eq!(text[19].trim_end(), "Alt-m       jump to list and back");
+        assert_eq!(text[20].trim_end(), "Alt-o       hide / show this panel");
+        assert_eq!(text[21].trim_end(), "Alt-d       detach both sessions");
+        assert_eq!(text[22], " ".repeat(38));
+        assert_eq!(
+            text[23].trim_end(),
+            format!("version     v{}", crate::update::CURRENT)
+        );
         // Status lines last, above the footer.
         assert_eq!(text[27].trim_end(), "noc  0 agents");
         assert_eq!(text[28].trim_end(), "\u{25cf}  connected \u{b7} poll");
@@ -1371,10 +1382,10 @@ mod tests {
         app.show_help = true;
         let text = plain(&render(&mut app, &Theme::default(), 30, 38));
         assert_eq!(
-            text[22].trim_end(),
+            text[24].trim_end(),
             "\u{2191} v0.2.0    newer plugin release;"
         );
-        assert_eq!(text[23].trim_end(), "            set it in the plugin URL");
+        assert_eq!(text[25].trim_end(), "            set it in the plugin URL");
         assert_eq!(text[29].trim_end(), FOOTER);
     }
 

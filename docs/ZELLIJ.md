@@ -113,6 +113,7 @@ In the sidebar (after `Alt m`):
 | `x` | Stop the agent (asks `y`/`n`) |
 | `r` | Refresh |
 | `/` | Search (below) |
+| `u` | Check now for a newer plugin release |
 | `?` | Help |
 
 After `Enter`, `p`, `s` or `w` the keyboard returns to the inner session.
@@ -253,7 +254,9 @@ noc  5 agents               ↑ v0.2.0
 
 It finds out by asking GitHub, with `curl`, where the repository's "latest
 release" link points: once when the sidebar starts and every six hours
-after. Nothing is downloaded. If `curl` or the network is missing, no
+after. Press `u` in the sidebar to check at once; it answers on the status
+line (`v0.1.2 is available`, or that yours is the latest). The help view
+(`?`) shows the version you are running. Nothing is downloaded. If `curl` or the network is missing, no
 marker shows. `update_check "false"` turns the check off.
 
 To upgrade, change the version in the plugin URL, which appears once in

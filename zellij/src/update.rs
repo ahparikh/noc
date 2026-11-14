@@ -56,6 +56,16 @@ pub fn newer_release(redirect: &str, current: &str) -> Option<String> {
     (latest > current).then(|| format!("v{}.{}.{}", latest.0, latest.1, latest.2))
 }
 
+/// What a check the user asked for reports: `None` when it failed, else the
+/// newer release, if there is one.
+pub fn check_notice(found: Option<Option<&str>>) -> String {
+    match found {
+        None => "could not check for a newer release".to_string(),
+        Some(Some(version)) => format!("{version} is available (this is v{CURRENT})"),
+        Some(None) => format!("v{CURRENT} is the latest release"),
+    }
+}
+
 impl State {
     pub fn check_for_update(&mut self) {
         if self.role != Role::Panel || !self.config.update_check || !self.permissions_granted {
@@ -69,17 +79,37 @@ impl State {
         run_command(&check_command(), ctx(CTX_CHECK));
     }
 
-    /// A failed check says nothing and keeps what an earlier one found.
+    /// Check now, because the user asked: whatever `update_check` says and
+    /// however recent the last check was, and say what was found.
+    pub fn check_for_update_now(&mut self) {
+        if self.role != Role::Panel || !self.permissions_granted {
+            return;
+        }
+        self.update_asked = true;
+        self.next_update_check = Some(now_secs() + CHECK_INTERVAL_SECS);
+        self.app.set_notice("checking for a newer release\u{2026}");
+        run_command(&check_command(), ctx(CTX_CHECK));
+    }
+
+    /// A failed check keeps what an earlier one found. It says nothing,
+    /// unless the user asked for this check.
     pub fn on_update_result(&mut self, exit: Option<i32>, stdout: &[u8]) -> bool {
+        let asked = std::mem::take(&mut self.update_asked);
         let redirect = std::str::from_utf8(stdout).unwrap_or("").trim();
         if exit != Some(0) || redirect.is_empty() {
             self.next_update_check = Some(now_secs() + RETRY_INTERVAL_SECS);
-            return false;
+            if asked {
+                self.app.set_notice(check_notice(None));
+            }
+            return asked;
         }
         let update = newer_release(redirect, CURRENT);
         let changed = self.app.update != update;
+        if asked {
+            self.app.set_notice(check_notice(Some(update.as_deref())));
+        }
         self.app.update = update;
-        changed
+        changed || asked
     }
 }
 
@@ -128,6 +158,19 @@ mod tests {
         // A repository with no release redirects nowhere.
         assert_eq!(newer_release("", "0.1.0"), None);
         assert_eq!(newer_release("https://github.com/login", "0.1.0"), None);
+    }
+
+    #[test]
+    fn a_check_the_user_asked_for_says_what_it_found() {
+        assert_eq!(check_notice(None), "could not check for a newer release");
+        assert_eq!(
+            check_notice(Some(Some("v9.0.0"))),
+            format!("v9.0.0 is available (this is v{CURRENT})")
+        );
+        assert_eq!(
+            check_notice(Some(None)),
+            format!("v{CURRENT} is the latest release")
+        );
     }
 
     #[test]

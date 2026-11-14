@@ -665,7 +665,7 @@ Public API fields that are not modelled are silently ignored, e.g.
 
 #### ZR-005 Help view
 - **Behavior:** When `show_help` is true the body (ZR-033) MUST be, instead
-  of the list, and with no details block: `In the list` (accent, bold); the 15 entries below
+  of the list, and with no details block: `In the list` (accent, bold); the 16 entries below
   (muted, dim); an empty line; `Anywhere` (accent, bold); then the three
   fixed `Anywhere` entries (muted, dim). Help is shown regardless of whether
   there are agents.
@@ -685,6 +685,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   x           stop agent (asks y/n)
   r           refresh
   /           search (also older:14d)
+  u           check for a new release
   ? / Esc     close help
   ```
 
@@ -699,11 +700,12 @@ Public API fields that are not modelled are silently ignored, e.g.
   by the host session's configuration, not handled by the panel's key
   handler ([08-zellij-host.md](08-zellij-host.md)).
 
-  When a newer release is recorded, three more lines follow: an empty line;
+  Then always: an empty line, and `version     v<the plugin's version>`
+  (muted, dim). When a newer release is recorded, two more lines follow:
   `↑ vX.Y.Z ` padded to at least 12 columns then `newer plugin release;`
   (attention colour); and, indented 12 columns, `set it in the plugin URL`
   (muted, dim).
-- **Source:** `zellij/src/view.rs` (help_lines, update_help_lines, render)
+- **Source:** `zellij/src/view.rs` (help_lines, version_help_lines, render)
 - **Verified by:** `zellij/src/view.rs` renders_keyboard_help_on_request, a_newer_release_is_marked_on_the_header_and_explained_in_help
 
 #### ZR-006 Empty list states
@@ -1336,6 +1338,14 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
   `rename cancelled`.
 - **Source:** `zellij/src/panel.rs` (handle_rename_key)
 - **Verified by:** `zellij/src/panel.rs` rename_mode_captures_every_key
+
+#### ZK-027 `u`: check for a new release
+- **Behavior:** `u` MUST ask at once whether a newer release exists
+  ([08-zellij-host.md](08-zellij-host.md) ZH-022), whatever `update_check`
+  is set to, and the answer is shown as a notice. `Ctrl-u` is unaffected
+  (ZK-006), and while a search is being typed `u` is text.
+- **Source:** `zellij/src/panel.rs` (process_key, run_intent); `zellij/src/update.rs` (check_for_update_now)
+- **Verified by:** `zellij/src/panel.rs` u_asks_for_a_release_check
 
 #### ZK-024 `/`: begin a search
 - **Behavior:** `/` MUST close help and start typing a search: a new one

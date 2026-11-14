@@ -88,6 +88,8 @@ pub struct State {
     pub command_in_flight: bool,
     pub next_refresh: Option<f64>,
     pub next_update_check: Option<f64>,
+    /// The release check in flight was asked for with `u`.
+    pub update_asked: bool,
     pub tick_armed: bool,
     // what Zellij last told us about the host session
     pub tabs: Vec<TabInfo>,
@@ -122,6 +124,7 @@ impl Default for State {
             command_in_flight: false,
             next_refresh: None,
             next_update_check: None,
+            update_asked: false,
             tick_armed: false,
             tabs: Vec::new(),
             panes: Vec::new(),

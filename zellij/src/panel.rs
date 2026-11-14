@@ -27,6 +27,8 @@ pub enum Intent {
     Refresh,
     /// The search query changed: read the list for the new one.
     Search,
+    /// Ask now whether a newer release exists.
+    CheckUpdate,
     Stop {
         agent_id: String,
         title: String,
@@ -218,6 +220,7 @@ pub fn process_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> (bool, Option<
         BareKey::Char('w') => intent = Some(Intent::Worktree),
         BareKey::Char('D') => intent = Some(Intent::Details),
         BareKey::Char('r') => intent = Some(Intent::Refresh),
+        BareKey::Char('u') => intent = Some(Intent::CheckUpdate),
         BareKey::Char('x') => request_stop(app),
         BareKey::Char('n') => {
             let began = app.begin_rename();
@@ -262,6 +265,7 @@ impl State {
             Intent::Worktree => self.open_worktree_shell(),
             Intent::Details => self.open_details_window(),
             Intent::Refresh | Intent::Search => self.refresh(),
+            Intent::CheckUpdate => self.check_for_update_now(),
             Intent::Stop { agent_id, title } => {
                 let mut context = ctx(CTX_STOP);
                 context.insert(KEY_AGENT.to_string(), agent_id.clone());
@@ -645,6 +649,20 @@ mod tests {
 
     fn select(app: &mut ZellijNoc, id: &str) {
         assert!(app.select_agent(id), "{id}");
+    }
+
+    #[test]
+    fn u_asks_for_a_release_check() {
+        let mut app = app();
+        let (redraw, intent) = process_key(&mut app, &key('u'));
+        assert!(redraw && matches!(intent, Some(Intent::CheckUpdate)));
+        // Ctrl-u is still half a page up, and typing a search takes the key.
+        let (_, intent) = process_key(&mut app, &with(&[KeyModifier::Ctrl], BareKey::Char('u')));
+        assert!(intent.is_none());
+        process_key(&mut app, &key('/'));
+        let (_, intent) = process_key(&mut app, &key('u'));
+        assert!(matches!(intent, Some(Intent::Search)));
+        assert_eq!(app.search.as_ref().unwrap().text, "u");
     }
 
     #[test]

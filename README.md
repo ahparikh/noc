@@ -64,10 +64,10 @@ own session:
 
 ```
 ┌ outer session: noc-host ───────────────────────────────────────────┐
-│ ┌ sidebar ──────┐ ┌ your session: noc ───────────────────────────┐ │
-│ │ noc  5 agents │ │   your tabs, panes, keys and theme,          │ │
-│ │ Blocked  1    │ │   exactly as you configured them             │ │
-│ │ Working  2    │ │                                              │ │
+│ ┌ NOC ──────────┐ ┌ your session: noc ───────────────────────────┐ │
+│ │ Blocked  1    │ │   your tabs, panes, keys and theme,          │ │
+│ │ Working  2    │ │   exactly as you configured them             │ │
+│ │ noc  5 agents │ │                                              │ │
 │ └───────────────┘ └──────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────────────────┘
 ```
@@ -117,7 +117,7 @@ differs is kept as `<name>.bak`. From a checkout the same script is
 The settings live in the `plugin` block of `noc-host.kdl`:
 
 ```kdl
-plugin location="https://github.com/ahparikh/noc/releases/download/v0.1.0/zellij-noc.wasm" {
+plugin location="https://github.com/ahparikh/noc/releases/download/v0.1.1/zellij-noc.wasm" {
     noc_bin "noc"
     guest_session "noc"
     icons "unicode"
@@ -158,7 +158,7 @@ both sessions, quit your session or run `zellij kill-session noc`.
 ### Upgrade the plugin
 
 Zellij downloads a plugin URL once and keeps it, so the URL names the
-version. When a newer release exists the sidebar's top line shows
+version. When a newer release exists the sidebar's agent-count line shows
 `↑ vX.Y.Z`. To upgrade, change the version in the plugin URL (once in
 `noc-host.kdl`, twice in `noc-inner.kdl`) and restart the pair:
 

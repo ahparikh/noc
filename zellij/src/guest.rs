@@ -36,6 +36,8 @@ pub struct GuestState {
     /// Inner tabs named after an agent, by tab id: the agent and the name
     /// the tab had when the panel last looked or renamed it.
     pub named_tabs: BTreeMap<u32, (String, String)>,
+    /// The titles panes had before the panel blanked them, by pane id.
+    pub titles: BTreeMap<u32, String>,
     /// Whether the last snapshot showed a client attached to the inner session.
     pub client_seen: bool,
     pub failing_since: Option<f64>,
@@ -155,6 +157,40 @@ pub fn tab_renames(
         }
     }
     renames
+}
+
+/// The name that makes a pane's frame show no title. An empty name would
+/// give the pane its own title back.
+pub const BLANK_TITLE: &str = " ";
+
+/// Blank the titles of the inner session's panes: returns the panes to
+/// rename, and gives every pane already blanked the title it had before, so
+/// that an agent can still be recognised by it. `titles` is the memory of
+/// those titles, kept to the panes that still exist.
+pub fn blank_titles(snapshot: &mut GuestSnapshot, titles: &mut BTreeMap<u32, String>) -> Vec<u32> {
+    titles.retain(|id, _| snapshot.panes.iter().any(|p| p.id == *id));
+    let mut to_blank = Vec::new();
+    for pane in &mut snapshot.panes {
+        if pane.title == BLANK_TITLE {
+            if let Some(title) = titles.get(&pane.id) {
+                pane.title = title.clone();
+            }
+        } else {
+            titles.insert(pane.id, pane.title.clone());
+            to_blank.push(pane.id);
+        }
+    }
+    to_blank
+}
+
+pub fn blank_title_args(pane: u32) -> Vec<String> {
+    strings(&[
+        "action",
+        "rename-pane",
+        "--pane-id",
+        &format!("terminal_{pane}"),
+        BLANK_TITLE,
+    ])
 }
 
 pub fn rename_tab_args(tab: u32, name: &str) -> Vec<String> {
@@ -305,9 +341,17 @@ impl State {
             .then(|| std::str::from_utf8(stdout).ok())
             .flatten()
             .and_then(parse_guest_snapshot);
-        let Some(snapshot) = snapshot else {
+        let Some(mut snapshot) = snapshot else {
             return self.on_guest_unreadable();
         };
+        if self.config.hide_pane_titles {
+            for pane in blank_titles(&mut snapshot, &mut self.guest.titles) {
+                run(
+                    &guest_run_command(&self.config.guest_session, "", &blank_title_args(pane)),
+                    ctx(CTX_HOST_ACTION),
+                );
+            }
+        }
         self.guest.failing_since = None;
         let mut redraw = self.app.guest_problem.take().is_some();
         self.guest
@@ -529,6 +573,43 @@ mod tests {
             {"id":4,"is_plugin":false,"title":"x","terminal_command":"noc attach a1","exited":false},
             {"id":5,"is_plugin":false,"terminal_command":"noc attach a2","exited":true},
             {"id":9,"is_plugin":true,"plugin_url":"zellij:status-bar"}]"#
+    }
+
+    #[test]
+    fn pane_titles_are_blanked_once_and_remembered() {
+        let pane = |id: u32, title: &str| ScanPane {
+            id,
+            title: title.to_string(),
+            ..ScanPane::default()
+        };
+        let snapshot = |panes: Vec<ScanPane>| GuestSnapshot {
+            clients: 1,
+            focused: None,
+            panes,
+        };
+        let mut titles = BTreeMap::new();
+        // First sight: both are renamed, and their titles kept.
+        let mut first = snapshot(vec![pane(1, "\u{2733} Auth migration"), pane(2, "zsh")]);
+        assert_eq!(blank_titles(&mut first, &mut titles), [1, 2]);
+        assert_eq!(first.panes[0].title, "\u{2733} Auth migration");
+        // Blanked: nothing to do, and the panel still sees the old title.
+        let mut second = snapshot(vec![
+            pane(1, BLANK_TITLE),
+            pane(2, BLANK_TITLE),
+            pane(3, ""),
+        ]);
+        assert_eq!(blank_titles(&mut second, &mut titles), [3]);
+        assert_eq!(second.panes[0].title, "\u{2733} Auth migration");
+        assert_eq!(second.panes[1].title, "zsh");
+        // A pane that is gone is forgotten; a blank one never seen stays blank.
+        let mut third = snapshot(vec![pane(2, BLANK_TITLE), pane(9, BLANK_TITLE)]);
+        assert!(blank_titles(&mut third, &mut titles).is_empty());
+        assert_eq!(third.panes[1].title, BLANK_TITLE);
+        assert_eq!(titles.keys().copied().collect::<Vec<_>>(), [2]);
+        assert_eq!(
+            blank_title_args(4),
+            ["action", "rename-pane", "--pane-id", "terminal_4", " "]
+        );
     }
 
     #[test]

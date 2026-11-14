@@ -529,21 +529,19 @@ impl State {
 
     // ---- panel title ----
 
-    /// `NOC` while focused or before the width is known,
-    /// otherwise centred in the frame. Renames only when something changed.
+    /// `NOC`, centred in the frame once the width is known, whether or not
+    /// the panel has the keyboard. Renames only when the width changed.
     pub fn sync_panel_title(&mut self) {
         if !self.permissions_granted || self.role != Role::Panel {
             return;
         }
-        let focused = self.panel_has_keyboard();
-        let state = (self.last_cols, focused);
-        if self.panel_title_state == Some(state) {
+        if self.panel_title_state == Some(self.last_cols) {
             return;
         }
-        self.panel_title_state = Some(state);
+        self.panel_title_state = Some(self.last_cols);
         let title = match self.last_cols {
-            Some(cols) if !focused => centered_frame_title(PANEL_TITLE, cols),
-            _ => PANEL_TITLE.to_string(),
+            Some(cols) => centered_frame_title(PANEL_TITLE, cols),
+            None => PANEL_TITLE.to_string(),
         };
         rename_plugin_pane(self.plugin_id, title);
     }

@@ -127,6 +127,8 @@ pub struct Config {
     pub update_check: bool,
     /// Follow the Zellij theme instead of the built-in colours.
     pub zellij_colors: bool,
+    /// Blank the titles of the inner session's panes.
+    pub hide_pane_titles: bool,
 }
 
 impl Default for Config {
@@ -144,6 +146,7 @@ impl Default for Config {
             home_key: DEFAULT_HOME_KEY.to_string(),
             update_check: true,
             zellij_colors: false,
+            hide_pane_titles: false,
         }
     }
 }
@@ -231,6 +234,7 @@ impl Config {
         }
         config.update_check = get("update_check") != Some("false");
         config.zellij_colors = get("colors") == Some("zellij");
+        config.hide_pane_titles = get("pane_titles") == Some("hide");
         config
     }
 
@@ -898,6 +902,9 @@ mod tests {
         assert!(!defaults.zellij_colors);
         assert!(!Config::from_map(&map(&[("colors", "herdr")])).zellij_colors);
         assert!(Config::from_map(&map(&[("colors", "zellij")])).zellij_colors);
+        assert!(!defaults.hide_pane_titles);
+        assert!(!Config::from_map(&map(&[("pane_titles", "show")])).hide_pane_titles);
+        assert!(Config::from_map(&map(&[("pane_titles", "hide")])).hide_pane_titles);
         assert!(!Config::from_map(&map(&[("update_check", " false ")])).update_check);
         assert!(Config::from_map(&map(&[("update_check", "no")])).update_check);
         assert!(defaults.problems().is_empty() && !defaults.themes_enabled());

@@ -20,7 +20,7 @@ layout {
             // the version here and in layouts/noc-inner.kdl. Zellij asks for
             // the plugin's permissions once per location, in the sidebar.
             // Every setting of the sidebar is in this block.
-            plugin location="https://github.com/ahparikh/noc/releases/download/v0.1.0/zellij-noc.wasm" {
+            plugin location="https://github.com/ahparikh/noc/releases/download/v0.1.1/zellij-noc.wasm" {
                 // The noc executable. A bare name is looked up on the PATH
                 // Zellij was started with; an absolute path always works.
                 noc_bin "noc"
@@ -36,12 +36,17 @@ layout {
                 // blue accent). "zellij" makes it follow your Zellij theme.
                 // colors "zellij"
 
+                // "hide" blanks the title in the frame of every pane of the
+                // inner session: the tab already names the agent. "show"
+                // leaves the titles alone.
+                pane_titles "hide"
+
                 // How often the sidebar reads `noc ls`, in milliseconds
                 // (250..60000).
                 poll_interval_ms "1000"
 
                 // The sidebar asks GitHub a few times a day which release is
-                // the latest and shows "↑ vX.Y.Z" in its top line when it is
+                // the latest and shows "↑ vX.Y.Z" beside the agent count when it is
                 // newer than the one loaded above. "false" turns that off.
                 update_check "true"
 

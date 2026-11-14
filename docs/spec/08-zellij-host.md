@@ -145,6 +145,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
   | `home_theme`, `away_theme` | unset | the inner session's theme pair |
   | `away_key`, `home_key` | `Ctrl Alt Shift F11`, `Ctrl Alt Shift F12` | the keys typed into the inner session to switch theme |
   | `update_check` | on | `false` turns the release check (ZH-022) off; any other value does not |
+  | `pane_titles` | show | `hide` blanks the titles of the inner session's panes (ZX-038); any other value does not |
   | `colors` | built-in | `zellij` makes the panel follow the Zellij theme; any other value keeps the built-in colours ([07-zellij-panel.md](07-zellij-panel.md) ZR-018) |
   | `agent_id` | empty | details role only |
 
@@ -196,7 +197,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** `zellij/e2e/nested.sh` "host session has the sidebar and one guest pane"
 
 ### ZX-002 The plugin and its settings
-- **Behavior:** `layouts/noc-host.kdl` MUST load the plugin in the panel's pane as `plugin location="<URL>" { … }`, where the URL is a release asset that names the version (`https://github.com/ahparikh/noc/releases/download/v0.1.0/zellij-noc.wasm` as shipped). The block's children are the settings of ZH-017, and this block is the only place they are set; the shipped block sets `noc_bin "noc"`, `guest_session "noc"`, `icons "unicode"`, `poll_interval_ms "1000"`, `update_check "true"`, `home_theme "noc-blue"` and `away_theme "noc-blue-away"` (ZX-037), and carries `colors`, `away_key`, `home_key` as comments. `guest_session` MUST equal `inner=` in the same file's guest loop.
+- **Behavior:** `layouts/noc-host.kdl` MUST load the plugin in the panel's pane as `plugin location="<URL>" { … }`, where the URL is a release asset that names the version (`https://github.com/ahparikh/noc/releases/download/v0.1.1/zellij-noc.wasm` as shipped). The block's children are the settings of ZH-017, and this block is the only place they are set; the shipped block sets `noc_bin "noc"`, `guest_session "noc"`, `icons "unicode"`, `pane_titles "hide"`, `poll_interval_ms "1000"`, `update_check "true"`, `home_theme "noc-blue"` and `away_theme "noc-blue-away"` (ZX-037), and carries `colors`, `away_key`, `home_key` as comments. `guest_session` MUST equal `inner=` in the same file's guest loop.
 - **Source:** `zellij/config/layouts/noc-host.kdl`
 - **Decision:** D-056
 - **Verified by:** `zellij/e2e/nested.sh` "sidebar lists the registry's agents" (settings from the layout reach the plugin)
@@ -406,11 +407,15 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** `zellij/src/details.rs` `the_window_closes_on_esc_d_capital_d_and_q_only`; `zellij/e2e/nested.sh` "D opens the floating details window" (title), "q closes it"
 
 ### ZX-034 Panel pane title
-- **Behavior:** The panel's pane title MUST be `NOC` while it has the keyboard or before its width is known. Otherwise, with `cols` columns and `padding = ((cols + 2 - width(title)) / 2) - 2` (saturating), the title is `─` repeated `padding - 1` times, a space, then `NOC` when `padding >= 2`, and the plain title when not. The pane is renamed only when the width or the focus state changed.
+- **Behavior:** The panel's pane title MUST be `NOC` centred in its frame, whether or not the panel has the keyboard: with `cols` columns and `padding = ((cols + 2 - width(title)) / 2) - 2` (saturating), the title is `─` repeated `padding - 1` times, a space, then `NOC` when `padding >= 2`, and the plain title when not. Before its width is known the title is the plain `NOC`. The pane is renamed only when the width changed.
 - **Source:** `zellij/src/panel.rs` (`sync_panel_title`); `zellij/src/panes.rs` (`centered_frame_title`)
 - **Verified by:** `zellij/src/panes.rs` `centres_the_panel_title_in_its_frame`
 
----
+### ZX-038 Blank pane titles in the inner session
+- **Behavior:** With the setting `pane_titles "hide"`, after each successful read of the inner session the panel MUST rename every terminal pane there whose title is not a single space to a single space (`action rename-pane --pane-id terminal_<id> " "` in the inner session, without moving the host keyboard; the result is ignored), so that its frame shows no title. An empty name is not used, because Zellij then shows the pane's own title again. The panel MUST remember the title each pane had when it was renamed, for as long as the pane exists, and use that title wherever a pane's title identifies an agent (ZX-025). With any other value nothing is renamed. Plugin panes are never renamed.
+- **Source:** `zellij/src/guest.rs` (`blank_titles`, `blank_title_args`, `on_guest_snapshot`); `zellij/src/app.rs` (`Config::from_map`)
+- **Decision:** D-074
+- **Verified by:** `zellij/src/guest.rs` `pane_titles_are_blanked_once_and_remembered`; `zellij/src/app.rs` `parses_bounded_poll_configuration` (the setting); the rename in a running pair is MANUAL: start the dev pair and look at the inner panes' frames
 
 ## 10. Build
 
@@ -681,6 +686,10 @@ Neither the unit tests nor `nested.sh` cover:
   bindings in `noc-inner.kdl` use different keys, name other themes than
   `home_theme` and `away_theme`, or the themes do not exist, nothing is
   reported and the theme does not change.
+- With `pane_titles "hide"` a pane's title is frozen as the panel first saw
+  it: a title its program sets later is not seen, by the user or by the
+  panel, so an agent recognised only by its pane title is recognised by the
+  title it had at first.
 - The plugin URL is written three times: once in `noc-host.kdl` and twice
   in `noc-inner.kdl`. Upgrading means changing all three.
 - `w` and `D` do not check that permissions were granted before acting, unlike

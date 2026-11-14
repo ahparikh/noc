@@ -13,11 +13,11 @@ Exact behavior is specified in [spec/07-zellij-panel.md](spec/07-zellij-panel.md
 
 ```
 ┌ host session: noc-host ────────────────────────────────────────────┐
-│ ┌ sidebar ──────┐ ┌ guest pane ──────────────────────────────────┐ │
-│ │ noc  5 agents │ │ inner session: noc                           │ │
-│ │ Blocked  1    │ │   your tabs, panes, keys and theme,          │ │
-│ │ Working  2    │ │   exactly as you configured them             │ │
-│ │ Review   2    │ │                                              │ │
+│ ┌ NOC ──────────┐ ┌ guest pane ──────────────────────────────────┐ │
+│ │ Blocked  1    │ │ inner session: noc                           │ │
+│ │ Working  2    │ │   your tabs, panes, keys and theme,          │ │
+│ │ Review   2    │ │   exactly as you configured them             │ │
+│ │ noc  5 agents │ │                                              │ │
 │ └───────────────┘ └──────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────────────────┘
 ```
@@ -135,7 +135,7 @@ called `Tab #N`; a tab you named yourself keeps your name.
 Everything is in the `plugin` block of `layouts/noc-host.kdl`:
 
 ```kdl
-plugin location="https://github.com/ahparikh/noc/releases/download/v0.1.0/zellij-noc.wasm" {
+plugin location="https://github.com/ahparikh/noc/releases/download/v0.1.1/zellij-noc.wasm" {
     noc_bin "noc"
     guest_session "noc"
     icons "unicode"
@@ -155,12 +155,13 @@ pair and start it again.
 | `icons` | `unicode` | `nerd` to use Nerd Font provider icons. |
 | `poll_interval_ms` | `1000` | How often the sidebar reads `noc ls`. Clamped to 250..60000. |
 | `home_theme`, `away_theme` | unset | Optional pair, see below. |
+| `pane_titles` | `show` | `hide` blanks the title in the frame of every pane of the inner session, since the tab already names the agent. The shipped layout sets `hide`. A title a program sets later is then not shown. |
 | `colors` | built-in | The sidebar's colours: by default a fixed dark palette (blue header, red Blocked, yellow Working, teal Review, grey Quiet). `zellij` follows your Zellij theme instead; use it on a light terminal. |
 | `update_check` | `true` | `false` stops the sidebar from asking GitHub whether a newer release exists (see [Upgrading the plugin](#upgrading-the-plugin)). |
 | `away_key`, `home_key` | `Ctrl Alt Shift F11`, `Ctrl Alt Shift F12` | The keys the sidebar types into the inner session to switch theme. Function keys `F1`..`F12` with any of `Ctrl`, `Alt`, `Shift`. Change them only if they collide with something. |
 | `transport`, `pipe_name` | `poll`, `zellij-noc.registry` | With `transport "pipe"` the sidebar stops polling and instead takes registry snapshots sent to the Zellij pipe named by `pipe_name`: one JSON document per line, in the format `noc ls --json` prints. |
 
-When a setting is unusable the sidebar says so on its second line (for
+When a setting is unusable the sidebar says so on its status line (for
 example `!  home_theme is set but away_theme is not`) and carries on without
 the affected feature. It also says when the inner session is not running.
 
@@ -243,8 +244,8 @@ The host session's own options are at the bottom of `layouts/noc-host.kdl`.
 Zellij downloads a plugin URL once and then keeps using its cached copy, so
 a "latest" URL would never upgrade, and Zellij never says that a newer
 plugin exists. The URL therefore names the version, and the sidebar does
-the telling: when a release newer than the loaded plugin is out, its top
-line ends with `↑ vX.Y.Z`.
+the telling: when a release newer than the loaded plugin is out, its
+agent-count line ends with `↑ vX.Y.Z`.
 
 ```
 noc  5 agents               ↑ v0.2.0

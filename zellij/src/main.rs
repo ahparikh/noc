@@ -97,7 +97,7 @@ pub struct State {
     pub session_name: Option<String>,
     // panel
     pub followed_agent: Option<String>,
-    pub panel_title_state: Option<(Option<usize>, bool)>,
+    pub panel_title_state: Option<Option<usize>>,
     pub last_cols: Option<usize>,
     pub details_window: Option<u32>,
     pub pipe_buffer: String,

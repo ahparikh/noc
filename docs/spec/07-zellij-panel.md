@@ -362,6 +362,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   | `home_key` | `Ctrl Alt Shift F12` | non-empty trimmed | key typed into the inner session when the keyboard returns |
   | `update_check` | on | exactly `false` → off | whether the header can show `↑ vX.Y.Z` (ZR-002) |
   | `colors` | built-in | exactly `zellij` → follow the Zellij theme | ZR-018 |
+  | `pane_titles` | show | exactly `hide` → blank the inner session's pane titles | [08-zellij-host.md](08-zellij-host.md) ZX-038 |
 
   What the theme and key settings do is specified in
   [08-zellij-host.md](08-zellij-host.md); the user-facing reference is
@@ -596,25 +597,25 @@ Public API fields that are not modelled are silently ignored, e.g.
   sequences. The plugin prints the lines separated by newlines with no
   newline after the last (a trailing newline would scroll the pane by one).
 - **Source:** `zellij/src/view.rs` (render, sanitize, Line::fitted, Line::render), `zellij/src/main.rs` (render)
-- **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds; `zellij/src/view.rs` very_small_panes_keep_the_header_first; `zellij/src/view.rs` control_characters_in_names_never_reach_the_terminal
+- **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds; `zellij/src/view.rs` very_small_panes_keep_the_status_lines; `zellij/src/view.rs` control_characters_in_names_never_reach_the_terminal
 
 #### ZR-002 Header line
-- **Behavior:** Line 1 MUST be `noc  {N} agent{s}` (two spaces after
-  `noc`; `s` omitted only when `N == 1`), accent colour, bold. `N` is the
-  number of non-Quiet agent rows plus the sum of all Quiet section counts
-  (open or closed); Quiet agents older than 7 days and stopped agents are not
-  counted. While the list holds search results (ZK-026) the line is instead
-  `noc  {N} match` for one result and `noc  {N} matches` otherwise, `N` being
-  the number of rows. When a newer release is recorded
-  ([08-zellij-host.md](08-zellij-host.md) ZH-022) the line MUST end with the
-  marker `↑ vX.Y.Z` (attention colour, bold), padded with spaces so that it
-  ends at the last column. The marker is omitted when fewer than two columns
-  would separate it from the count.
+- **Behavior:** The first status line (ZR-033) MUST be `noc  {N} agent{s}`
+  (two spaces after `noc`; `s` omitted only when `N == 1`), accent colour,
+  bold. `N` is the number of non-Quiet agent rows plus the sum of all Quiet
+  section counts (open or closed); Quiet agents older than 7 days and
+  stopped agents are not counted. While the list holds search results
+  (ZK-026) the line is instead `noc  {N} match` for one result and
+  `noc  {N} matches` otherwise, `N` being the number of rows. When a newer
+  release is recorded ([08-zellij-host.md](08-zellij-host.md) ZH-022) the
+  line MUST end with the marker `↑ vX.Y.Z` (attention colour, bold), padded
+  with spaces so that it ends at the last column. The marker is omitted when
+  fewer than two columns would separate it from the count.
 - **Source:** `zellij/src/view.rs` (render, header_line, shown_agent_count, plural)
 - **Verified by:** `zellij/src/view.rs` working_agents_spin_and_quiet_agents_fold_into_counted_sections (`noc  6 agents`, open or closed); `zellij/src/view.rs` a_newer_release_is_marked_on_the_header_and_explained_in_help
 
-#### ZR-003 Connection line (line 2)
-- **Behavior:** Line 2 MUST show the first applicable entry, in the listed
+#### ZR-003 Connection line
+- **Behavior:** The second status line (ZR-033) MUST show the first applicable entry, in the listed
   colour. It is `dim` unless the connection is `ServerUnavailable` (the dim
   flag depends only on the connection state, so a prompt, notice or problem
   is dim too while connected).
@@ -642,19 +643,29 @@ Public API fields that are not modelled are silently ignored, e.g.
 - **Verified by:** `zellij/src/view.rs` details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel (rename, stop, notice); `zellij/src/view.rs` setup_problems_replace_the_connected_line_until_fixed; `zellij/src/view.rs` empty_and_error_states (error, pipe waiting); `zellij/src/view.rs` renders_a_friendly_server_start_instruction (offline, dim flag); `◌  connecting` `UNTESTED`
 
 #### ZR-004 Footer
-- **Behavior:** The panel MUST pad with empty lines to `rows - 1` and put
-  `[?] keys  [d]etails  [D] window` (two spaces between items; muted, dim) on
-  the last line, but only if content has not already filled `rows`; output is
-  then truncated to `rows`.
-- **Source:** `zellij/src/view.rs` (fill_and_footer, FOOTER)
-- **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds
+- **Behavior:** The last line MUST be `[?] keys  [d]etails  [D] window` (two
+  spaces between items; muted, dim) whenever the pane has more than three
+  rows. With three rows or fewer there is no footer (ZR-016).
+- **Source:** `zellij/src/view.rs` (render, FOOTER)
+- **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds, very_small_panes_keep_the_status_lines
+
+#### ZR-033 Layout: the list on top, the status lines beneath it
+- **Behavior:** From the top the panel MUST show: the body (the agent list,
+  or the help view, or the empty state), cut or padded with empty lines to
+  fill the rows the rest leaves; the two status lines, the header (ZR-002)
+  then the connection line (ZR-003); the inline details block when it is
+  shown (ZR-008); and the footer (ZR-004). So the status lines are directly
+  above the details, and directly above the footer when details are hidden
+  or do not fit. The pane's own title names the panel, so nothing is drawn
+  above the list.
+- **Source:** `zellij/src/view.rs` (render)
+- **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds (status between list and details), renders_keyboard_help_on_request (status above the footer)
 
 ### 3.2 Help, empty and error states
 
 #### ZR-005 Help view
-- **Behavior:** When `show_help` is true the panel MUST render header,
-  connection line, then (instead of list and details) these lines, then the
-  footer: an empty line; `In the list` (accent, bold); the 15 entries below
+- **Behavior:** When `show_help` is true the body (ZR-033) MUST be, instead
+  of the list, and with no details block: `In the list` (accent, bold); the 15 entries below
   (muted, dim); an empty line; `Anywhere` (accent, bold); then the three
   fixed `Anywhere` entries (muted, dim). Help is shown regardless of whether
   there are agents.
@@ -696,8 +707,8 @@ Public API fields that are not modelled are silently ignored, e.g.
 - **Verified by:** `zellij/src/view.rs` renders_keyboard_help_on_request, a_newer_release_is_marked_on_the_header_and_explained_in_help
 
 #### ZR-006 Empty list states
-- **Behavior:** When `items` is empty (and help is off) the panel MUST render
-  header, connection line, one empty line, then by connection state:
+- **Behavior:** When `items` is empty (and help is off) the body (ZR-033)
+  MUST be, by connection state:
 
   | Connection | Lines (style) |
   |---|---|
@@ -706,7 +717,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   | `Connecting` / `Connected` | `No live agents.` (muted, dim) |
   | `Connecting` / `Connected`, with a search | `No agents match.`; empty; `Words match names, folders,`; `branches and requests.`; `older:14d   idle two weeks or more`; `newer:3d    active in the last 3 days` (all muted, dim) |
 
-  then the footer. The raw socket error MUST NOT be shown in the body.
+  The raw socket error MUST NOT be shown in the body.
 - **Source:** `zellij/src/view.rs` (empty_state_lines)
 - **Verified by:** `zellij/src/view.rs` renders_a_friendly_server_start_instruction; `zellij/src/view.rs` empty_and_error_states
 
@@ -720,14 +731,14 @@ Public API fields that are not modelled are silently ignored, e.g.
 ### 3.3 List and details layout
 
 #### ZR-008 Master/detail split
-- **Behavior:** With `available = rows - 3` (header, connection, footer;
-  saturating): `detail_height = available / 3` if
+- **Behavior:** With `available = rows - 3` (the two status lines and the
+  footer): `detail_height = available / 3` if
   `show_details && available >= 12`, else 0;
-  `list_height = max(available - detail_height, 1)`. The list occupies
-  `list_height` lines from line 3 (padded with empty lines when details
-  follow), the details block the next lines (at most `detail_height`), then
-  the footer. The split is fixed so details do not jump as the selection
-  moves.
+  `list_height = max(available - detail_height, 1)`. The list occupies the
+  first `list_height` lines, padded with empty lines; then come the status
+  lines; then the details block, exactly `detail_height` lines; then the
+  footer. The split is fixed so neither the status lines nor the details
+  jump as the selection moves.
 - **Source:** `zellij/src/view.rs` (render)
 - **Verified by:** `zellij/src/view.rs` details_take_the_bottom_third_and_ready_agents_show_their_age
 
@@ -818,11 +829,12 @@ Public API fields that are not modelled are silently ignored, e.g.
 ### 3.5 Colour and text primitives
 
 #### ZR-016 Very small panes
-- **Behavior:** With `rows == 1` only the header is output; `rows == 2` header
-  and connection line; with `rows == 3` and a non-empty list one list line
-  (the selected row's first line) and no footer.
-- **Source:** `zellij/src/view.rs` (render, fill_and_footer)
-- **Verified by:** `zellij/src/view.rs` very_small_panes_keep_the_header_first
+- **Behavior:** With `rows == 1` only the header is output; with `rows == 2`
+  the header and the connection line; with `rows == 3` one body line (for a
+  non-empty list, the selected row's first line) above the two status lines,
+  and no footer. From four rows the footer is shown.
+- **Source:** `zellij/src/view.rs` (render)
+- **Verified by:** `zellij/src/view.rs` very_small_panes_keep_the_status_lines
 
 #### ZR-017 Group colours
 - **Behavior:** Each group has one colour, taken from the theme (ZR-018):
@@ -1370,31 +1382,31 @@ Review Claude `Docs pass` (plain directory `docs`, 3 h); Quiet:
 `Old question` (ended `needs_input`, 5 h), `Yesterday` (Codex, idle, 30 h),
 `Monday` (3 d 4 h), `Ancient` (23 d, not shown).
 
-Panel, 40 rows, first row selected, sections closed (rows 16–27 are the
+Panel, 40 rows, first row selected, sections closed (rows 14–25 are the
 padded list area):
 
 ```text
-│noc  6 agents                         │  accent, bold
-│●  connected · poll                   │  active, dim
-│Blocked  1                            │  palette 1, bold
+│Blocked  1                            │  red, bold
 │ ! Auth migration                     │  selected: both lines highlighted
 │   ✳  2m  Bash: make clean            │
-│Working  1                            │  palette 2, bold
+│Working  1                            │  yellow, bold
 │ ⠋ Cache refactor                     │  spinner animates every 0.25 s
 │   ⬡  0m  app · cache-fix             │
-│Review  1                             │  palette 6, bold
+│Review  1                             │  teal, bold
 │ ◆ Docs pass                          │
 │   ✳  3h  docs                        │
-│Quiet  3                              │  palette 8, bold
+│Quiet  3                              │  grey, bold
 │ ▸ < 24h   1                          │
 │ ▸ < 48h   1                          │
 │ ▸ < 7d    1                          │
 │                                      │
 │  … (blank to the end of the list) …  │
+│noc  6 agents                         │  status: accent, bold
+│●  connected · poll                   │  status: active, dim
 │──────────────────────────────────────│  accent, dim
 │Details                               │  accent, bold
 │Auth migration                        │
-│!  needs approval · 2m ago            │  palette 1
+│!  needs approval · 2m ago            │  red
 │provider  claude · background         │
 │native    auth                        │
 │id        3cfff231                    │
@@ -1409,8 +1421,6 @@ padded list area):
 Panel, 30 rows, `< 24h` opened and its agent selected:
 
 ```text
-│noc  6 agents                         │
-│●  connected · poll                   │
 │Blocked  1                            │
 │ ! Auth migration                     │
 │   ✳  2m  Bash: make clean            │
@@ -1429,6 +1439,8 @@ Panel, 30 rows, `< 24h` opened and its agent selected:
 │                                      │
 │                                      │
 │                                      │
+│noc  6 agents                         │
+│●  connected · poll                   │
 │──────────────────────────────────────│
 │Details                               │
 │Old question                          │
@@ -1445,11 +1457,24 @@ With the section row itself selected, the details block reads
 `Quiet · < 24h` / `Conversations with no process.` /
 `Enter opens this section; Enter on` / `an agent resumes it; h closes.`
 
-Prompts, notices and problems replace line 2:
+The same panel with details hidden (`d`): the status lines are the last
+two above the footer.
+
+```text
+│ ▸ < 48h   1                          │
+│ ▸ < 7d    1                          │
+│  … (blank to the status lines) …     │
+│noc  6 agents                         │
+│●  connected · poll                   │
+│[?] keys  [d]etails  [D] window       │
+```
+
+Prompts, notices and problems replace the second status line:
 
 ```text
 │Rename: Old question▏                 │
 │Stop Auth migration?  y / n           │
+│/ older:2w▏                           │
 │stop cancelled                        │
 │!  home_theme is set but away_theme i…│  a settings problem, cut at 38 columns
 │!  inner session "noc" is not running │
@@ -1477,23 +1502,20 @@ Floating details window, 70 × 24 (roomy):
 │Esc / D  close                                                        │
 ```
 
-Empty list, before the first snapshot:
+Empty list, before the first snapshot (6 rows):
 
 ```text
-│noc  0 agents                         │
-│◌  connecting                         │
-│                                      │
 │No live agents.                       │
 │                                      │
+│                                      │
+│noc  0 agents                         │
+│◌  connecting                         │
 │[?] keys  [d]etails  [D] window       │
 ```
 
-Server offline with no list to keep:
+Server offline with no list to keep (10 rows):
 
 ```text
-│noc  0 agents                         │
-│!  server offline · retrying          │  not dim
-│                                      │
 │noc server is not running.            │
 │                                      │
 │Start it with:                        │
@@ -1501,6 +1523,8 @@ Server offline with no list to keep:
 │                                      │
 │This panel will reconnect automatical…│  cut at 38 columns
 │                                      │
+│noc  0 agents                         │
+│!  server offline · retrying          │  not dim
 │[?] keys  [d]etails  [D] window       │
 ```
 

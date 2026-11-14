@@ -592,7 +592,7 @@ pair renders the shipped configuration files, so those are what gets tested.
 ### D-060: the sidebar says when a newer plugin release exists
 
 A few times a day the panel asks GitHub where the repository's "latest
-release" link redirects, and shows `↑ vX.Y.Z` on its top line when that tag
+release" link redirects, and shows `↑ vX.Y.Z` on its agent-count line when that tag
 is newer than its own version. It runs `curl` for this, compares only
 `X.Y.Z` versions, never downloads or replaces anything, and stays silent
 when the check fails. `update_check "false"` turns it off.
@@ -694,6 +694,19 @@ never produces an error.
 and the frontend contract gains that command. Age means time since the
 agent's last activity, never when noc last looked at it. The pipe transport
 has no search.
+
+### D-074: the sidebar can blank pane titles in the inner session
+
+With `pane_titles "hide"` the panel renames every terminal pane of the
+inner session to a single space, so frames show no title. The shipped
+layout turns it on.
+
+**Why:** a tab already carries its agent's name, and a title in each frame
+repeats it or shows a shell's prompt string. Zellij has no option to draw a
+frame without a title, and an empty name restores the pane's own title, so
+a space is the only way.
+**Consequence:** a title a program sets afterwards is not shown. The panel
+keeps the title it saw first, for recognising agents by it.
 
 ## Names, state, and grouping
 

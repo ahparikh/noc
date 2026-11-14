@@ -63,11 +63,14 @@ PROMPT='Please   summarize
 echo "# lifecycle"
 start; rc=$?
 check "server --bg exits 0 and creates the socket (LIFE)" '[ $rc -eq 0 ] && [ -S "$D/run/noc.sock" ]'
-check "socket is 0600 (INV-010)"   '[ "$(stat -f %Sp "$D/run/noc.sock" 2>/dev/null || stat -c %A "$D/run/noc.sock")" = srw------- ]'
-check "pid file is 0600"           '[ "$(stat -f %Sp "$D/run/noc.pid" 2>/dev/null || stat -c %A "$D/run/noc.pid")" = -rw------- ]'
-check "database is 0600"           '[ "$(stat -f %Sp "$D/state/noc.db" 2>/dev/null || stat -c %A "$D/state/noc.db")" = -rw------- ]'
-check "runtime dir is 0700"        '[ "$(stat -f %Sp "$D/run" 2>/dev/null || stat -c %A "$D/run")" = drwx------ ]'
-check "state dir is 0700"          '[ "$(stat -f %Sp "$D/state" 2>/dev/null || stat -c %A "$D/state")" = drwx------ ]'
+# The mode of a path as ls prints it. GNU stat first: it accepts -f too, but
+# with another meaning, so the BSD form cannot be the one tried first.
+perm() { stat -c %A "$1" 2>/dev/null || stat -f %Sp "$1"; }
+check "socket is 0600 (INV-010)"   '[ "$(perm "$D/run/noc.sock")" = srw------- ]'
+check "pid file is 0600"           '[ "$(perm "$D/run/noc.pid")" = -rw------- ]'
+check "database is 0600"           '[ "$(perm "$D/state/noc.db")" = -rw------- ]'
+check "runtime dir is 0700"        '[ "$(perm "$D/run")" = drwx------ ]'
+check "state dir is 0700"          '[ "$(perm "$D/state")" = drwx------ ]'
 dup=$("$M" server --bg --discovery=false 2>&1); rc=$?
 check "second server rejected with exit 1" '[ $rc -eq 1 ] && echo "$dup" | grep -q "already running"'
 st=$("$M" server status --json 2>/dev/null)

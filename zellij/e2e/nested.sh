@@ -137,7 +137,7 @@ GUEST="T$(panes "$HOST" | jq -r 'map(select((.is_plugin | not) and (.is_floating
 check "host session has the sidebar and one guest pane" \
 	[ "$SIDEBAR" != "Pnull" -a "$GUEST" != "Tnull" ]
 check "sidebar lists the registry's agents" \
-	wait_for 10 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q 'noc  2 agents'"
+	wait_for 10 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q '2 agents'"
 check "guest pane keeps exactly one client on the inner session" \
 	[ "$(clients "$INNER")" = 1 ]
 check "the keyboard starts in the inner session" host_focus_is "$GUEST"
@@ -211,11 +211,14 @@ wait_for 5 host_focus_is "$SIDEBAR"
 keys /
 sleep 0.3
 keys second
+# While it is typed the status line is the prompt; Enter keeps the search and
+# brings the count back.
+keys Enter
 check "/ lists the agents that match what is typed" \
-	wait_for 8 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q 'noc  1 match'"
+	wait_for 8 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q '1 match'"
 keys Escape
 check "Esc ends the search" \
-	wait_for 8 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q 'noc  2 agents'"
+	wait_for 8 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q '2 agents'"
 keys M-m
 wait_for 5 host_focus_is "$GUEST"
 

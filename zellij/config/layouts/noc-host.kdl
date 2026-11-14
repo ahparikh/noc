@@ -46,8 +46,8 @@ layout {
                 poll_interval_ms "1000"
 
                 // The sidebar asks GitHub a few times a day which release is
-                // the latest and shows "↑ vX.Y.Z" beside the agent count when it is
-                // newer than the one loaded above. "false" turns that off.
+                // the latest and shows "↑" on its status line when it is newer
+                // than the one loaded above. "false" turns that off.
                 update_check "true"
 
                 // Dim the inner session while the sidebar has the keyboard, so

@@ -17,7 +17,7 @@ Exact behavior is specified in [spec/07-zellij-panel.md](spec/07-zellij-panel.md
 │ │ Blocked  1    │ │ inner session: noc                           │ │
 │ │ Working  2    │ │   your tabs, panes, keys and theme,          │ │
 │ │ Review   2    │ │   exactly as you configured them             │ │
-│ │ noc  5 agents │ │                                              │ │
+│ │ 5 agents    ● │ │                                              │ │
 │ └───────────────┘ └──────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────────────────┘
 ```
@@ -114,6 +114,7 @@ In the sidebar (after `Alt m`):
 | `r` | Refresh |
 | `/` | Search (below) |
 | `u` | Check now for a newer plugin release |
+| `i` | Open or close the status box (also: click the status line) |
 | `?` | Help |
 
 After `Enter`, `p`, `s` or `w` the keyboard returns to the inner session.
@@ -162,9 +163,21 @@ pair and start it again.
 | `away_key`, `home_key` | `Ctrl Alt Shift F11`, `Ctrl Alt Shift F12` | The keys the sidebar types into the inner session to switch theme. Function keys `F1`..`F12` with any of `Ctrl`, `Alt`, `Shift`. Change them only if they collide with something. |
 | `transport`, `pipe_name` | `poll`, `zellij-noc.registry` | With `transport "pipe"` the sidebar stops polling and instead takes registry snapshots sent to the Zellij pipe named by `pipe_name`: one JSON document per line, in the format `noc ls --json` prints. |
 
-When a setting is unusable the sidebar says so on its status line (for
-example `!  home_theme is set but away_theme is not`) and carries on without
-the affected feature. It also says when the inner session is not running.
+### The status line
+
+The line under the list shows how many agents there are and, at its right
+edge, a dot: green when connected, yellow when something needs a look (a
+setting that cannot work, the inner session not running, still connecting),
+red when the registry cannot be reached. An `↑` beside the dot means a
+newer plugin release exists.
+
+Click the line, or press `i` in the sidebar, for a small box that says it
+in words: the connection, any problem, the version you are running and the
+newer one. The click works whichever side has the keyboard. Click again, or
+`Esc`, to close it.
+
+When a setting is unusable the sidebar carries on without the affected
+feature.
 
 ### Dimming the inner session
 
@@ -245,18 +258,19 @@ The host session's own options are at the bottom of `layouts/noc-host.kdl`.
 Zellij downloads a plugin URL once and then keeps using its cached copy, so
 a "latest" URL would never upgrade, and Zellij never says that a newer
 plugin exists. The URL therefore names the version, and the sidebar does
-the telling: when a release newer than the loaded plugin is out, its
-agent-count line ends with `↑ vX.Y.Z`.
+the telling: when a release newer than the loaded plugin is out, an `↑`
+appears beside the dot on its status line, and the status box (click the
+line, or `i`) names both versions.
 
 ```
-noc  5 agents               ↑ v0.2.0
+5 agents                         ↑ ●
 ```
 
 It finds out by asking GitHub, with `curl`, where the repository's "latest
 release" link points: once when the sidebar starts and every six hours
 after. Press `u` in the sidebar to check at once; it answers on the status
-line (`v0.1.2 is available`, or that yours is the latest). The help view
-(`?`) shows the version you are running. Nothing is downloaded. If `curl` or the network is missing, no
+line (`v0.1.2 is available`, or that yours is the latest). Nothing is
+downloaded. If `curl` or the network is missing, no
 marker shows. `update_check "false"` turns the check off.
 
 To upgrade, change the version in the plugin URL, which appears once in
@@ -309,8 +323,8 @@ bind "Alt t" { FocusPreviousPane; Write 27 116; }   // ESC t
 |---|---|
 | Sidebar shows a permission prompt and nothing else | Move the keyboard to it (`Alt m`) and answer `y`. |
 | `noc server is not running` | Run `noc server --bg`. The sidebar reconnects by itself. |
-| `×  disconnected · …` naming an executable | Zellij cannot find `noc`. Set `noc_bin` to its absolute path. |
-| `!  inner session "noc" is not running` | The guest pane's loop is not attached. Check that `guest_session` matches `inner=` in the layout. |
+| A red dot; the status box says `disconnected · …` naming an executable | Zellij cannot find `noc`. Set `noc_bin` to its absolute path. |
+| A yellow dot; the status box says `inner session "noc" is not running` | The guest pane's loop is not attached. Check that `guest_session` matches `inner=` in the layout. |
 | The inner session's status bar looks unfocused | Press `Alt m` twice. The sidebar tells the inner client it has the keyboard each time it comes back. |
 | The inner theme does not change | Both `home_theme` and `away_theme` must be set in `noc-host.kdl`, the bindings in `noc-inner.kdl` must name the same two themes, and both themes must exist. |
 | The pair starts and ends at once | `layouts/noc-inner.kdl` is missing from `~/.config/zellij/layouts/`, so the inner session cannot be created. |

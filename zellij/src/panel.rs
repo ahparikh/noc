@@ -191,8 +191,11 @@ pub fn process_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> (bool, Option<
         BareKey::Char('G') => app.select_last(),
         BareKey::Char('d') => app.toggle_details(),
         BareKey::Char('?') => app.toggle_help(),
+        BareKey::Char('i') => app.toggle_info(),
         BareKey::Esc => {
-            if app.show_help {
+            if app.show_info {
+                app.show_info = false;
+            } else if app.show_help {
                 app.close_help();
             } else if app.search.take().is_some() {
                 intent = Some(Intent::Search);
@@ -649,6 +652,22 @@ mod tests {
 
     fn select(app: &mut ZellijNoc, id: &str) {
         assert!(app.select_agent(id), "{id}");
+    }
+
+    #[test]
+    fn i_opens_the_status_box_and_esc_closes_it_first() {
+        let mut app = app();
+        let (redraw, intent) = process_key(&mut app, &key('i'));
+        assert!(redraw && intent.is_none() && app.show_info);
+        // Esc closes the box before it closes help or ends a search.
+        app.toggle_help();
+        process_key(&mut app, &bare(BareKey::Esc));
+        assert!(!app.show_info && app.show_help);
+        process_key(&mut app, &bare(BareKey::Esc));
+        assert!(!app.show_help);
+        process_key(&mut app, &key('i'));
+        process_key(&mut app, &key('i'));
+        assert!(!app.show_info);
     }
 
     #[test]

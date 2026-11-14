@@ -21,6 +21,9 @@ pub struct Theme {
     pub active: PaletteColor,
     pub info: PaletteColor,
     pub error: PaletteColor,
+    /// The status dot when all is well, and when something needs a look.
+    pub ok: PaletteColor,
+    pub warn: PaletteColor,
     pub blocked: PaletteColor,
     pub working: PaletteColor,
     pub review: PaletteColor,
@@ -59,6 +62,8 @@ impl Theme {
             active: blue,
             info: teal,
             error: red,
+            ok: rgb(166, 227, 161),
+            warn: rgb(249, 226, 175),
             blocked: red,
             working: rgb(249, 226, 175),
             review: teal,
@@ -81,6 +86,8 @@ impl Theme {
             active: colors.exit_code_success.base,
             info: colors.text_unselected.emphasis_1,
             error: colors.exit_code_error.base,
+            ok: colors.exit_code_success.base,
+            warn: colors.text_unselected.emphasis_0,
             blocked: PaletteColor::EightBit(1),
             working: PaletteColor::EightBit(2),
             review: PaletteColor::EightBit(6),
@@ -407,22 +414,6 @@ fn group_count(app: &ZellijNoc, group: AgentGroup) -> usize {
         .sum()
 }
 
-/// The header, with `↑ vX.Y.Z` at the right edge when a newer release
-/// exists and there is room for it.
-fn header_line(header: &str, update: Option<&str>, theme: &Theme, cols: usize) -> Line {
-    let line = Line::plain(header, Style::fg(theme.accent).bold());
-    let Some(version) = update else {
-        return line;
-    };
-    let marker = format!("\u{2191} {version}");
-    let used = line.width() + marker.width();
-    if used + 2 > cols {
-        return line;
-    }
-    line.with(&" ".repeat(cols - used), Style::default())
-        .with(&marker, Style::fg(theme.attention).bold())
-}
-
 /// The plugin's own version, and under it the newer release when one is
 /// known.
 fn version_help_lines(update: Option<&str>, theme: &Theme) -> Vec<Line> {
@@ -444,47 +435,181 @@ fn version_help_lines(update: Option<&str>, theme: &Theme) -> Vec<Line> {
     lines
 }
 
-fn connection_line(app: &ZellijNoc, theme: &Theme) -> Line {
-    let dim = app.connection != Connection::ServerUnavailable;
-    let (text, color) = if let Some(rename) = &app.pending_rename {
-        (format!("Rename: {}\u{258f}", rename.text), theme.accent)
-    } else if let Some(stop) = &app.pending_stop {
-        (format!("Stop {}?  y / n", stop.title), theme.attention)
-    } else if let Some(search) = app.search.as_ref().filter(|s| s.typing) {
-        (format!("/ {}\u{258f}", search.text), theme.accent)
-    } else if let Some(notice) = &app.notice {
-        (notice.clone(), theme.info)
-    } else if let Some(problem) = app.config_problem.as_ref().or(app.guest_problem.as_ref()) {
-        (format!("!  {problem}"), theme.attention)
-    } else {
-        match &app.connection {
-            Connection::Connecting => {
-                if app.config.transport == Transport::Pipe {
-                    (
-                        format!("\u{25cc}  waiting for {}", app.config.pipe_name),
-                        theme.info,
-                    )
-                } else {
-                    ("\u{25cc}  connecting".to_string(), theme.info)
-                }
-            }
-            Connection::Connected(source) => match app.search_text() {
-                Some(query) => (format!("/ {query}"), theme.accent),
-                None => (
-                    format!("\u{25cf}  connected \u{b7} {}", source.as_str()),
-                    theme.active,
-                ),
-            },
-            Connection::ServerUnavailable => (
-                "!  server offline \u{b7} retrying".to_string(),
-                theme.attention,
-            ),
-            Connection::Error(e) => (format!("\u{d7}  disconnected \u{b7} {e}"), theme.error),
+/// How things stand, for the colour of the status dot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Health {
+    Ok,
+    Warn,
+    Bad,
+}
+
+impl Health {
+    fn color(self, theme: &Theme) -> PaletteColor {
+        match self {
+            Health::Ok => theme.ok,
+            Health::Warn => theme.warn,
+            Health::Bad => theme.error,
         }
+    }
+}
+
+/// The connection to the registry, in words, and how good it is.
+fn connection_state(app: &ZellijNoc) -> (Health, String) {
+    match &app.connection {
+        Connection::Connecting => {
+            let text = if app.config.transport == Transport::Pipe {
+                format!("waiting for {}", app.config.pipe_name)
+            } else {
+                "connecting".to_string()
+            };
+            (Health::Warn, text)
+        }
+        Connection::Connected(source) => {
+            (Health::Ok, format!("connected \u{b7} {}", source.as_str()))
+        }
+        Connection::ServerUnavailable => {
+            (Health::Bad, "server offline \u{b7} retrying".to_string())
+        }
+        Connection::Error(e) => (Health::Bad, format!("disconnected \u{b7} {e}")),
+    }
+}
+
+/// What is wrong besides the connection: a setting, or the inner session.
+fn problems(app: &ZellijNoc) -> Vec<&String> {
+    app.config_problem
+        .iter()
+        .chain(app.guest_problem.iter())
+        .collect()
+}
+
+/// The worst of the connection and the problems.
+fn health(app: &ZellijNoc) -> Health {
+    let (connection, _) = connection_state(app);
+    if problems(app).is_empty() {
+        connection
+    } else {
+        connection.max(Health::Warn)
+    }
+}
+
+/// The one status line. A prompt or a notice takes the whole line while it
+/// lasts. Otherwise: how many agents on the left, and on the right an `↑`
+/// when a newer release exists and a dot coloured by `health`. What the dot
+/// and the arrow stand for is in the status box (`status_box_lines`).
+fn status_line(app: &ZellijNoc, theme: &Theme, cols: usize) -> Line {
+    if let Some(rename) = &app.pending_rename {
+        return Line::plain(
+            &format!("Rename: {}\u{258f}", rename.text),
+            Style::fg(theme.accent),
+        );
+    }
+    if let Some(stop) = &app.pending_stop {
+        return Line::plain(
+            &format!("Stop {}?  y / n", stop.title),
+            Style::fg(theme.attention),
+        );
+    }
+    if let Some(search) = app.search.as_ref().filter(|s| s.typing) {
+        return Line::plain(
+            &format!("/ {}\u{258f}", search.text),
+            Style::fg(theme.accent),
+        );
+    }
+    if let Some(notice) = &app.notice {
+        return Line::plain(notice, Style::fg(theme.info));
+    }
+    let count = shown_agent_count(app);
+    let mut left = if app.flat {
+        format!("{count} match{}", if count == 1 { "" } else { "es" })
+    } else {
+        format!("{count} agent{}", plural(count))
     };
-    let mut style = Style::fg(color);
-    style.dim = dim && theme.dim;
-    Line::plain(&text, style)
+    if let Some(query) = app.search_text() {
+        left.push_str(&format!("  / {query}"));
+    }
+    let arrow = if app.update.is_some() {
+        "\u{2191} "
+    } else {
+        ""
+    };
+    let right = arrow.width() + 1;
+    // Keep the dot: the count is cut before the dot is dropped.
+    let left = truncate(&left, cols.saturating_sub(right + 1));
+    let gap = cols.saturating_sub(left.width() + right);
+    let mut line = Line::plain(&left, Style::fg(theme.accent).bold());
+    if cols < right + 1 {
+        return line;
+    }
+    line = line.with(&" ".repeat(gap), Style::default());
+    if !arrow.is_empty() {
+        line = line.with(arrow, Style::fg(theme.attention).bold());
+    }
+    line.with("\u{25cf}", Style::fg(health(app).color(theme)))
+}
+
+/// The box that explains the status line: the connection in words, anything
+/// else that is wrong, and the plugin's version with the newer release when
+/// there is one. Drawn over the last lines of the list, above the status
+/// line.
+fn status_box_lines(app: &ZellijNoc, theme: &Theme, cols: usize) -> Vec<Line> {
+    if cols < 8 {
+        return Vec::new();
+    }
+    let inner = cols - 4;
+    let frame = theme.muted_style();
+    let muted = theme.muted_style();
+    let mut content: Vec<(String, Style)> = Vec::new();
+    let (state, text) = connection_state(app);
+    content.push((format!("\u{25cf} {text}"), Style::fg(state.color(theme))));
+    for problem in problems(app) {
+        for (i, part) in wrap(problem, inner.saturating_sub(2))
+            .into_iter()
+            .enumerate()
+        {
+            let lead = if i == 0 { "! " } else { "  " };
+            content.push((format!("{lead}{part}"), Style::fg(theme.warn)));
+        }
+    }
+    let current = crate::update::CURRENT;
+    match &app.update {
+        Some(version) => {
+            content.push((
+                format!("\u{2191} {version} is available"),
+                Style::fg(theme.attention).bold(),
+            ));
+            content.push((format!("  this is v{current}"), muted));
+            for part in wrap(
+                "set the new version in the plugin URL",
+                inner.saturating_sub(2),
+            ) {
+                content.push((format!("  {part}"), muted));
+            }
+        }
+        None => content.push((format!("version v{current}"), muted)),
+    }
+    let title = " status ";
+    let mut lines = vec![Line::plain(
+        &format!(
+            "\u{256d}\u{2500}{title}{}\u{256e}",
+            "\u{2500}".repeat(cols.saturating_sub(title.width() + 3))
+        ),
+        frame,
+    )];
+    for (text, style) in content {
+        let text = truncate(&text, inner);
+        let fill = " ".repeat(inner - text.width());
+        lines.push(
+            Line::plain("\u{2502} ", frame)
+                .with(&text, style)
+                .with(&fill, Style::default())
+                .with(" \u{2502}", frame),
+        );
+    }
+    lines.push(Line::plain(
+        &format!("\u{2570}{}\u{256f}", "\u{2500}".repeat(cols - 2)),
+        frame,
+    ));
+    lines
 }
 
 /// The "Anywhere" keys are the host layout's defaults; a layout that rebinds
@@ -509,6 +634,7 @@ fn help_lines(theme: &Theme) -> Vec<Line> {
         "r           refresh",
         "/           search (also older:14d)",
         "u           check for a new release",
+        "i           status and version",
         "? / Esc     close help",
     ] {
         lines.push(Line::plain(entry, muted));
@@ -867,28 +993,17 @@ fn inline_detail_lines(
 // ---- entry points ----
 
 /// The panel: the list (or help, or the empty state) from the top, and at
-/// the bottom the two status lines, the inline details when they are shown,
-/// and the footer. The status lines are the last thing to give way.
+/// the bottom the status line, the inline details when they are shown, and
+/// the footer. The status line is the last thing to give way.
 pub fn render(app: &mut ZellijNoc, theme: &Theme, rows: usize, cols: usize) -> Vec<String> {
     app.last_render_rows = rows;
+    app.status_row = None;
     if rows == 0 || cols == 0 {
         return Vec::new();
     }
-    let count = shown_agent_count(app);
-    let header = if app.flat {
-        format!("noc  {count} match{}", if count == 1 { "" } else { "es" })
-    } else {
-        format!("noc  {count} agent{}", plural(count))
-    };
-    let status = [
-        header_line(&header, app.update.as_deref(), theme, cols),
-        connection_line(app, theme),
-    ];
-    if rows <= status.len() {
-        return status[..rows].iter().map(|l| l.render(cols)).collect();
-    }
-    let footer = rows > status.len() + 1;
-    let body_rows = rows - status.len() - usize::from(footer);
+    let status = status_line(app, theme, cols);
+    let footer = rows > 2;
+    let body_rows = rows - 1 - usize::from(footer);
     let (mut body, mut details) = if app.show_help {
         let mut lines = help_lines(theme);
         lines.extend(version_help_lines(app.update.as_deref(), theme));
@@ -901,7 +1016,7 @@ pub fn render(app: &mut ZellijNoc, theme: &Theme, rows: usize, cols: usize) -> V
         } else {
             0
         };
-        let list_height = (body_rows - detail_height).max(1);
+        let list_height = body_rows - detail_height;
         let (list, selected_line) = agent_list_lines(app, theme, cols);
         let start = selected_line
             .saturating_sub(list_height / 2)
@@ -915,8 +1030,19 @@ pub fn render(app: &mut ZellijNoc, theme: &Theme, rows: usize, cols: usize) -> V
         (window, details)
     };
     body.resize(body_rows - details.len(), Line::empty());
+    if app.show_info {
+        // The box covers the end of the body, directly above the status line.
+        let mut box_lines = status_box_lines(app, theme, cols);
+        let keep = box_lines.len().min(body.len());
+        let from = body.len() - keep;
+        let skip = box_lines.len() - keep;
+        for (slot, line) in body[from..].iter_mut().zip(box_lines.drain(skip..)) {
+            *slot = line;
+        }
+    }
+    app.status_row = Some(body.len());
     let mut lines = body;
-    lines.extend(status);
+    lines.push(status);
     lines.append(&mut details);
     if footer {
         lines.push(footer_line(theme, FOOTER));
@@ -980,21 +1106,43 @@ mod tests {
         lines.iter().map(|l| strip(l)).collect()
     }
 
-    /// Where the header line is. The two status lines sit under the list:
-    /// above the details when those are shown, and above the footer.
-    fn header_at(text: &[String]) -> usize {
-        text.iter()
-            .position(|l| l.starts_with("noc  "))
-            .expect("a header line")
+    /// Where the status line is: above the details when those are shown,
+    /// and above the footer.
+    fn status_at(text: &[String]) -> usize {
+        let rule = text.iter().position(|l| {
+            let l = l.trim();
+            !l.is_empty() && l.chars().all(|c| c == '\u{2500}')
+        });
+        match rule {
+            Some(rule) => rule - 1,
+            None if text.last().is_some_and(|l| l.trim_end() == FOOTER) => text.len() - 2,
+            None => text.len() - 1,
+        }
     }
 
-    fn header(text: &[String]) -> &str {
-        text[header_at(text)].trim_end()
-    }
-
-    /// The line under the header: connection state, a prompt or a notice.
+    /// The status line as drawn: a count with its marks, or a prompt.
     fn status(text: &[String]) -> &str {
-        text[header_at(text) + 1].trim_end()
+        text[status_at(text)].trim_end()
+    }
+
+    /// The count on the status line, without the arrow and the dot.
+    fn header(text: &[String]) -> &str {
+        status(text)
+            .trim_end_matches('\u{25cf}')
+            .trim_end()
+            .trim_end_matches('\u{2191}')
+            .trim_end()
+    }
+
+    /// The lines inside the status box, opened for the occasion.
+    fn info(app: &mut ZellijNoc, rows: usize, cols: usize) -> Vec<String> {
+        app.show_info = true;
+        let text = plain(&render(app, &Theme::default(), rows, cols));
+        app.show_info = false;
+        text.iter()
+            .filter_map(|l| l.strip_prefix("\u{2502} "))
+            .map(|l| l.trim_end_matches('\u{2502}').trim_end().to_string())
+            .collect()
     }
 
     fn app_with(agents: &str) -> ZellijNoc {
@@ -1042,11 +1190,11 @@ mod tests {
         for (i, want) in expect.iter().enumerate() {
             assert_eq!(text[i].trim_end(), *want, "line {i}");
         }
-        let rest = text[13..25].iter().all(|l| l.trim().is_empty());
+        let rest = text[13..26].iter().all(|l| l.trim().is_empty());
         assert!(rest, "list area is padded");
-        // The status lines sit between the list and the details.
-        assert_eq!(text[25].trim_end(), "noc  6 agents");
-        assert_eq!(text[26].trim_end(), "\u{25cf}  connected \u{b7} poll");
+        // The status line sits between the list and the details: the count
+        // on the left, the dot at the right edge.
+        assert_eq!(text[26], format!("6 agents{}\u{25cf}", " ".repeat(29)));
         let details = &text[27..];
         let wanted = [
             "\u{2500}".repeat(38),
@@ -1077,8 +1225,8 @@ mod tests {
         assert_eq!(app.selected_agent().unwrap().id, "r1");
         let text = plain(&render(&mut app, &Theme::default(), 30, 38));
         assert_eq!(text.len(), 30);
-        // available = 27, detail height 9: the list takes 18 lines and the
-        // two status lines follow, so the rule sits on line 20.
+        // available = 28, detail height 9: the list takes 19 lines and the
+        // status line follows, so the rule sits on line 20.
         assert_eq!(text[20].trim_end(), "\u{2500}".repeat(38));
         assert_eq!(text[21].trim_end(), "Details");
         assert_eq!(text[22].trim_end(), "Docs pass");
@@ -1095,7 +1243,7 @@ mod tests {
         assert!(!text.iter().any(|l| l == "Details"));
         // Short panes hide the details.
         app.toggle_details();
-        let text = plain(&render(&mut app, &Theme::default(), 14, 38));
+        let text = plain(&render(&mut app, &Theme::default(), 13, 38));
         assert!(!text.iter().any(|l| l.starts_with("Details")));
     }
 
@@ -1103,7 +1251,7 @@ mod tests {
     fn working_agents_spin_and_quiet_agents_fold_into_counted_sections() {
         let mut app = app_with(DEMO);
         let first = plain(&render(&mut app, &Theme::default(), 40, 38));
-        assert_eq!(header(&first), "noc  6 agents");
+        assert_eq!(header(&first), "6 agents");
         assert!(first[4].starts_with(" \u{280b} Cache refactor"));
         app.advance_spinner();
         let second = plain(&render(&mut app, &Theme::default(), 40, 38));
@@ -1128,7 +1276,7 @@ mod tests {
         assert_eq!(text[9].trim_end(), "Quiet  3");
         assert_eq!(text[10].trim_end(), " \u{25be} < 24h   1");
         assert_eq!(text[11].trim_end(), "   \u{25cc} Old question");
-        assert_eq!(header(&text), "noc  6 agents");
+        assert_eq!(header(&text), "6 agents");
     }
 
     #[test]
@@ -1166,20 +1314,21 @@ mod tests {
         assert_eq!(text[1].trim_end(), "j / k       move selection");
         assert_eq!(text[14].trim_end(), "/           search (also older:14d)");
         assert_eq!(text[15].trim_end(), "u           check for a new release");
-        assert_eq!(text[16].trim_end(), "? / Esc     close help");
-        assert_eq!(text[17], " ".repeat(38));
-        assert_eq!(text[18].trim_end(), "Anywhere");
-        assert_eq!(text[19].trim_end(), "Alt-m       jump to list and back");
-        assert_eq!(text[20].trim_end(), "Alt-o       hide / show this panel");
-        assert_eq!(text[21].trim_end(), "Alt-d       detach both sessions");
-        assert_eq!(text[22], " ".repeat(38));
+        assert_eq!(text[16].trim_end(), "i           status and version");
+        assert_eq!(text[17].trim_end(), "? / Esc     close help");
+        assert_eq!(text[18], " ".repeat(38));
+        assert_eq!(text[19].trim_end(), "Anywhere");
+        assert_eq!(text[20].trim_end(), "Alt-m       jump to list and back");
+        assert_eq!(text[21].trim_end(), "Alt-o       hide / show this panel");
+        assert_eq!(text[22].trim_end(), "Alt-d       detach both sessions");
+        assert_eq!(text[23], " ".repeat(38));
         assert_eq!(
-            text[23].trim_end(),
+            text[24].trim_end(),
             format!("version     v{}", crate::update::CURRENT)
         );
-        // Status lines last, above the footer.
-        assert_eq!(text[27].trim_end(), "noc  0 agents");
-        assert_eq!(text[28].trim_end(), "\u{25cf}  connected \u{b7} poll");
+        // The status line last, above the footer.
+        assert_eq!(header(&text), "0 agents");
+        assert_eq!(status_at(&text), 28);
         assert_eq!(text[29].trim_end(), FOOTER);
     }
 
@@ -1325,8 +1474,8 @@ mod tests {
         for (i, w) in want.iter().enumerate() {
             assert_eq!(text[i].trim_end(), *w, "line {i}");
         }
-        assert_eq!(text[11].trim_end(), "noc  0 agents");
-        assert_eq!(text[12].trim_end(), "!  server offline \u{b7} retrying");
+        assert_eq!(header(&text), "0 agents");
+        assert_eq!(status_at(&text), 12);
         assert_eq!(text[13].trim_end(), FOOTER);
         // At the installed 38-column width the last line is cut with an ellipsis.
         let narrow = plain(&render(&mut app, &Theme::default(), 14, 38));
@@ -1334,17 +1483,26 @@ mod tests {
             narrow[5].trim_end(),
             "This panel will reconnect automatical\u{2026}"
         );
-        // Following the Zellij theme, the offline line is not dim and other
-        // connection lines are.
-        let zellij = Theme::from_mode_info(&ModeInfo::default());
-        let raw = render(&mut app, &zellij, 14, 42);
-        assert!(!raw[12].contains("\x1b[2;"));
-        let mut app = app_with("[]");
-        let raw = render(&mut app, &zellij, 14, 42);
-        assert!(raw[12].contains("\x1b[2;"));
-        // The built-in colours do not dim it either way.
+        // The dot is red while the server is offline and green once connected;
+        // the words are in the status box.
         let raw = render(&mut app, &Theme::default(), 14, 42);
-        assert!(!raw[12].contains("\x1b[2;"));
+        assert!(
+            raw[12].contains("38;2;243;139;168m\u{25cf}"),
+            "{:?}",
+            raw[12]
+        );
+        assert_eq!(
+            info(&mut app, 14, 42)[0],
+            "\u{25cf} server offline \u{b7} retrying"
+        );
+        let mut app = app_with("[]");
+        let raw = render(&mut app, &Theme::default(), 14, 42);
+        assert!(
+            raw[12].contains("38;2;166;227;161m\u{25cf}"),
+            "{:?}",
+            raw[12]
+        );
+        assert_eq!(info(&mut app, 14, 42)[0], "\u{25cf} connected \u{b7} poll");
     }
 
     #[test]
@@ -1354,47 +1512,69 @@ mod tests {
         assert_eq!(text[0].trim_end(), "No live agents.");
         app.set_error("bad".into());
         let text = plain(&render(&mut app, &Theme::default(), 8, 38));
-        assert_eq!(status(&text), "\u{d7}  disconnected \u{b7} bad");
+        assert_eq!(header(&text), "0 agents");
+        assert_eq!(info(&mut app, 8, 38)[0], "\u{25cf} disconnected \u{b7} bad");
         assert_eq!(text[0].trim_end(), "No registry snapshot available.");
         // A pipe panel that has heard nothing says what it waits for.
         let mut app = ZellijNoc::new(Config {
             transport: Transport::Pipe,
             ..Config::default()
         });
-        let text = plain(&render(&mut app, &Theme::default(), 8, 38));
-        assert_eq!(status(&text), "\u{25cc}  waiting for zellij-noc.registry");
+        assert_eq!(
+            info(&mut app, 8, 38)[0],
+            "\u{25cf} waiting for zellij-noc.registry"
+        );
+        // Yellow while it waits.
+        let raw = render(&mut app, &Theme::default(), 8, 38);
+        assert!(raw[6].contains("38;2;249;226;175m\u{25cf}"), "{:?}", raw[6]);
     }
 
     #[test]
     fn a_newer_release_is_marked_on_the_header_and_explained_in_help() {
         let mut app = app_with("[]");
         let text = plain(&render(&mut app, &Theme::default(), 30, 38));
-        assert_eq!(header(&text), "noc  0 agents");
+        assert_eq!(header(&text), "0 agents");
         app.update = Some("v0.2.0".into());
         let text = plain(&render(&mut app, &Theme::default(), 30, 38));
+        // Only an arrow beside the dot; the versions are in the status box.
         assert_eq!(
-            text[header_at(&text)],
-            format!("noc  0 agents{}\u{2191} v0.2.0", " ".repeat(17))
+            text[status_at(&text)],
+            format!("0 agents{}\u{2191} \u{25cf}", " ".repeat(27))
         );
-        // Too narrow for both: the count stays, the marker goes.
+        assert_eq!(
+            info(&mut app, 30, 38)[1..],
+            [
+                "\u{2191} v0.2.0 is available".to_string(),
+                format!("  this is v{}", crate::update::CURRENT),
+                "  set the new version in the".to_string(),
+                "  plugin URL".to_string(),
+            ]
+        );
+        // Narrow: both still fit.
         let text = plain(&render(&mut app, &Theme::default(), 30, 22));
-        assert_eq!(header(&text), "noc  0 agents");
+        assert_eq!(
+            text[28],
+            format!("0 agents{}\u{2191} \u{25cf}", " ".repeat(11))
+        );
+        // Narrower than the count: the count is cut and the dot stays.
+        let text = plain(&render(&mut app, &Theme::default(), 30, 8));
+        assert_eq!(text[28], "0 a\u{2026} \u{2191} \u{25cf}");
         app.show_help = true;
         let text = plain(&render(&mut app, &Theme::default(), 30, 38));
         assert_eq!(
-            text[24].trim_end(),
+            text[25].trim_end(),
             "\u{2191} v0.2.0    newer plugin release;"
         );
-        assert_eq!(text[25].trim_end(), "            set it in the plugin URL");
+        assert_eq!(text[26].trim_end(), "            set it in the plugin URL");
         assert_eq!(text[29].trim_end(), FOOTER);
     }
 
     #[test]
-    fn search_results_are_a_flat_list_with_the_query_on_the_second_line() {
+    fn search_results_are_a_flat_list_with_the_query_on_the_status_line() {
         use crate::app::Search;
         let mut app = app_with(DEMO);
         let folded = plain(&render(&mut app, &Theme::default(), 40, 38));
-        assert_eq!(header(&folded), "noc  6 agents");
+        assert_eq!(header(&folded), "6 agents");
         assert!(
             !folded.iter().any(|l| l.contains("Ancient")),
             "too old to list"
@@ -1407,7 +1587,6 @@ mod tests {
         });
         let typing = plain(&render(&mut app, &Theme::default(), 40, 38));
         assert_eq!(status(&typing), "/ an\u{258f}");
-        assert_eq!(header(&typing), "noc  6 agents");
 
         // Results: every match is a row, however old, and none is folded.
         let list = parse_snapshot(&format!(
@@ -1417,8 +1596,7 @@ mod tests {
         app.apply_snapshot(list, Transport::Poll);
         app.search.as_mut().unwrap().typing = false;
         let found = plain(&render(&mut app, &Theme::default(), 60, 38));
-        assert_eq!(header(&found), "noc  7 matches");
-        assert_eq!(status(&found), "/ an");
+        assert_eq!(header(&found), "7 matches  / an");
         assert!(found.iter().any(|l| l.contains("Ancient")), "{found:?}");
         assert!(
             found.iter().any(|l| l.trim_end() == "Quiet  4"),
@@ -1433,14 +1611,14 @@ mod tests {
         .unwrap();
         app.apply_snapshot(one, Transport::Poll);
         let text = plain(&render(&mut app, &Theme::default(), 20, 38));
-        assert_eq!(header(&text), "noc  1 match");
+        assert_eq!(header(&text), "1 match  / an");
         let none = parse_snapshot(&format!(
             r#"{{"schema_version":1,"generated_at":"{NOW}","agents":[]}}"#
         ))
         .unwrap();
         app.apply_snapshot(none, Transport::Poll);
         let text = plain(&render(&mut app, &Theme::default(), 20, 38));
-        assert_eq!(header(&text), "noc  0 matches");
+        assert_eq!(header(&text), "0 matches  / an");
         assert_eq!(text[0].trim_end(), "No agents match.");
         assert_eq!(text[4].trim_end(), "older:14d   idle two weeks or more");
 
@@ -1452,23 +1630,95 @@ mod tests {
         .unwrap();
         app.apply_snapshot(list, Transport::Poll);
         let text = plain(&render(&mut app, &Theme::default(), 40, 38));
-        assert_eq!(header(&text), "noc  6 agents");
-        assert_eq!(status(&text), "\u{25cf}  connected \u{b7} poll");
+        assert_eq!(header(&text), "6 agents");
     }
 
     #[test]
-    fn setup_problems_replace_the_connected_line_until_fixed() {
+    fn problems_turn_the_dot_yellow_and_are_spelled_out_in_the_status_box() {
         let mut app = app_with("[]");
         app.guest_problem = Some("inner session \"noc\" is not running".into());
-        let text = plain(&render(&mut app, &Theme::default(), 8, 60));
-        assert_eq!(status(&text), "!  inner session \"noc\" is not running");
-        // A settings problem wins, and a notice wins over both.
+        let text = plain(&render(&mut app, &Theme::default(), 12, 60));
+        assert_eq!(header(&text), "0 agents");
+        let raw = render(&mut app, &Theme::default(), 12, 60);
+        assert!(
+            raw[10].contains("38;2;249;226;175m\u{25cf}"),
+            "{:?}",
+            raw[10]
+        );
+        assert_eq!(
+            info(&mut app, 12, 60),
+            [
+                "\u{25cf} connected \u{b7} poll".to_string(),
+                "! inner session \"noc\" is not running".to_string(),
+                format!("version v{}", crate::update::CURRENT),
+            ]
+        );
+        // A settings problem is listed first. In the sidebar's width both wrap.
         app.config_problem = Some("home_theme is set but away_theme is not".into());
-        let text = plain(&render(&mut app, &Theme::default(), 8, 60));
-        assert_eq!(status(&text), "!  home_theme is set but away_theme is not");
+        assert_eq!(
+            info(&mut app, 14, 38)[1..5],
+            [
+                "! home_theme is set but away_theme",
+                "  is not",
+                "! inner session \"noc\" is not",
+                "  running",
+            ]
+        );
+        // An error is worse than a problem: the dot is red.
+        app.set_error("boom".into());
+        let raw = render(&mut app, &Theme::default(), 12, 60);
+        assert!(
+            raw[10].contains("38;2;243;139;168m\u{25cf}"),
+            "{:?}",
+            raw[10]
+        );
+        // A notice takes the whole status line while it lasts.
         app.set_notice("renamed to x");
-        let text = plain(&render(&mut app, &Theme::default(), 8, 60));
+        let text = plain(&render(&mut app, &Theme::default(), 12, 60));
         assert_eq!(status(&text), "renamed to x");
+    }
+
+    #[test]
+    fn the_status_box_sits_on_the_status_line_and_a_click_toggles_it() {
+        let mut app = app_with(DEMO);
+        let closed = plain(&render(&mut app, &Theme::default(), 40, 38));
+        let row = status_at(&closed);
+        assert_eq!(app.status_row, Some(row));
+        // A click elsewhere does nothing; on the status line it opens the box.
+        assert!(!app.click(0));
+        assert!(app.click(row as isize) && app.show_info);
+        let open = plain(&render(&mut app, &Theme::default(), 40, 38));
+        assert_eq!(open.len(), 40);
+        assert!(open.iter().all(|l| l.width() == 38));
+        assert_eq!(
+            open[row - 4..row],
+            [
+                format!("\u{256d}\u{2500} status {}\u{256e}", "\u{2500}".repeat(27)),
+                format!(
+                    "\u{2502} \u{25cf} connected \u{b7} poll{}\u{2502}",
+                    " ".repeat(17)
+                ),
+                format!(
+                    "\u{2502} {:<34} \u{2502}",
+                    format!("version v{}", crate::update::CURRENT)
+                ),
+                format!("\u{2570}{}\u{256f}", "\u{2500}".repeat(36)),
+            ]
+        );
+        // Nothing else moved.
+        assert_eq!(open[..row - 4], closed[..row - 4]);
+        assert_eq!(open[row..], closed[row..]);
+        // A click anywhere else closes it; so does a second click on the line.
+        assert!(app.click(2) && !app.show_info);
+        assert!(app.click(row as isize) && app.click(row as isize) && !app.show_info);
+        // A pane too short for the whole box shows its end.
+        app.show_info = true;
+        let tiny = plain(&render(&mut app, &Theme::default(), 4, 38));
+        assert_eq!(
+            tiny[1],
+            format!("\u{2570}{}\u{256f}", "\u{2500}".repeat(36))
+        );
+        assert_eq!(header(&tiny), "6 agents");
     }
 
     #[test]
@@ -1476,35 +1726,34 @@ mod tests {
         let mut app = app_with(DEMO);
         app.set_error("boom".into());
         let text = plain(&render(&mut app, &Theme::default(), 40, 38));
-        assert_eq!(status(&text), "\u{d7}  disconnected \u{b7} boom");
+        assert_eq!(header(&text), "6 agents");
+        assert_eq!(
+            info(&mut app, 40, 38)[0],
+            "\u{25cf} disconnected \u{b7} boom"
+        );
         assert_eq!(text[0].trim_end(), "Blocked  1");
     }
 
     #[test]
-    fn very_small_panes_keep_the_status_lines() {
+    fn very_small_panes_keep_the_status_line() {
         let mut app = app_with(DEMO);
         let theme = Theme::default();
         assert!(render(&mut app, &theme, 0, 38).is_empty());
         assert!(render(&mut app, &theme, 10, 0).is_empty());
         let one = plain(&render(&mut app, &theme, 1, 38));
         assert_eq!(one.len(), 1);
-        assert!(one[0].starts_with("noc  6 agents"));
+        assert!(one[0].starts_with("6 agents"));
+        // Two rows: one list line, windowed to the selected row, and the status.
         let two = plain(&render(&mut app, &theme, 2, 38));
         assert_eq!(two.len(), 2);
-        assert!(two[0].starts_with("noc  6 agents"));
-        assert!(two[1].starts_with('\u{25cf}'));
+        assert_eq!(two[0].trim_end(), " ! Auth migration");
+        assert!(two[1].starts_with("6 agents"));
+        // From three rows the footer has room too.
         let three = plain(&render(&mut app, &theme, 3, 38));
         assert_eq!(three.len(), 3);
-        // One list line, windowed to the selected row, above the status.
         assert_eq!(three[0].trim_end(), " ! Auth migration");
-        assert!(three[1].starts_with("noc  6 agents"));
-        assert!(three[2].starts_with('\u{25cf}'));
-        // From four rows the footer has room too.
-        let four = plain(&render(&mut app, &theme, 4, 38));
-        assert_eq!(four[3].trim_end(), FOOTER);
-        assert!(four[1].starts_with("noc  6 agents"));
-        let _ = plain(&render(&mut app, &theme, 3, 38));
-        assert!(!three.iter().any(|l| l.contains("[?]")));
+        assert!(three[1].starts_with("6 agents"));
+        assert_eq!(three[2].trim_end(), FOOTER);
         assert_eq!(app.last_render_rows, 3);
     }
 
@@ -1530,7 +1779,7 @@ mod tests {
         assert!(raw[2].contains("48;2;49;50;68"));
         assert!(!raw[4].contains("48;2;49;50;68"));
         // herdr's colours: a blue header, red, yellow, teal and grey groups.
-        let at = header_at(&plain(&raw));
+        let at = status_at(&plain(&raw));
         assert!(raw[at].contains("38;2;137;180;250"), "header is blue");
         assert!(raw[0].contains("38;2;243;139;168"), "Blocked is red");
         assert!(raw[3].contains("38;2;249;226;175"), "Working is yellow");

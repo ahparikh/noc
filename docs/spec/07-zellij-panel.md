@@ -4,7 +4,7 @@ This section specifies what a user sees in the `zellij-noc` panel and what
 every key in the panel does. It covers the Rust model of noc's public JSON
 (`noc ls --json --all` and `noc show --json <id>`), how agents are grouped,
 sorted and folded into Quiet time sections, the exact rendering of every line
-(header, connection line, group headings, agent rows, section rows, inline
+(status line and status box, group headings, agent rows, section rows, inline
 details, help, empty states, footer, floating details window), the in-panel
 key bindings and the intents they raise (open, pane, stack, worktree shell,
 details window, refresh, stop, rename), and what the panel does with the
@@ -352,7 +352,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   |---|---|---|---|
   | `noc_bin` | `noc` | non-empty trimmed | argv[0] of every `noc` command |
   | `icons` | (unicode) | exactly `nerd` → Nerd icons | ZM-013 |
-  | `transport` | `poll` | exactly `pipe` → pipe | connection line text (ZR-003); `r` is a no-op in pipe |
+  | `transport` | `poll` | exactly `pipe` → pipe | the words for the connection (ZR-003); `r` is a no-op in pipe |
   | `pipe_name` | `zellij-noc.registry` | non-empty trimmed | `◌  waiting for {pipe_name}` |
   | `poll_interval_ms` | 1000 | `f64`, finite, clamped to 250..60000; otherwise the default | registry polling cadence |
   | `guest_session` | `noc` | non-empty trimmed | the inner session agents are opened, focused and followed in |
@@ -397,7 +397,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   `themes_enabled()` MUST be true only when there are no problems and both
   themes are set. A problem never stops the agent list from working. At
   load, the first problem (if any) is stored as `config_problem` and shown on
-  the connection line (ZR-003) for the life of the instance.
+  the status dot and the status box (ZR-003, ZR-034) for the life of the instance.
 - **Source:** `zellij/src/app.rs` (is_plain_name, encode_key, Config::problems, Config::themes_enabled), `zellij/src/main.rs` (load)
 - **Verified by:** `zellij/src/app.rs` reports_unusable_settings_in_plain_words; `zellij/src/app.rs` encodes_function_keys_the_way_a_terminal_sends_them
 
@@ -597,28 +597,12 @@ Public API fields that are not modelled are silently ignored, e.g.
   sequences. The plugin prints the lines separated by newlines with no
   newline after the last (a trailing newline would scroll the pane by one).
 - **Source:** `zellij/src/view.rs` (render, sanitize, Line::fitted, Line::render), `zellij/src/main.rs` (render)
-- **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds; `zellij/src/view.rs` very_small_panes_keep_the_status_lines; `zellij/src/view.rs` control_characters_in_names_never_reach_the_terminal
+- **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds; `zellij/src/view.rs` very_small_panes_keep_the_status_line; `zellij/src/view.rs` control_characters_in_names_never_reach_the_terminal
 
-#### ZR-002 Header line
-- **Behavior:** The first status line (ZR-033) MUST be `noc  {N} agent{s}`
-  (two spaces after `noc`; `s` omitted only when `N == 1`), accent colour,
-  bold. `N` is the number of non-Quiet agent rows plus the sum of all Quiet
-  section counts (open or closed); Quiet agents older than 7 days and
-  stopped agents are not counted. While the list holds search results
-  (ZK-026) the line is instead `noc  {N} match` for one result and
-  `noc  {N} matches` otherwise, `N` being the number of rows. When a newer
-  release is recorded ([08-zellij-host.md](08-zellij-host.md) ZH-022) the
-  line MUST end with the marker `↑ vX.Y.Z` (attention colour, bold), padded
-  with spaces so that it ends at the last column. The marker is omitted when
-  fewer than two columns would separate it from the count.
-- **Source:** `zellij/src/view.rs` (render, header_line, shown_agent_count, plural)
-- **Verified by:** `zellij/src/view.rs` working_agents_spin_and_quiet_agents_fold_into_counted_sections (`noc  6 agents`, open or closed); `zellij/src/view.rs` a_newer_release_is_marked_on_the_header_and_explained_in_help
-
-#### ZR-003 Connection line
-- **Behavior:** The second status line (ZR-033) MUST show the first applicable entry, in the listed
-  colour. It is `dim` unless the connection is `ServerUnavailable` (the dim
-  flag depends only on the connection state, so a prompt, notice or problem
-  is dim too while connected).
+#### ZR-002 The status line
+- **Behavior:** The panel has one status line (placed by ZR-033). While a
+  prompt or a notice is active it is that text alone, the first that
+  applies:
 
   | Condition (priority order) | Text | Colour |
   |---|---|---|
@@ -626,38 +610,74 @@ Public API fields that are not modelled are silently ignored, e.g.
   | stop awaiting confirmation | `Stop {title}?  y / n` | attention |
   | search being typed | `/ {text}▏` (U+258F cursor) | accent |
   | notice set | the notice text | info |
-  | settings problem (ZM-024) | `!  {problem}` | attention |
-  | inner session unreachable | `!  {problem}` | attention |
-  | `Connecting`, poll | `◌  connecting` | info |
-  | `Connecting`, pipe | `◌  waiting for {pipe_name}` | info |
-  | `Connected(source)`, search in effect | `/ {query}` | accent |
-  | `Connected(source)` | `●  connected · {source}` | active |
-  | `ServerUnavailable` | `!  server offline · retrying` | attention |
-  | `Error(e)` | `×  disconnected · {e}` | error |
 
-  A settings problem stays until the plugin is reloaded. The inner-session
-  problem reads `inner session "{guest_session}" is not running`; when it is
-  set and cleared is specified in [08-zellij-host.md](08-zellij-host.md).
-  Long texts are truncated per ZR-020 (keeping the beginning).
-- **Source:** `zellij/src/view.rs` (connection_line)
-- **Verified by:** `zellij/src/view.rs` details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel (rename, stop, notice); `zellij/src/view.rs` setup_problems_replace_the_connected_line_until_fixed; `zellij/src/view.rs` empty_and_error_states (error, pipe waiting); `zellij/src/view.rs` renders_a_friendly_server_start_instruction (offline, dim flag); `◌  connecting` `UNTESTED`
+  Otherwise it MUST show, on the left, `{N} agent{s}` (`s` omitted only when
+  `N == 1`; accent colour, bold), where `N` is the number of non-Quiet agent
+  rows plus the sum of all Quiet section counts (open or closed); Quiet
+  agents older than 7 days and stopped agents are not counted. While the
+  list holds search results (ZK-026) the count is `{N} match` or
+  `{N} matches`, `N` being the number of rows, followed by two spaces and
+  `/ {query}`. At the right edge it MUST show the status dot `●` (ZR-003),
+  preceded by `↑` and a space (attention colour, bold) when a newer release
+  is recorded ([08-zellij-host.md](08-zellij-host.md) ZH-022). The dot and
+  the arrow are never dropped for lack of room: the count is cut with `…`
+  instead. Neither says anything in words; the status box does (ZR-034).
+- **Source:** `zellij/src/view.rs` (status_line, shown_agent_count, plural)
+- **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds, a_newer_release_is_marked_on_the_header_and_explained_in_help, search_results_are_a_flat_list_with_the_query_on_the_status_line, details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel
+
+#### ZR-003 The status dot
+- **Behavior:** The dot's colour MUST be the worst of the connection and
+  the problems:
+
+  | State | Colour | Words (in the status box) |
+  |---|---|---|
+  | `Connected(source)` | `ok` (green) | `connected · {source}` |
+  | `Connecting`, poll | `warn` (yellow) | `connecting` |
+  | `Connecting`, pipe | `warn` | `waiting for {pipe_name}` |
+  | a settings problem (ZM-024) or an unreachable inner session, while connected or connecting | `warn` | the problem |
+  | `ServerUnavailable` | `error` (red) | `server offline · retrying` |
+  | `Error(e)` | `error` | `disconnected · {e}` |
+
+- **Source:** `zellij/src/view.rs` (connection_state, problems, health)
+- **Verified by:** `zellij/src/view.rs` renders_a_friendly_server_start_instruction (red, green), empty_and_error_states (yellow), problems_turn_the_dot_yellow_and_are_spelled_out_in_the_status_box
+
+#### ZR-034 The status box
+- **Behavior:** While the status box is open (ZK-028) the panel MUST draw a
+  framed box over the last lines of the body, directly above the status
+  line, as wide as the pane: a top border `╭─ status ─…─╮`, one line per
+  entry as `│ {text} │` with the text cut to the inner width, and a bottom
+  border `╰─…─╯` (borders in the muted colour). The entries, in order:
+  1. `● {words}` for the connection, in the dot's connection colour
+     (ZR-003).
+  2. Each problem, settings first, as `! {problem}` (`warn`), wrapped with
+     continuation lines indented two columns.
+  3. With no newer release recorded: `version v{own version}` (muted). With
+     one: `↑ vX.Y.Z is available` (attention, bold), `  this is v{own
+     version}` (muted), and `set the new version in the plugin URL`
+     wrapped and indented two columns (muted).
+
+  When the body has fewer lines than the box, the box's last lines are
+  shown. Nothing else moves. The box is not drawn in a pane narrower than 8
+  columns.
+- **Source:** `zellij/src/view.rs` (status_box_lines, render)
+- **Verified by:** `zellij/src/view.rs` the_status_box_sits_on_the_status_line_and_a_click_toggles_it, problems_turn_the_dot_yellow_and_are_spelled_out_in_the_status_box, a_newer_release_is_marked_on_the_header_and_explained_in_help
 
 #### ZR-004 Footer
 - **Behavior:** The last line MUST be `[?] keys  [d]etails  [D] window` (two
-  spaces between items; muted, dim) whenever the pane has more than three
-  rows. With three rows or fewer there is no footer (ZR-016).
+  spaces between items; muted, dim) whenever the pane has more than two
+  rows. With two rows or fewer there is no footer (ZR-016).
 - **Source:** `zellij/src/view.rs` (render, FOOTER)
-- **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds, very_small_panes_keep_the_status_lines
+- **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds, very_small_panes_keep_the_status_line
 
-#### ZR-033 Layout: the list on top, the status lines beneath it
+#### ZR-033 Layout: the list on top, the status line beneath it
 - **Behavior:** From the top the panel MUST show: the body (the agent list,
   or the help view, or the empty state), cut or padded with empty lines to
-  fill the rows the rest leaves; the two status lines, the header (ZR-002)
-  then the connection line (ZR-003); the inline details block when it is
-  shown (ZR-008); and the footer (ZR-004). So the status lines are directly
-  above the details, and directly above the footer when details are hidden
-  or do not fit. The pane's own title names the panel, so nothing is drawn
-  above the list.
+  fill the rows the rest leaves; the status line (ZR-002); the inline
+  details block when it is shown (ZR-008); and the footer (ZR-004). So the
+  status line is directly above the details, and directly above the footer
+  when details are hidden or do not fit. The pane's own title names the
+  panel, so nothing is drawn above the list. The row the status line is
+  drawn on is recorded for clicks (ZK-028).
 - **Source:** `zellij/src/view.rs` (render)
 - **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds (status between list and details), renders_keyboard_help_on_request (status above the footer)
 
@@ -665,7 +685,7 @@ Public API fields that are not modelled are silently ignored, e.g.
 
 #### ZR-005 Help view
 - **Behavior:** When `show_help` is true the body (ZR-033) MUST be, instead
-  of the list, and with no details block: `In the list` (accent, bold); the 16 entries below
+  of the list, and with no details block: `In the list` (accent, bold); the 17 entries below
   (muted, dim); an empty line; `Anywhere` (accent, bold); then the three
   fixed `Anywhere` entries (muted, dim). Help is shown regardless of whether
   there are agents.
@@ -686,6 +706,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   r           refresh
   /           search (also older:14d)
   u           check for a new release
+  i           status and version
   ? / Esc     close help
   ```
 
@@ -726,20 +747,20 @@ Public API fields that are not modelled are silently ignored, e.g.
 #### ZR-007 Errors keep the last good list
 - **Behavior:** When `items` is non-empty and the connection is `Error` or
   `ServerUnavailable`, the list and details MUST render normally with only
-  the connection line (ZR-003) reporting the problem.
+  the status dot (ZR-003) reporting the problem.
 - **Source:** `zellij/src/view.rs` (render)
 - **Verified by:** `zellij/src/view.rs` errors_keep_the_last_good_list
 
 ### 3.3 List and details layout
 
 #### ZR-008 Master/detail split
-- **Behavior:** With `available = rows - 3` (the two status lines and the
+- **Behavior:** With `available = rows - 2` (the status line and the
   footer): `detail_height = available / 3` if
   `show_details && available >= 12`, else 0;
-  `list_height = max(available - detail_height, 1)`. The list occupies the
-  first `list_height` lines, padded with empty lines; then come the status
-  lines; then the details block, exactly `detail_height` lines; then the
-  footer. The split is fixed so neither the status lines nor the details
+  `list_height = available - detail_height`. The list occupies the
+  first `list_height` lines, padded with empty lines; then comes the status
+  line; then the details block, exactly `detail_height` lines; then the
+  footer. The split is fixed so neither the status line nor the details
   jump as the selection moves.
 - **Source:** `zellij/src/view.rs` (render)
 - **Verified by:** `zellij/src/view.rs` details_take_the_bottom_third_and_ready_agents_show_their_age
@@ -831,12 +852,12 @@ Public API fields that are not modelled are silently ignored, e.g.
 ### 3.5 Colour and text primitives
 
 #### ZR-016 Very small panes
-- **Behavior:** With `rows == 1` only the header is output; with `rows == 2`
-  the header and the connection line; with `rows == 3` one body line (for a
-  non-empty list, the selected row's first line) above the two status lines,
-  and no footer. From four rows the footer is shown.
+- **Behavior:** With `rows == 1` only the status line is output; with
+  `rows == 2` one body line (for a non-empty list, the selected row's first
+  line) above the status line, and no footer. From three rows the footer is
+  shown.
 - **Source:** `zellij/src/view.rs` (render)
-- **Verified by:** `zellij/src/view.rs` very_small_panes_keep_the_status_lines
+- **Verified by:** `zellij/src/view.rs` very_small_panes_keep_the_status_line
 
 #### ZR-017 Group colours
 - **Behavior:** Each group has one colour, taken from the theme (ZR-018):
@@ -1261,7 +1282,7 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 
 #### ZK-017 Stop confirmation
 - **Behavior:** A stoppable request MUST record `PendingStop { agent_id,
-  title }` and the connection line MUST read `Stop {title}?  y / n`. The next
+  title }` and the status line MUST read `Stop {title}?  y / n`. The next
   unmodified key: `y` → ZK-018; anything else (including `n`, `Esc`, `Y`) →
   clear the pending stop and notice `stop cancelled`; the key is consumed and
   has no other effect. Snapshots, focus changes and `Ctrl-d`/`Ctrl-u` do not
@@ -1347,6 +1368,15 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 - **Source:** `zellij/src/panel.rs` (process_key, run_intent); `zellij/src/update.rs` (check_for_update_now)
 - **Verified by:** `zellij/src/panel.rs` u_asks_for_a_release_check
 
+#### ZK-028 Opening the status box
+- **Behavior:** A left click on the row of the status line MUST open the
+  status box (ZR-034), or close it when it is open; a left click on any
+  other row closes it. `i` toggles it. `Esc` closes it before it closes
+  help or ends a search. The click works whichever pane has the keyboard,
+  and does not move the keyboard.
+- **Source:** `zellij/src/app.rs` (click, toggle_info); `zellij/src/panel.rs` (process_key); `zellij/src/main.rs` (update_panel)
+- **Verified by:** `zellij/src/view.rs` the_status_box_sits_on_the_status_line_and_a_click_toggles_it; `zellij/src/panel.rs` i_opens_the_status_box_and_esc_closes_it_first; MANUAL: click the status line while the keyboard is in the inner session
+
 #### ZK-024 `/`: begin a search
 - **Behavior:** `/` MUST close help and start typing a search: a new one
   with empty text, or the one in effect with its text kept. With the pipe
@@ -1416,8 +1446,7 @@ padded list area):
 │ ▸ < 7d    1                          │
 │                                      │
 │  … (blank to the end of the list) …  │
-│noc  6 agents                         │  status: accent, bold
-│●  connected · poll                   │  status: active, dim
+│6 agents                             ●│  status: count accent, bold; dot green
 │──────────────────────────────────────│  accent, dim
 │Details                               │  accent, bold
 │Auth migration                        │
@@ -1454,8 +1483,7 @@ Panel, 30 rows, `< 24h` opened and its agent selected:
 │                                      │
 │                                      │
 │                                      │
-│noc  6 agents                         │
-│●  connected · poll                   │
+│6 agents                             ●│
 │──────────────────────────────────────│
 │Details                               │
 │Old question                          │
@@ -1472,27 +1500,40 @@ With the section row itself selected, the details block reads
 `Quiet · < 24h` / `Conversations with no process.` /
 `Enter opens this section; Enter on` / `an agent resumes it; h closes.`
 
-The same panel with details hidden (`d`): the status lines are the last
-two above the footer.
+The same panel with details hidden (`d`): the status line is the last one
+above the footer.
 
 ```text
 │ ▸ < 48h   1                          │
 │ ▸ < 7d    1                          │
-│  … (blank to the status lines) …     │
-│noc  6 agents                         │
-│●  connected · poll                   │
+│  … (blank to the status line) …      │
+│6 agents                             ●│
 │[?] keys  [d]etails  [D] window       │
 ```
 
-Prompts, notices and problems replace the second status line:
+A prompt or a notice takes the whole status line while it lasts:
 
 ```text
 │Rename: Old question▏                 │
 │Stop Auth migration?  y / n           │
 │/ older:2w▏                           │
 │stop cancelled                        │
-│!  home_theme is set but away_theme i…│  a settings problem, cut at 38 columns
-│!  inner session "noc" is not running │
+```
+
+With a newer release recorded and a settings problem, and the status box
+open (a click on the status line, or `i`):
+
+```text
+│╭─ status ───────────────────────────╮│
+││ ● connected · poll                 ││
+││ ! home_theme is set but away_theme ││
+││   is not                           ││
+││ ↑ v0.2.0 is available              ││
+││   this is v0.1.3                   ││
+││   set the new version in the       ││
+││   plugin URL                       ││
+│╰────────────────────────────────────╯│
+│6 agents                           ↑ ●│  dot yellow: a problem
 ```
 
 Floating details window, 70 × 24 (roomy):
@@ -1523,8 +1564,8 @@ Empty list, before the first snapshot (6 rows):
 │No live agents.                       │
 │                                      │
 │                                      │
-│noc  0 agents                         │
-│◌  connecting                         │
+│                                      │
+│0 agents                             ●│  dot yellow: connecting
 │[?] keys  [d]etails  [D] window       │
 ```
 
@@ -1538,8 +1579,8 @@ Server offline with no list to keep (10 rows):
 │                                      │
 │This panel will reconnect automatical…│  cut at 38 columns
 │                                      │
-│noc  0 agents                         │
-│!  server offline · retrying          │  not dim
+│                                      │
+│0 agents                             ●│  dot red: server offline
 │[?] keys  [d]etails  [D] window       │
 ```
 

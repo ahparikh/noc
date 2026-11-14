@@ -313,6 +313,10 @@ pub struct ZellijNoc {
     pub flat: bool,
     pub show_details: bool,
     pub show_help: bool,
+    /// The status box is open.
+    pub show_info: bool,
+    /// The row the status line was last drawn on, for clicks.
+    pub status_row: Option<usize>,
     pub pending_g: bool,
     pub spinner_frame: usize,
     pub last_render_rows: usize,
@@ -340,6 +344,8 @@ impl ZellijNoc {
             flat: false,
             show_details: true,
             show_help: false,
+            show_info: false,
+            status_row: None,
             pending_g: false,
             spinner_frame: 0,
             last_render_rows: 20,
@@ -578,6 +584,23 @@ impl ZellijNoc {
 
     pub fn toggle_help(&mut self) {
         self.show_help = !self.show_help;
+    }
+
+    pub fn toggle_info(&mut self) {
+        self.show_info = !self.show_info;
+    }
+
+    /// A left click on a row of the panel. On the status line it opens or
+    /// closes the status box; anywhere else it closes it. Returns whether
+    /// anything changed.
+    pub fn click(&mut self, row: isize) -> bool {
+        let on_status = usize::try_from(row).ok() == self.status_row && self.status_row.is_some();
+        if on_status {
+            self.toggle_info();
+            true
+        } else {
+            std::mem::take(&mut self.show_info)
+        }
     }
 
     pub fn close_help(&mut self) {

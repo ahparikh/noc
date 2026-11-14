@@ -171,6 +171,7 @@ impl ZellijPlugin for State {
         subscribe(&[
             EventType::Key,
             EventType::ModeUpdate,
+            EventType::Mouse,
             EventType::PaneUpdate,
             EventType::PermissionRequestResult,
             EventType::RunCommandResult,
@@ -246,6 +247,7 @@ impl State {
                 false
             }
             Event::Key(key) => self.handle_key(&key),
+            Event::Mouse(Mouse::LeftClick(row, _)) => self.app.click(row),
             _ => false,
         }
     }

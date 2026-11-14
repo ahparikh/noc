@@ -592,7 +592,7 @@ pair renders the shipped configuration files, so those are what gets tested.
 ### D-060: the sidebar says when a newer plugin release exists
 
 A few times a day the panel asks GitHub where the repository's "latest
-release" link redirects, and shows `↑ vX.Y.Z` on its agent-count line when that tag
+release" link redirects, and shows `↑` on its status line when that tag
 is newer than its own version. It runs `curl` for this, compares only
 `X.Y.Z` versions, never downloads or replaces anything, and stays silent
 when the check fails. `update_check "false"` turns it off.
@@ -707,6 +707,20 @@ frame without a title, and an empty name restores the pane's own title, so
 a space is the only way.
 **Consequence:** a title a program sets afterwards is not shown. The panel
 keeps the title it saw first, for recognising agents by it.
+
+### D-075: one status line, with the words behind a click
+
+The sidebar's status is a single line under the list: the agent count on
+the left, and at the right edge a dot (green, yellow or red) with an `↑`
+when a newer release exists. A click on the line, or `i`, opens a small box
+that says it in words: the connection, any problem, and the versions.
+
+**Why:** the state of the connection is almost always "fine", and a line
+of text saying so every day is space the list could use. A colour is read
+at a glance; the words matter only when the colour is not green.
+**Consequence:** a problem is no longer spelled out until the box is
+opened. A prompt or a notice still takes the whole line while it lasts, so
+the count is hidden while a search is being typed.
 
 ## Names, state, and grouping
 

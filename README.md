@@ -67,7 +67,7 @@ own session:
 │ ┌ NOC ──────────┐ ┌ your session: noc ───────────────────────────┐ │
 │ │ Blocked  1    │ │   your tabs, panes, keys and theme,          │ │
 │ │ Working  2    │ │   exactly as you configured them             │ │
-│ │ noc  5 agents │ │                                              │ │
+│ │ 5 agents    ● │ │                                              │ │
 │ └───────────────┘ └──────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────────────────┘
 ```
@@ -159,8 +159,9 @@ both sessions, quit your session or run `zellij kill-session noc`.
 ### Upgrade the plugin
 
 Zellij downloads a plugin URL once and keeps it, so the URL names the
-version. When a newer release exists the sidebar's agent-count line shows
-`↑ vX.Y.Z`. To upgrade, change the version in the plugin URL (once in
+version. When a newer release exists the sidebar's status line shows `↑`
+beside its dot; click the line (or press `i`) to see both versions, and
+press `u` to check at once. To upgrade, change the version in the plugin URL (once in
 `noc-host.kdl`, twice in `noc-inner.kdl`) and restart the pair:
 
 ```sh

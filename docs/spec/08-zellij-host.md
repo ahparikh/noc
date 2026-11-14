@@ -56,7 +56,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** UNTESTED
 
 ### ZH-003 Event subscriptions
-- **Behavior:** A relay MUST subscribe only to `PermissionRequestResult`. A panel or details instance MUST subscribe to `Key`, `ModeUpdate`, `PaneUpdate`, `PermissionRequestResult`, `RunCommandResult`, `TabUpdate`, `Timer`, `Visible`.
+- **Behavior:** A relay MUST subscribe only to `PermissionRequestResult`. A panel or details instance MUST subscribe to `Key`, `ModeUpdate`, `Mouse`, `PaneUpdate`, `PermissionRequestResult`, `RunCommandResult`, `TabUpdate`, `Timer`, `Visible`.
 - **Source:** `zellij/src/main.rs` (`load`)
 - **Verified by:** UNTESTED
 
@@ -176,7 +176,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** `zellij/src/app.rs` `reports_unusable_settings_in_plain_words`
 
 ### ZH-021 Showing a settings problem
-- **Behavior:** At load the first problem, if any, MUST be stored and shown on the panel's connection line as `!  <problem>` until the plugin is reloaded. On that line a rename prompt, a stop prompt and a notice take precedence over it, and it takes precedence over the inner-session problem (ZX-022) and the connection state. A problem MUST NOT stop the agent list, polling, or opening agents. Theme switching is enabled only when there are no problems and both themes are set.
+- **Behavior:** At load the first problem, if any, MUST be stored until the plugin is reloaded. It turns the panel's status dot yellow and is spelled out in the status box, ahead of the inner-session problem (ZX-022) ([07-zellij-panel.md](07-zellij-panel.md) ZR-003, ZR-034). A problem MUST NOT stop the agent list, polling, or opening agents. Theme switching is enabled only when there are no problems and both themes are set.
 - **Source:** `zellij/src/main.rs` (`load`); `zellij/src/app.rs` (`Config::themes_enabled`); `zellij/src/view.rs` (`connection_line`)
 - **Verified by:** `zellij/src/view.rs` `setup_problems_replace_the_connected_line_until_fixed`; `zellij/src/guest.rs` `keyboard_signals_carry_the_theme_keys_only_when_themes_are_set`
 
@@ -328,7 +328,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** `zellij/src/guest.rs` `parses_the_inner_sessions_terminals_and_focus`, `a_focused_plugin_or_garbage_is_no_focus`; `zellij/src/model.rs` `parses_terminal_pane_ids_only`
 
 ### ZX-022 An unreadable inner session
-- **Behavior:** An unusable read MUST keep the previous snapshot, mark no client as seen, and start (or continue) a failure period. Once the period has lasted `5.0` s the panel MUST show `inner session "<guest_session>" is not running` on its connection line (as `!  …`, ZH-021) and redraw. The next usable read ends the period, clears the message and redraws.
+- **Behavior:** An unusable read MUST keep the previous snapshot, mark no client as seen, and start (or continue) a failure period. Once the period has lasted `5.0` s the panel MUST record the problem `inner session "<guest_session>" is not running` (shown as in ZH-021) and redraw. The next usable read ends the period, clears the message and redraws.
 - **Source:** `zellij/src/guest.rs` (`on_guest_unreadable`, `on_guest_snapshot`)
 - **Verified by:** `zellij/src/view.rs` `setup_problems_replace_the_connected_line_until_fixed` (display only); timing UNTESTED
 
@@ -522,7 +522,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
   | # | Check name | Asserts |
   |---|---|---|
   | 1 | host session has the sidebar and one guest pane | a tiled plugin pane titled `NOC` and a tiled terminal exist in the host |
-  | 2 | sidebar lists the registry's agents | the screen shows `noc  2 agents` within 10 s |
+  | 2 | sidebar lists the registry's agents | the screen shows `2 agents` within 10 s |
   | 3 | guest pane keeps exactly one client on the inner session | inner client count is 1 |
   | 4 | the keyboard starts in the inner session | host focus is the guest pane |
   | 5 | inner session takes its options from noc-inner.kdl | screen row 1 contains `Zellij ` and neither `(<inner>)` nor `running` |
@@ -538,8 +538,8 @@ pane, tab, focus and theme state stays in the plugin (D-036).
   | 15 | the tab is renamed when the agent's name changes | after the fake registry reports the agent as `Renamed agent`, an inner tab has that name within 10 s |
   | 16 | D opens the floating details window | a floating plugin pane titled with `E2E agent` exists in the host |
   | 17 | q closes it | no visible floating plugin pane remains |
-  | 18 | / lists the agents that match what is typed | with the keyboard on the panel, after `/` and `second` the screen shows `noc  1 match` within 8 s |
-  | 19 | Esc ends the search | after `Esc` the screen shows `noc  2 agents` within 8 s |
+  | 18 | / lists the agents that match what is typed | with the keyboard on the panel, after `/`, `second` and `Enter` the screen shows `1 match` within 8 s |
+  | 19 | Esc ends the search | after `Esc` the screen shows `2 agents` within 8 s |
   | 20 | Alt-o hides the sidebar | a host tab reports `is_fullscreen_active` true |
   | 21 | Alt-o shows it again | it reports false |
   | 22 | Alt-d detaches the host client | host client count is 0 |

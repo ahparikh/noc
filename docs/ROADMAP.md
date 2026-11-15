@@ -98,10 +98,12 @@ Remote attach assumes background agents, which is what `noc spawn`
 
 ### 4. Shared agent skill and cross-agent messaging
 
-- **One `noc` skill**, installed by `noc setup` for both providers, teaching
-  agents what the registry tracks, the boundary between top-level agents and
-  internal subagents, how to name themselves, and how to find and message
-  other agents.
+- **More in the `noc` skill.** `noc setup skill` installs a skill that
+  teaches agents what the registry tracks, the boundary between top-level
+  agents and internal subagents, and how to find their team and other
+  agents. It will also teach messaging once that exists. Agent-to-agent
+  messaging, in particular across machines, needs its own design and spec
+  first.
 - **A durable, provider-neutral mailbox.** Messages have an ID and
   idempotency key, sender and recipient agents, a bounded body with optional
   correlation metadata, and a delivery state (queued, delivered,

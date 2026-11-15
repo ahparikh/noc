@@ -66,13 +66,16 @@ Usage:
   noc spawn [--provider claude] [--team name|none] [--name name] [--dir path] <prompt> [-- provider-arguments]
   noc doctor [--json]
   noc setup [--check|--uninstall] [claude|codex]
+  noc setup skill [--check|--uninstall] [claude|codex]
+  noc whoami [--json]
 
 Internal provider hook entrypoint:
   noc hook ingest --provider claude|codex
 
 The server runs in the foreground unless --bg is supplied. Provider discovery
 and durable hook ingestion are implemented. Run noc setup after installing the
-binary to configure Claude and Codex hooks.`
+binary to configure Claude and Codex hooks, and noc setup skill to teach
+agents how to use noc.`
 
 // Run executes the noc command line and returns the process exit code.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -116,6 +119,8 @@ func RunWithIO(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		return runTeams(ctx, rest, stdout, stderr)
 	case "spawn":
 		return runSpawn(ctx, rest, stdout, stderr)
+	case "whoami":
+		return runWhoami(ctx, rest, stdout, stderr)
 	case "doctor":
 		return runDoctor(ctx, rest, stdout, stderr)
 	case "setup":
@@ -827,6 +832,9 @@ func renderDoctorReport(w io.Writer, report doctor.Report) {
 }
 
 func runSetup(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if rest, ok := withoutSkillWord(args); ok {
+		return runSetupSkill(rest, stdout, stderr)
+	}
 	fs := newFlagSet("noc setup", stderr)
 	check := fs.Bool("check", false, "check hook configuration without changing it")
 	uninstall := fs.Bool("uninstall", false, "remove noc-managed hooks")

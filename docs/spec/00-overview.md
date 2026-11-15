@@ -72,6 +72,7 @@ changes (D-005).
 | Buckets `blocked`/`working`/`review`/`quiet` as registry state | [02](02-api.md) |
 | Two-way names (Codex `thread/name/set`; Claude overlay only) | [02](02-api.md), [05](05-providers.md) |
 | `noc setup [--check\|--uninstall]`, `noc doctor` | [06](06-hooks.md) |
+| The `noc` skill, one document for both providers, installed by `noc setup skill`; `noc whoami` | [03](03-cli.md) |
 | `zellij-noc` plugin: a 38-column agent sidebar with a details view, attach, rename, and stop | [07](07-zellij-panel.md) |
 | Zellij host session: the sidebar in an outer session (`noc-host`) beside one pane holding the user's own session (`noc`), attached nested; started from the static layout `noc-host.kdl` | [08](08-zellij-host.md) |
 | Releases on GitHub: the `noc` binary installs with `install.sh`; the plugin loads by release URL | [01](01-build.md) |
@@ -84,10 +85,10 @@ Planned work is tracked in [`docs/ROADMAP.md`](../ROADMAP.md):
 |---|---|
 | M2 (rest) | Persistent subscribed Codex connection; Claude context headroom via `noc statusline`; headroom registry field (spike notes in D-054) |
 | M3 | Remote nodes over SSH stdio, Mac as hub, `noc nodes`, `noc ls --host`, remote attach/stop routing, reachability |
-| M4 | Shared `noc` skill installed by `noc setup` (D-006); cross-agent, cross-provider mailbox, `noc send`, inbox, optional MCP |
+| M4 | Cross-agent, cross-provider mailbox, `noc send`, inbox, optional MCP |
 
-`noc setup` installs provider hook handlers only. It does not install an
-agent skill; that is part of M4.
+`noc setup` installs provider hook handlers only. The agent skill is
+installed separately, by `noc setup skill` (D-006).
 
 ### 2.3 Explicitly out of scope
 

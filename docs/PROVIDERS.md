@@ -300,6 +300,20 @@ Two things are specific to Codex hooks:
 - **Source shapes should be rechecked on upgrade.** The accepted sources are
   strings today; a change in representation would silently exclude threads.
 
+## The noc skill
+
+`noc setup skill [claude|codex]` installs one skill, the same for both
+providers, as `skills/noc/SKILL.md` under `~/.claude` (or
+`$CLAUDE_CONFIG_DIR`) and `~/.codex` (or `$CODEX_HOME`). `--check` reports
+whether each is installed and current, and `--uninstall` removes it. It
+teaches an agent to find itself (`noc whoami`), its team, and other agents,
+and to start workers. `noc` carries no messages yet: the skill tells an
+agent to use its provider's own means, addressed by what `noc` reports.
+
+A skill file that `noc` did not install is never written or removed. That
+Codex loads a skill from that path has not been checked against a running
+Codex.
+
 ## Hook setup
 
 `noc setup [claude|codex]` writes hook handlers, `--check` reports coverage

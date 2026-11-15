@@ -9,8 +9,9 @@ readiness pipe, the PID record, duplicate-instance rejection, stale-record
 handling, `server stop`, `server restart`, `server status`), the resolution of
 every configuration path and environment override, and the provider-command
 planning that `noc attach`, `noc stop`, and `noc rename` perform in the
-CLI process, the team commands, and `noc spawn`, which starts a provider
-session from the CLI process. Server internals (registry, discovery, HTTP routing) are covered
+CLI process, the team commands, `noc spawn`, which starts a provider
+session from the CLI process, `noc whoami`, and the installation of the noc
+skill (`noc setup skill`). Server internals (registry, discovery, HTTP routing) are covered
 in [04-server.md](04-server.md), [02-api.md](02-api.md), [05-providers.md](05-providers.md)
 and [06-hooks.md](06-hooks.md), and are referenced here only where the CLI's
 observable behaviour depends on them.
@@ -18,12 +19,15 @@ observable behaviour depends on them.
 Source files covered:
 
 - `go/cmd/noc/main.go`
-- `go/internal/cli/run.go`, `go/internal/cli/search.go`, `go/internal/cli/teams.go`
+- `go/internal/cli/run.go`, `go/internal/cli/search.go`, `go/internal/cli/teams.go`,
+  `go/internal/cli/skill.go`
+- `go/internal/skill/skill.go`, `go/internal/skill/SKILL.md`
 - `go/internal/cli/server_lifecycle.go`
 - `go/internal/cli/server_process_unix.go`
 - `go/internal/cli/server_process_unsupported.go`
 - `go/internal/cli/run_test.go`, `go/internal/cli/search_test.go`,
-  `go/internal/cli/teams_test.go`, `go/internal/cli/server_lifecycle_unix_test.go`
+  `go/internal/cli/teams_test.go`, `go/internal/cli/skill_test.go`,
+  `go/internal/cli/server_lifecycle_unix_test.go`
 - `go/internal/config/paths.go`, `go/internal/config/paths_test.go`
 - `go/internal/buildinfo/buildinfo.go`
 - `go/internal/attach/plan.go`, `go/internal/attach/claude_roster.go`,
@@ -57,6 +61,8 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
 | `noc spawn [--provider claude] [--team name\|none] [--name name] [--dir path] [--socket path] <prompt...> [-- provider-arguments]` | — | Start a background Claude session and register it | yes | CLI-045..CLI-047 |
 | `noc doctor [--json] [--socket path] [--database path] [--timeout d]` | — | Installation diagnostics | optional | CLI-031, CLI-032 |
 | `noc setup [--check\|--uninstall] [--json] [--executable path] [claude\|codex]` | — | Manage provider hook handlers | no | CLI-033, CLI-034 |
+| `noc setup skill [--check\|--uninstall] [--json] [claude\|codex]` | — | Install, check or remove the noc skill | no | CLI-048..CLI-051 |
+| `noc whoami [--json] [--socket path]` | — | Show the agent the command runs inside | yes | CLI-052 |
 | `noc server [launch flags] [--bg]` | `server run`, `server start` | Run the server (foreground, or detached with `--bg`) | — | LIFE-001..LIFE-016 |
 | `noc server stop [--socket] [--pid-file] [--timeout]` | — | SIGTERM the managed server and wait | probe only | LIFE-017..LIFE-019 |
 | `noc server restart [launch flags] [--timeout]` | — | Stop a background server, start a new background server | probe only | LIFE-020..LIFE-022 |
@@ -103,13 +109,16 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
     noc spawn [--provider claude] [--team name|none] [--name name] [--dir path] <prompt> [-- provider-arguments]
     noc doctor [--json]
     noc setup [--check|--uninstall] [claude|codex]
+    noc setup skill [--check|--uninstall] [claude|codex]
+    noc whoami [--json]
 
   Internal provider hook entrypoint:
     noc hook ingest --provider claude|codex
 
   The server runs in the foreground unless --bg is supplied. Provider discovery
   and durable hook ingestion are implemented. Run noc setup after installing the
-  binary to configure Claude and Codex hooks.
+  binary to configure Claude and Codex hooks, and noc setup skill to teach
+  agents how to use noc.
   ```
   The usage text intentionally does not list aliases or most flags; the per-command flag usage (CLI-006) is the complete flag reference.
 - **Source:** `go/internal/cli/run.go` (RunWithIO, usageText)
@@ -132,7 +141,7 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
   - Flag parsing stops at the first non-flag argument; flags after a positional are positionals. E.g. `noc attach <id> --force` has two positionals and is a usage error; `noc rename <id> --clear` names the agent `--clear`.
   - `-h`, `-help`, `--help` MUST print `Usage of <flagset name>:` and the flag defaults to stderr and exit **0**.
   - An undefined flag or bad value MUST print `flag provided but not defined: -x` (or the flag package's value error) plus usage to stderr and exit **2**.
-  - Flag-set names (shown in usage) are `noc ls`, `noc search`, `noc show`, `noc attach`, `noc stop`, `noc forget`, `noc rename`, `noc events`, `noc watch`, `noc teams`, `noc team <verb>` (the verb as typed), `noc spawn`, `noc doctor`, `noc setup`, `noc server`, `noc server status`, `noc server restart`, `noc server stop`, `noc hook ingest`. Note `ls` uses the flag-set name `noc ls` even when invoked as `list`, and `rename` uses `noc rename` even when invoked as `name`.
+  - Flag-set names (shown in usage) are `noc ls`, `noc search`, `noc show`, `noc attach`, `noc stop`, `noc forget`, `noc rename`, `noc events`, `noc watch`, `noc teams`, `noc team <verb>` (the verb as typed), `noc spawn`, `noc whoami`, `noc doctor`, `noc setup`, `noc setup skill`, `noc server`, `noc server status`, `noc server restart`, `noc server stop`, `noc hook ingest`. Note `ls` uses the flag-set name `noc ls` even when invoked as `list`, and `rename` uses `noc rename` even when invoked as `name`.
 - **Source:** `go/internal/cli/run.go` (newFlagSet, parseFlags); the same pattern is used by every `run*` function
 - **Verified by:** `go/internal/cli/run_test.go` TestValidationPaths (`ls -h`, an undefined flag, `server restart --bg`); `go/internal/cli/server_lifecycle_unix_test.go` TestBackgroundServerLifecycle (restart accepts launch flags and `--timeout`); one-dash spelling and flag-after-positional for `rename` UNTESTED.
 
@@ -142,7 +151,7 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
   | Code | Meaning | Where |
   |---|---|---|
   | 0 | Success; help; `-h` on any flag set; watch ended by signal; `hook ingest` always (except CLI-035) | all |
-  | 1 | Runtime failure: server unreachable, API error, path resolution failure, provider command could not be found/started, lifecycle errors, attach/stop refusals, doctor/setup reports with failures, any `forget` or `team set`/`team clear` ID failed, `team lead` for an agent outside the team, any `spawn` failure after validation (CLI-047) | `printError`, `printServerError`, `printServerLifecycleError` |
+  | 1 | Runtime failure: server unreachable, API error, path resolution failure, provider command could not be found/started, lifecycle errors, attach/stop refusals, doctor/setup reports with failures, a `setup skill` result with an error or a `setup skill --check` that finds a provider's skill not current (CLI-050), `whoami` outside an agent noc knows, any `forget` or `team set`/`team clear` ID failed, `team lead` for an agent outside the team, any `spawn` failure after validation (CLI-047) | `printError`, `printServerError`, `printServerLifecycleError` |
   | 2 | Usage error: unknown command, unknown `server` or `team` subcommand, flag parse error, wrong positional count, invalid flag value caught by validation (including an invalid team name), a `team` command with no agent ID run outside an agent | all |
   | N ≥ 0 | `attach`: the exit status of the provider child process when it exited normally | ATT-013 |
   | N > 0 | `stop`: the provider child's nonzero exit status | ATT-021 |
@@ -161,12 +170,12 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
 - **Verified by:** `go/internal/cli/run_test.go` TestBackgroundStartRejectsExistingServerWithStopGuidance (already-running text), TestServerDownShowsConnectionHint (connection hint), TestRunningServerProcessesHookAndExposesPreview (API message); MANUAL M-1.
 
 #### CLI-009 JSON output encoding
-- **Behavior:** Every `--json` flag except `watch --json` MUST write exactly one JSON document using `encoding/json` with two-space indentation (`SetIndent("", "  ")`) followed by a newline. An encode failure MUST print `noc: write JSON: <err>` and exit 1. `watch --json` MUST write compact (unindented) one-object-per-line NDJSON (CLI-025). The JSON shapes are the public `apiv1` types: `ls` → `AgentList` (`schema_version`, `generated_at`, `agents`); `show` → `Agent`; `events` → `AgentEventList`; `server status` → `Health`; `teams` → `TeamList`; `doctor` → `doctor.Report`; `setup` → `setup.Report`.
+- **Behavior:** Every `--json` flag except `watch --json` MUST write exactly one JSON document using `encoding/json` with two-space indentation (`SetIndent("", "  ")`) followed by a newline. An encode failure MUST print `noc: write JSON: <err>` and exit 1. `watch --json` MUST write compact (unindented) one-object-per-line NDJSON (CLI-025). The JSON shapes are the public `apiv1` types: `ls` → `AgentList` (`schema_version`, `generated_at`, `agents`); `show` → `Agent`; `events` → `AgentEventList`; `server status` → `Health`; `teams` → `TeamList`; `whoami` → `Agent`; `setup skill` → the report of CLI-050; `doctor` → `doctor.Report`; `setup` → `setup.Report`.
 - **Source:** `go/internal/cli/run.go` (writeJSON, runWatch)
 - **Verified by:** `go/internal/cli/run_test.go` TestRunningServerProcessesHookAndExposesPreview (decodes `ls`, `show`, `events` JSON)
 
 #### CLI-010 Client request timeouts
-- **Behavior:** Client commands MUST bound their API calls: `ls`, `show`, `events`, `forget` (one shared deadline for all IDs), `server status` (shared by its health and list calls), `teams`, `team` (one shared deadline for the whole command, including finding the calling agent), and the agent lookup in `attach`/`stop` use **3 s** (`requestTimeout`). `spawn` uses 3 s for finding its caller and 3 s for registering, and bounds the provider separately (CLI-046). `rename` uses **10 s** (`renameRequestTimeout`) because the server pushes the name to the provider (the server bounds that push at 5 s). `watch` has no deadline. `doctor` uses its `--timeout` (default 15 s) for all diagnostics. `hook ingest` uses a 900 ms context for its SQLite calls and wake (150 ms for the wake call). It is not an overall bound on the process: the stdin read is unbounded and the process-table snapshot (`ps`, killed after 2 s) is not tied to it; both run after the 900 ms clock has started (CLI-036, HK-005).
+- **Behavior:** Client commands MUST bound their API calls: `ls`, `show`, `events`, `forget` (one shared deadline for all IDs), `server status` (shared by its health and list calls), `teams`, `team` and `whoami` (each one shared deadline for the whole command, including finding the calling agent), and the agent lookup in `attach`/`stop` use **3 s** (`requestTimeout`). `spawn` uses 3 s for finding its caller and 3 s for registering, and bounds the provider separately (CLI-046). `rename` uses **10 s** (`renameRequestTimeout`) because the server pushes the name to the provider (the server bounds that push at 5 s). `watch` has no deadline. `doctor` uses its `--timeout` (default 15 s) for all diagnostics. `hook ingest` uses a 900 ms context for its SQLite calls and wake (150 ms for the wake call). It is not an overall bound on the process: the stdin read is unbounded and the process-table snapshot (`ps`, killed after 2 s) is not tied to it; both run after the 900 ms clock has started (CLI-036, HK-005).
 - **Source:** `go/internal/cli/run.go` (requestTimeout, renameRequestTimeout, hookIngestTimeout, hookWakeTimeout, defaultServerTimeout); `go/internal/localapi/server.go` (providerRenameTimeout); `go/internal/proclineage/proclineage.go` (snapshotTimeout)
 - **Verified by:** UNTESTED
 
@@ -176,7 +185,7 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
 - **Verified by:** `go/internal/localapi/server_test.go` TestClientAndServerOverUnixSocket; `go/internal/cli/run_test.go` TestRunningServerProcessesHookAndExposesPreview (`show nope`, `forget nope`); prefix rejection UNTESTED.
 
 #### CLI-012 `--socket` on every client command
-- **Behavior:** `ls`, `search`, `show`, `attach`, `stop`, `forget`, `rename`, `events`, `watch`, `teams`, `team`, `spawn`, `doctor`, `server status`, `server stop`, `server restart`, `server` and `hook ingest` MUST accept `--socket <path>` (string) defaulting to the resolved `SocketPath` (CFG-003). Every command that needs paths MUST call `config.ResolvePaths()` before parsing flags; a resolution error MUST print `noc: <err>` and exit 1 (for `hook ingest`, exit 0 silently). `setup` does not resolve paths.
+- **Behavior:** `ls`, `search`, `show`, `attach`, `stop`, `forget`, `rename`, `events`, `watch`, `teams`, `team`, `spawn`, `whoami`, `doctor`, `server status`, `server stop`, `server restart`, `server` and `hook ingest` MUST accept `--socket <path>` (string) defaulting to the resolved `SocketPath` (CFG-003). Every command that needs paths MUST call `config.ResolvePaths()` before parsing flags; a resolution error MUST print `noc: <err>` and exit 1 (for `hook ingest`, exit 0 silently). `setup` does not resolve paths; `setup skill` resolves only the skill files (CLI-049) and takes no `--socket`.
 - **Source:** `go/internal/cli/run.go` (every `run*` function)
 - **Verified by:** indirectly by every test that sets `NOC_SOCKET` (`go/internal/cli/run_test.go`)
 
@@ -470,16 +479,86 @@ and filters by team, and starts new agents that join one.
 - **Verified by:** UNTESTED (CLI rendering)
 
 #### CLI-033 `setup` flags and arguments
-- **Behavior:** Flags: `--check` (bool), `--uninstall` (bool), `--json` (bool), `--executable` (string, default `""` meaning the setup package chooses). `--check` with `--uninstall` MUST print `noc setup: --check and --uninstall are mutually exclusive`, exit 2. More than one positional MUST print `usage: noc setup [--check|--uninstall] [claude|codex]`, exit 2. A positional other than `claude`/`codex` MUST print `noc setup: unsupported provider "<arg>"`, exit 2. No positional = all providers. Action: `check` if `--check`, `uninstall` if `--uninstall`, else `install`. `setupcmd.Run` errors print `noc: <err>`, exit 1.
+- **Behavior:** When any argument of `noc setup` is exactly the word `skill`, the command is `noc setup skill` (CLI-048) and none of the following applies. Otherwise `setup` is about provider hooks only. Flags: `--check` (bool), `--uninstall` (bool), `--json` (bool), `--executable` (string, default `""` meaning the setup package chooses). `--check` with `--uninstall` MUST print `noc setup: --check and --uninstall are mutually exclusive`, exit 2. More than one positional MUST print `usage: noc setup [--check|--uninstall] [claude|codex]`, exit 2. A positional other than `claude`/`codex` MUST print `noc setup: unsupported provider "<arg>"`, exit 2. No positional = all providers. Action: `check` if `--check`, `uninstall` if `--uninstall`, else `install`. `setupcmd.Run` errors print `noc: <err>`, exit 1.
 - **Source:** `go/internal/cli/run.go` (runSetup)
 - **Decision:** D-030
-- **Verified by:** `go/internal/cli/run_test.go` TestSetupRejectsConflictingActions (conflict, unsupported provider, positionals)
+- **Verified by:** `go/internal/cli/run_test.go` TestSetupRejectsConflictingActions (conflict, unsupported provider, positionals); `go/internal/cli/skill_test.go` TestSetupSkillInstallsChecksAndRemoves (plain `setup --check` is still the hook check)
 
 #### CLI-034 `setup` output and exit
 - **Behavior:** Human output MUST start with `noc setup <action> using <executable>`, then per provider result: `  <p>: error — <error>` if the result has an error; else by action — install: `  <p>: installed in <path>` (changed) or `  <p>: already configured in <path>`, followed by inspection lines when incomplete; check: `  <p>: configured` or `  <p>: incomplete` + inspection; uninstall: `  <p>: removed <n> hook handlers from <path>` or `  <p>: no managed hooks found in <path>`. For Codex install (non-error) also `    Review and trust the new hook definitions when Codex prompts you.` Inspection lines (4-space indent): `errors: a; b`, `hooks are disabled in Codex [features]`, `missing events: a, b`, `events using another executable: a, b`. Exit 1 when `report.HasFailures()`.
 - **Source:** `go/internal/cli/run.go` (renderSetupReport, renderSetupInspection)
 - **Decision:** D-030
 - **Verified by:** UNTESTED (CLI rendering)
+
+#### CLI-048 `setup skill` arguments
+- **Behavior:** `noc setup skill [--check|--uninstall] [--json] [claude|codex]`. The first argument of `noc setup` that is exactly `skill` selects this command and is removed; it may come before or after the flags. The rest is parsed with the flag-set name `noc setup skill`: `--check` (bool), `--uninstall` (bool), `--json` (bool). Flags may also follow the provider (`noc setup skill claude --check`), which the other commands do not allow (CLI-006). Checks, in order:
+  1. A positional other than `claude`/`codex` MUST print `noc setup skill: unsupported provider "<arg>"`, exit 2.
+  2. `--check` with `--uninstall` MUST print `noc setup skill: --check and --uninstall are mutually exclusive`, exit 2.
+  3. More than one provider MUST print `usage: noc setup skill [--check|--uninstall] [--json] [claude|codex]`, exit 2.
+
+  No provider means both, in the order `claude`, `codex`; noc does not detect which providers are installed. The action is `check` with `--check`, `uninstall` with `--uninstall`, else `install`. The command never contacts the noc server and never runs a provider. A failure to resolve the skill files (CLI-049) MUST print `noc: <err>`, exit 1.
+- **Source:** `go/internal/cli/run.go` (runSetup); `go/internal/cli/skill.go` (withoutSkillWord, runSetupSkill)
+- **Decision:** D-006
+- **Verified by:** `go/internal/cli/skill_test.go` TestSetupSkillInstallsChecksAndRemoves (both providers by default, one provider, a flag after the provider, `skill` after a flag, the conflict, an unsupported provider, two providers). The exact error texts are UNTESTED.
+
+#### CLI-049 The skill file and what each action does to it
+- **Behavior:** The skill is one file per provider: `<dir>/skills/noc/SKILL.md`, where `<dir>` is the trimmed `CLAUDE_CONFIG_DIR` or else `~/.claude` for Claude, and the trimmed `CODEX_HOME` or else `~/.codex` for Codex (the home directory is looked up only when one of the two variables is unset; failure is `resolve home directory: <err>`). The content is the document embedded in the binary (CLI-051), the same bytes for both providers.
+
+  A file at that path is one of:
+
+  | Status | The file |
+  |---|---|
+  | `current` | is byte-for-byte this binary's document |
+  | `outdated` | differs, and contains the marker `<!-- noc-skill:` (noc installed it) |
+  | `foreign` | differs, and does not contain the marker (noc did not install it) |
+  | `missing` | does not exist |
+
+  Any other read failure is the error `read skill "<path>": <err>`.
+
+  | Action | `missing` | `outdated` | `current` | `foreign` |
+  |---|---|---|---|---|
+  | `install` | written | replaced | untouched | untouched; error |
+  | `uninstall` | nothing | removed | removed | untouched; error |
+  | `check` | nothing | nothing | nothing | nothing |
+
+  A `foreign` file MUST never be written or removed; the error is `a skill named noc that noc did not install is already there; it was not modified`. Writing MUST create the directory with mode `0700` (parents included, when missing), write the document to a temporary file beside the target, set it to `0600`, and rename it over the target, so a reader never sees a partial file. Removing MUST delete the file and then the `skills/noc` directory when that leaves it empty; a directory that holds anything else stays. Nothing else in the provider's configuration is read or changed. After the action each provider's file is inspected again, and that status is what is reported.
+- **Source:** `go/internal/skill/skill.go` (ResolvePaths, Inspect, Install, Uninstall, marker, ErrForeign); `go/internal/cli/skill.go` (runSetupSkill)
+- **Decision:** D-006
+- **Verified by:** `go/internal/cli/skill_test.go` TestSetupSkillInstallsChecksAndRemoves (both environment overrides, install into empty directories, file mode `0600`, a second install changes nothing, an older noc skill replaced, another's skill neither changed nor removed, the empty directory removed). The package has no tests of its own; the `~/.claude` and `~/.codex` defaults, the directory mode, a directory that is not empty, and the read and write error paths are UNTESTED. That Claude loads a personal skill from `~/.claude/skills/<name>/SKILL.md` is Claude's documented behaviour. That Codex loads `skills/noc/SKILL.md` from `CODEX_HOME` is NOT verified: the directory `~/.codex/skills` exists on the author's machine, but Codex could not be run there.
+
+#### CLI-050 `setup skill` output and exit
+- **Behavior:** Human output MUST start with `noc setup skill <action>`, then one line per provider, the first of these that applies:
+
+  | Condition | Line |
+  |---|---|
+  | the result has an error | `  <p>: error — <error> (<path>)` |
+  | uninstall, a file was removed | `  <p>: removed <path>` |
+  | uninstall, nothing removed | `  <p>: no noc skill found at <path>` |
+  | install, the file was written | `  <p>: installed in <path>` |
+  | install, nothing written | `  <p>: already installed in <path>` |
+  | check, `current` | `  <p>: installed` |
+  | check, `outdated` | `  <p>: outdated; run noc setup skill to update <path>` |
+  | check, `foreign` | `  <p>: <path> was not installed by noc` |
+  | check, `missing` | `  <p>: not installed; run noc setup skill` |
+
+  `--json` MUST write, per CLI-009, `{"schema_version": 1, "action": "<install|check|uninstall>", "results": [...]}` with one result per provider in order: `provider`, `path`, and, each omitted when empty or false, `status` (the status after the action, CLI-049), `changed` (a file was written or removed) and `error`. A result with an error has no `status` when the error came from the inspection.
+
+  The exit is **1** when any result has an error, or when the action is `check` and any provider's status is not `current`; otherwise 0. So `install` over another's skill and `uninstall` beside another's skill exit 1, and the other provider is still handled.
+- **Source:** `go/internal/cli/skill.go` (runSetupSkill, renderSkillReport, skillReport, skillResult, failed)
+- **Decision:** D-006
+- **Verified by:** `go/internal/cli/skill_test.go` TestSetupSkillInstallsChecksAndRemoves (every line of the table; the JSON report for one outdated provider; exit 1 on a failed check, on a foreign file during install and uninstall; exit 0 otherwise)
+
+#### CLI-051 The skill document
+- **Behavior:** The document is `go/internal/skill/SKILL.md`, embedded in the binary at build time. It MUST begin with YAML front matter giving `name: noc` and a `description` that says when to use the skill, and MUST contain the marker of CLI-049. It is written for an agent, and covers, in this order: what the registry is and that a failing `noc` command is not a reason to stop; what counts as an agent (a top-level conversation, not a subagent); finding out which agent the reader is (`noc whoami`); listing the reader's team and all teams; finding another agent by search, and which fields of a result to read; that noc delivers no messages, so the reader uses the provider's own means and addresses the other session by the name and native session ID noc reports; starting a worker with `noc spawn`; and changing a team or a name. Every command it names MUST be a command of this binary. Its text is the document itself and is not repeated here.
+- **Source:** `go/internal/skill/SKILL.md`; `go/internal/skill/skill.go` (document, Document)
+- **Decision:** D-006
+- **Verified by:** `go/internal/cli/skill_test.go` TestSkillNamesOnlyCommandsThatExist (the front matter, the marker, and that each of ten commands the document names appears in the usage text of CLI-003). What the document says is otherwise UNTESTED; no test runs an agent with it.
+
+#### CLI-052 `whoami`
+- **Behavior:** `noc whoami` flags: `--json` (bool), `--socket`. Any positional MUST print `usage: noc whoami [--json]`, exit 2. It MUST work out the calling agent (CLI-043) and `GET /v1/agents/<id>`, under one 3 s deadline, and print that agent exactly as `show` does: the `Agent` JSON (CLI-009) with `--json`, else the human form (CLI-019). When there is no calling agent it MUST print `noc whoami: this is not running inside an agent that noc knows` to stderr and exit 1, with nothing on stdout. Server errors print per CLI-008, exit 1; in particular a `NOC_AGENT_ID` that names no agent yields `noc: noc server: agent was not found`. The command changes nothing.
+- **Source:** `go/internal/cli/skill.go` (runWhoami); `go/internal/cli/teams.go` (callerAgentID)
+- **Decision:** D-006
+- **Verified by:** `go/internal/cli/skill_test.go` TestWhoami (outside an agent, `--json` and human output for the caller named by `NOC_AGENT_ID`, a stale `NOC_AGENT_ID`, an extra argument). The Claude-session and process paths of CLI-043 are tested there, not through `whoami`.
 
 #### CLI-035 `hook` dispatcher
 - **Behavior:** `noc hook` with no argument or a first argument other than `ingest` MUST print `usage: noc hook ingest --provider claude|codex` to stderr and exit 2. `noc hook ingest ...` MUST NOT write to stdout or stderr under any circumstances.
@@ -968,6 +1047,8 @@ After a plan is chosen (rows 4, 7–9, 11, 12) the common tail applies: executab
 - **Spawn starts the provider first and registers second.** `claude --bg` picks the session ID, so there is nothing to register until the roster lists the job. The cost is a session that can exist without its team when the roster or the server fails in between; the command says so instead of guessing (CLI-046).
 - **The job is matched by the ID Claude printed, not by the format of the line it printed it in.** Any word of the output that is the `id` of a background roster entry identifies the session, so a change in Claude's wording does not break spawn.
 - **The Claude session outranks `NOC_AGENT_ID`** when working out the calling agent, because the variable is inherited by everything started in an attached terminal while the session ID is set by the session itself (CLI-043).
+- **The skill is one embedded document and one marker.** The same bytes go to both providers, so there is nothing to keep in step; the marker is how noc tells its own file from someone else's without keeping a record of what it installed (CLI-049).
+- **`setup skill` is separate from `setup`.** Hooks are what make the registry work and are safe to install silently; a skill changes what agents do, so it is a step the user takes on purpose. Plain `noc setup` never writes a skill.
 - **`noc teams` is computed in the CLI** from the agent list, like the bucket filter, so the server has no team route.
 - **Stop is Claude-background only** because a terminal session is ended with `/exit` and Codex has no equivalent stop; D-043 in `docs/DECISIONS.md` records the product decision.
 
@@ -1073,6 +1154,7 @@ Then `$M forget $ID nope` → stdout `forgot <ID>`, stderr `noc: noc server: age
 - `runStop`: only the refusal path is exercised through the CLI; executing `claude stop` and propagating its exit status are untested. `StopPlan` itself is unit-tested.
 - Teams: the exact `team` usage text; the `TEAM` column in the `search` and `watch` tables; `watch --team` on a live stream; the `Parent:` line of `show`; a bare `team:` search term.
 - `runSpawn`: only a fake Claude is used, so the real `claude --bg` output, the ignored `--session-id`, the untrusted-directory refusal, and `CLAUDE_CODE_SESSION_ID` in a real session are untested (observed by hand on Claude Code 2.1.325); also untested are the 60 s start deadline, the health check when the server is down, a registration that fails after the session started, and `--dir` naming a file.
+- Skill: `go/internal/skill` has no tests of its own; through the CLI test the untested parts are the home-directory defaults, the directory mode, a skill directory that holds other files, and read and write failures (CLI-048..CLI-050). Whether either provider actually loads the installed file is not tested, and for Codex not verified at all (CLI-049). `whoami` is tested only with `NOC_AGENT_ID` (CLI-052).
 - `ResolvePaths`: platform defaults (macOS/Linux), the `UserCacheDir` fallback and home-directory failure are untested; overrides and `XDG_*` are covered.
 
 ## Known limitations
@@ -1087,6 +1169,9 @@ Then `$M forget $ID nope` → stdout `forgot <ID>`, stderr `noc: noc server: age
 - File privacy depends on noc having created the directory: an existing directory is never tightened, and SQLite's `-wal`/`-shm` side files follow the umask (CFG-007, CFG-008; `go/internal/config/paths.go` EnsurePrivateDir).
 - Unix-socket path length is not checked; an over-long path fails at listen or dial time with the operating system's error (CFG-003).
 - Agent references are exact IDs only; a prefix or a name never resolves (CLI-011).
+- A file that contains the text `<!-- noc-skill:` anywhere counts as noc's own, whoever wrote it, and is replaced by `setup skill` and removed by `setup skill --uninstall` (CLI-049; `go/internal/skill/skill.go` Inspect).
+- Any argument of `noc setup` that is exactly `skill` selects `setup skill`, including a flag's value: `noc setup --executable skill` is read as `noc setup skill --executable` and fails on the unknown flag (CLI-033, CLI-048; `go/internal/cli/skill.go` withoutSkillWord).
+- The Codex skill location is unverified: noc writes `$CODEX_HOME/skills/noc/SKILL.md`, and whether Codex loads it from there has not been checked against a running Codex (CLI-049).
 - `spawn` starts Claude only; `--provider codex` is refused (CLI-045; `go/internal/cli/teams.go` runSpawn).
 - A spawned session can be left without its team and parent: when Claude starts it but the roster does not list the job within 10 s, or the registration fails, the session keeps running, appears in the registry through its hooks or the next snapshot like any other session, and `spawn` exits 1. `noc team set` then puts it in a team; nothing can add the parent afterwards (CLI-046; `go/internal/cli/teams.go` runSpawn).
 - `spawn` identifies the job by a word of Claude's output that equals the `id` of a background roster entry. Output that happened to contain the ID of a different background job would match that job instead (CLI-046; `go/internal/cli/teams.go` startedClaudeSession).

@@ -46,6 +46,7 @@ Sources: `Makefile`, `go/Makefile`, `go/go.mod`,
 │       ├── registry/            registry interface and in-memory store
 │       ├── server/              server composition, discovery, health, retention
 │       ├── setup/               setup, check, uninstall orchestration
+│       ├── skill/               the noc skill (embedded SKILL.md) and its install, check, removal
 │       ├── storage/sqlite/      migrations, store, outbox
 │       └── workspace/           read-only Git inspection
 └── zellij/                      the Rust/WASM plugin `zellij-noc`

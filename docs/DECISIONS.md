@@ -868,6 +868,30 @@ permission prompt, and it was chosen for that.
 own. If the roster does not list the session, `noc spawn` reports it and
 the session runs without a team or parent.
 
+### D-006: a shared skill teaches agents how to use `noc`
+
+`noc setup skill` installs one `noc` skill, the same document for Claude
+and Codex, into each provider's personal skills directory. It teaches an
+agent how to learn which agent it is (`noc whoami`), which team it is on
+and who else is in it, how to find another agent by what it is working on,
+and how to start a worker. It says plainly that `noc` carries no messages:
+an agent finds whom to address through `noc` and reaches them by its
+provider's own means. The skill grows as messaging and other features
+arrive.
+
+The file carries a marker. `noc setup skill` replaces a file that has it
+and never writes or removes one that does not.
+
+**Why:** agent behavior is better shaped by shared guidance than by static
+session profiles (D-005). Finding the right agent is what a registry can
+offer before it can deliver anything, and delivery across machines needs
+its own design. The skill is a separate step from `noc setup`, so that
+adding hooks never changes what an agent is told.
+**Consequence:** the skill is advisory. It never replaces reconciliation or
+provider permission boundaries. An upgrade of `noc` needs
+`noc setup skill` run again to refresh the text, and
+`noc setup skill --check` says when it is out of date.
+
 ## Attach and stop
 
 ### D-038: attach refuses only what would fork a conversation
@@ -955,18 +979,6 @@ or multiplexer closing.
 ## Planned
 
 These are settled constraints on work that is not built yet.
-
-### D-006: a shared skill teaches agents how to use `noc` *(planned)*
-
-`noc setup` will install one canonical `noc` skill for Claude and Codex,
-adapted only where packaging requires. It teaches agents how and when to use
-durable children, native subagents, isolation, discovery, and messaging as
-those features arrive.
-
-**Why:** agent behavior is better shaped by shared guidance than by static
-session profiles (D-005).
-**Consequence:** the skill is advisory. It never replaces reconciliation or
-provider permission boundaries.
 
 ### D-012: the first hub is also a node *(planned)*
 

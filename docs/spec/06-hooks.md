@@ -692,6 +692,11 @@ Malformed payload (`not json`, or `{"session_id":"s","hook_event_name":"Bogus","
 
 ## Setup CLI (`noc setup`)
 
+This section is about provider hooks. `noc setup skill`, which installs the
+noc skill and touches no hook, is specified in [03-cli.md](03-cli.md)
+CLI-048..CLI-051; an argument `skill` hands the command to it before any of
+the following applies.
+
 #### HC-018 Arguments and exit codes
 - **Behavior:** `noc setup [--check|--uninstall] [--json] [--executable PATH] [claude|codex]`. MUST exit `2` with stderr `noc setup: --check and --uninstall are mutually exclusive` if both are set; `2` with `usage: noc setup [--check|--uninstall] [claude|codex]` for more than one positional; `2` with `noc setup: unsupported provider "<x>"` for an unknown provider; `2` on flag parse errors; `0` on `-h`. A `setup.Run` error MUST print `noc: <err>` to stderr and exit `1`. Otherwise print the report (JSON with `--json`, 2-space indented, else human) to stdout and exit `1` if `HasFailures()` else `0`. Configuration paths always come from `hookconfig.ResolvePaths` (no path flags).
 - **Source:** `go/internal/cli/run.go` (runSetup)

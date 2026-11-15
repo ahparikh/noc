@@ -41,6 +41,7 @@ Then:
 
 ```sh
 noc setup          # install the Claude Code and Codex hook handlers
+noc setup skill    # teach your agents how to find each other with noc
 noc server --bg    # start the registry server
 noc doctor         # check the installation
 ```

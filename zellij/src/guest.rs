@@ -788,6 +788,10 @@ impl State {
                 self.relay.tabs = tabs;
                 self.relay_changed();
             }
+            // What runs in a pane changed: a command was typed, or ended.
+            // Zellij says so a moment after the `PaneUpdate` for the same
+            // key press, by which time the new command is certain to show.
+            Event::CommandChanged(..) => self.relay_changed(),
             Event::ListClients(clients) => self.relay_push(&clients),
             Event::RunCommandResult(_, _, _, context)
                 if context.get(KEY).map(String::as_str) == Some(CTX_RELAY_PUSH) =>

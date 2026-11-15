@@ -56,7 +56,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** UNTESTED
 
 ### ZH-003 Event subscriptions
-- **Behavior:** A relay MUST subscribe only to `ListClients`, `PaneUpdate`, `PermissionRequestResult`, `RunCommandResult` and `TabUpdate`. A panel or details instance MUST subscribe to `Key`, `ModeUpdate`, `Mouse`, `PaneUpdate`, `PermissionRequestResult`, `RunCommandResult`, `TabUpdate`, `Timer`, `Visible`.
+- **Behavior:** A relay MUST subscribe only to `CommandChanged`, `ListClients`, `PaneUpdate`, `PermissionRequestResult`, `RunCommandResult` and `TabUpdate`. A panel or details instance MUST subscribe to `Key`, `ModeUpdate`, `Mouse`, `PaneUpdate`, `PermissionRequestResult`, `RunCommandResult`, `TabUpdate`, `Timer`, `Visible`.
 - **Source:** `zellij/src/main.rs` (`load`)
 - **Verified by:** UNTESTED
 
@@ -311,7 +311,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** MANUAL: in a running pair, `zellij --session <inner> action list-panes --all --json` shows one suppressed plugin pane at the plugin's location, also after the tab it was started in is closed
 
 ### ZX-039 The relay sends the inner session's state
-- **Behavior:** On a `zellij-noc.relay` message whose trimmed payload is `watch <session>` with a plain session name (ZH-018), the relay MUST remember that session as the host and the time, forget what it last sent, and call `list_clients`. On every `PaneUpdate` and `TabUpdate` it MUST keep the manifest (as pane records, ZX-021) or the tab list and, if a watch request arrived within the last `10.0` s, call `list_clients`. On each `ListClients` event, if a watch request arrived within the last `10.0` s, it MUST build a snapshot:
+- **Behavior:** On a `zellij-noc.relay` message whose trimmed payload is `watch <session>` with a plain session name (ZH-018), the relay MUST remember that session as the host and the time, forget what it last sent, and call `list_clients`. On every `PaneUpdate` and `TabUpdate` it MUST keep the manifest (as pane records, ZX-021) or the tab list and, if a watch request arrived within the last `10.0` s, call `list_clients`; on every `CommandChanged` (the command running in a pane changed) it MUST do the same without keeping anything. On each `ListClients` event, if a watch request arrived within the last `10.0` s, it MUST build a snapshot:
   - `clients`: the number of clients;
   - `focused`: the id of the terminal pane the first client has the keyboard in, or none when that is a plugin pane or there is no client;
   - `panes`: every terminal pane of the manifest, with `tab_id` and `tab_name` from the tab at its position (absent and empty when Zellij has not reported that tab), and for a pane that has not exited `pane_command` set to the words of `get_pane_running_command` joined by single spaces when that call succeeds.
@@ -688,9 +688,6 @@ Neither the unit tests nor `nested.sh` cover:
 - Polls have no timeout. The registry poll, the watch request, the relay's
   send and the details read each wait for their `RunCommandResult`; if one
   is lost, that one never runs again until the plugin reloads.
-- Zellij announces no event when the command running in a pane changes, so
-  an agent attached by hand is recognised by the next snapshot, up to
-  `2.0` s later. Tab and focus changes are announced and arrive at once.
 - A snapshot travels as one argument of a `zellij pipe` process, so the
   inner session's pane titles and commands show in the process list for the
   moment it runs.

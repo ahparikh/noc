@@ -169,6 +169,7 @@ impl ZellijPlugin for State {
         request_permission(&permissions());
         if self.role == Role::Relay {
             subscribe(&[
+                EventType::CommandChanged,
                 EventType::ListClients,
                 EventType::PaneUpdate,
                 EventType::PermissionRequestResult,

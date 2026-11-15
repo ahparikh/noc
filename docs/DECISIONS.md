@@ -758,8 +758,9 @@ pane, which is how an agent attached by hand is recognised (D-064).
 files do not change: the sidebar starts the relay with the settings the
 theme bindings use, so there is one relay. Actions on the inner session
 stay CLI calls, since a message to the relay would cost the same one
-process. What runs in a pane has no event, so that part is as fresh as the
-last snapshot, two seconds at most.
+process. Zellij also announces a change of the command running in a pane,
+so an agent attached by hand is recognised as fast as a tab switch. The
+two-second request is a heartbeat, not the way the sidebar learns things.
 
 ## Names, state, and grouping
 

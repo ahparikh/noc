@@ -507,6 +507,12 @@ fn status_line(app: &ZellijNoc, theme: &Theme, cols: usize) -> Line {
             Style::fg(theme.accent),
         );
     }
+    if let Some(team) = &app.pending_team {
+        return Line::plain(
+            &format!("team: {}\u{258f}", team.text),
+            Style::fg(theme.accent),
+        );
+    }
     if let Some(stop) = &app.pending_stop {
         return Line::plain(
             &format!("Stop {}?  y / n", stop.title),
@@ -629,12 +635,12 @@ fn help_lines(theme: &Theme) -> Vec<Line> {
         "Enter / l   open agent, or a section",
         "h           close a section or a team",
         "v           group by team / status",
-        "p           open as a pane here",
-        "s           open stacked here",
+        "p / s       pane / stacked pane here",
         "w           shell in its worktree",
         "d           toggle details",
         "D           details window",
         "n           rename agent",
+        "t / T       join / leave a team",
         "x           stop agent (asks y/n)",
         "r           refresh",
         "/           search (also older:14d)",
@@ -1551,6 +1557,10 @@ mod tests {
         assert_eq!(text[1].trim_end(), "j / k       move selection");
         assert_eq!(text[5].trim_end(), "h           close a section or a team");
         assert_eq!(text[6].trim_end(), "v           group by team / status");
+        assert_eq!(text[7].trim_end(), "p / s       pane / stacked pane here");
+        assert_eq!(text[11].trim_end(), "n           rename agent");
+        assert_eq!(text[12].trim_end(), "t / T       join / leave a team");
+        assert_eq!(text[13].trim_end(), "x           stop agent (asks y/n)");
         assert_eq!(text[15].trim_end(), "/           search (also older:14d)");
         assert_eq!(text[16].trim_end(), "u           check for a new release");
         assert_eq!(text[17].trim_end(), "i           status and version");
@@ -1631,6 +1641,14 @@ mod tests {
         let text = plain(&render(&mut app, &Theme::default(), 30, 38));
         assert_eq!(status(&text), "Rename: Auth migration\u{258f}");
         app.pending_rename = None;
+        // The team prompt takes the status line the same way.
+        assert!(app.begin_team());
+        let text = plain(&render(&mut app, &Theme::default(), 40, 38));
+        assert_eq!(status(&text), "team: \u{258f}");
+        app.pending_team.as_mut().unwrap().text = "auth".into();
+        let text = plain(&render(&mut app, &Theme::default(), 40, 38));
+        assert_eq!(status(&text), "team: auth\u{258f}");
+        app.pending_team = None;
         app.set_notice("stop cancelled");
         let text = plain(&render(&mut app, &Theme::default(), 30, 38));
         assert_eq!(status(&text), "stop cancelled");

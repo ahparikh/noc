@@ -8,7 +8,7 @@ sorted and folded into Quiet time sections, the exact rendering of every line
 details, help, empty states, footer, floating details window), the in-panel
 key bindings and the intents they raise (open, pane, stack, worktree shell,
 details window, refresh, stop, rename), and what the panel does with the
-results of `noc stop` and `noc rename`.
+results of `noc stop`, `noc rename`, `noc team set` and `noc team clear`.
 
 The plugin has one deployment: the panel is a sidebar in an outer "host"
 Zellij session, beside a single guest pane that holds the user's own Zellij
@@ -686,6 +686,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   | Condition (priority order) | Text | Colour |
   |---|---|---|
   | rename in progress | `Rename: {text}▏` (U+258F cursor) | accent |
+  | team prompt open (ZK-030) | `team: {text}▏` (U+258F cursor) | accent |
   | stop awaiting confirmation | `Stop {title}?  y / n` | attention |
   | search being typed | `/ {text}▏` (U+258F cursor) | accent |
   | notice set | the notice text | info |
@@ -777,12 +778,12 @@ Public API fields that are not modelled are silently ignored, e.g.
   Enter / l   open agent, or a section
   h           close a section or a team
   v           group by team / status
-  p           open as a pane here
-  s           open stacked here
+  p / s       pane / stacked pane here
   w           shell in its worktree
   d           toggle details
   D           details window
   n           rename agent
+  t / T       join / leave a team
   x           stop agent (asks y/n)
   r           refresh
   /           search (also older:14d)
@@ -1200,6 +1201,7 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 | Key | Precondition | Effect |
 |---|---|---|
 | any key | rename in progress | rename editing (ZK-020..ZK-023) |
+| any key | team prompt open | team prompt editing (ZK-030..ZK-032) |
 | `Ctrl-d` | — | down half a page (ZK-006) |
 | `Ctrl-u` | — | up half a page (ZK-006) |
 | other `Ctrl-…`, any `Alt`/`Super`/multi-modifier key | — | ignored, no redraw |
@@ -1227,7 +1229,9 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 | `r` | poll transport | refresh now (ZK-014) |
 | `x` | stoppable agent row | ask `Stop {title}?  y / n` (ZK-016) |
 | `n` | agent row | start inline rename (ZK-020) |
-| `t`, `q`, `Right`, `Tab`, anything else | — | no effect except cancelling a pending `g`; redraw |
+| `t` | agent row | open the team prompt (ZK-030) |
+| `T` | agent row in a team | take the agent out of its team (ZK-033) |
+| `q`, `Right`, `Tab`, anything else | — | no effect except cancelling a pending `g`; redraw |
 
 ### 4.2 Dispatch rules
 
@@ -1250,7 +1254,7 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 - **Verified by:** `zellij/src/panel.rs` modifier_rules_gate_every_binding; `zellij/src/panel.rs` modifier_checks_leave_a_pending_stop_alone
 
 #### ZK-003 Unbound keys
-- **Behavior:** An unmodified key with no binding (including `t`, `q`,
+- **Behavior:** An unmodified key with no binding (including `q`,
   `Right`, `Tab`, `Backspace`, digits) MUST only cancel a pending `g` and
   request a redraw.
 - **Source:** `zellij/src/panel.rs` (process_key)
@@ -1504,6 +1508,77 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
   `rename cancelled`.
 - **Source:** `zellij/src/panel.rs` (handle_rename_key)
 - **Verified by:** `zellij/src/panel.rs` rename_mode_captures_every_key
+
+### 4.7 Teams (`t`, `T`)
+
+#### ZK-030 `t`: the team prompt
+- **Behavior:** `t` MUST, with an agent row selected, open the team prompt
+  for that agent, holding the agent's team (ZM-025), or nothing when it is
+  in no team. With no agent selected (a section row, a team heading, a
+  team's Quiet row, or an empty list) the notice is `no agent is selected`.
+  The key works the same in both groupings and in search results. While
+  the prompt is open every key event (any modifiers) MUST go to the prompt
+  (ZK-031) and request a redraw, as in rename mode (ZK-001); a rename in
+  progress takes precedence, and the prompt takes precedence over a search
+  being typed. The status line shows `team: {text}▏` (ZR-002).
+- **Source:** `zellij/src/panel.rs` (process_key); `zellij/src/app.rs` (begin_team, PendingTeam)
+- **Decision:** D-071
+- **Verified by:** `zellij/src/panel.rs` the_team_prompt_captures_every_key_and_takes_only_name_characters, capital_t_leaves_the_team_and_both_keys_need_an_agent; `zellij/src/view.rs` details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel (the status line)
+
+#### ZK-031 Team prompt editing and completion
+- **Behavior:** In the team prompt:
+
+  | Key | Effect |
+  |---|---|
+  | `Esc` (any modifiers) | close the prompt, notice `team cancelled` |
+  | `Enter` (any modifiers) | submit (ZK-032) |
+  | `Tab` | complete (below) |
+  | `Backspace` | delete the last character |
+  | `Ctrl-u` | clear the text |
+  | a character, without `Ctrl` or `Alt` | appended when a team name may hold it there: `A-Z`, `a-z`, `0-9`, `.`, `_`, `-`, the first character neither `-` nor `.`, at most `48` characters; any other character is ignored |
+  | anything else | ignored |
+
+  `Tab` MUST replace the text with the first team, in name order, that
+  starts with the text (every team when the text is empty). The teams are
+  those of the agents in the last snapshot (ZG-003), so in search results
+  only the matches' teams. Pressed again with nothing typed in between, it
+  moves to the next such team and after the last back to the first. When
+  no team starts with the text, it does nothing. Any edit ends the walk:
+  the next `Tab` completes the text as it then stands. Matching is exact
+  about case.
+- **Source:** `zellij/src/panel.rs` (handle_team_key); `zellij/src/app.rs` (complete_team, team_names, is_team_char)
+- **Decision:** D-071
+- **Verified by:** `zellij/src/panel.rs` the_team_prompt_captures_every_key_and_takes_only_name_characters, tab_in_the_team_prompt_completes_to_an_existing_team; `zellij/src/app.rs` tab_completes_and_then_cycles_through_the_teams, team_names_follow_the_rules_noc_applies
+
+#### ZK-032 Team prompt submit
+- **Behavior:** On `Enter`: empty text closes the prompt with the notice
+  `team cancelled` and runs nothing. Text that is not a team name (`none`,
+  or a name the prompt started with that breaks the rules of ZK-031) sets
+  the notice `not a team name` and leaves the prompt open. Otherwise the
+  prompt closes and the panel MUST run `<noc_bin> team set <team> <id>`
+  with context `zellij-noc=join-team`, `zellij-noc-agent=<id>`,
+  `zellij-noc-title=<team>`; a team that does not exist yet is made by
+  that command. On exit 0 the notice is `joined <team>`; otherwise
+  `could not join the team: <compacted stderr>`, or `could not join the
+  team` when stderr is empty. Either way a registry poll starts at once
+  (ZK-014 conditions). The selection follows the agent by id (ZG-008), so
+  it stays on the agent when the list regroups.
+- **Source:** `zellij/src/panel.rs` (handle_team_key, run_intent, team_set_argv, team_result_notice, on_team_result)
+- **Decision:** D-071
+- **Verified by:** `zellij/src/panel.rs` enter_in_the_team_prompt_joins_a_valid_team_only, team_results_are_said_in_plain_words; `zellij/src/app.rs` a_joined_agent_stays_selected_when_the_list_regroups; running the command and the poll `UNTESTED`
+
+#### ZK-033 `T`: leave the team
+- **Behavior:** `T` MUST, with no agent selected, set the notice
+  `no agent is selected`; with an agent that is in no team, the notice
+  `not in a team`. Otherwise it MUST run `<noc_bin> team clear <id>`, with
+  no confirmation, with context `zellij-noc=leave-team`,
+  `zellij-noc-agent=<id>`, `zellij-noc-title=<team>`. On exit 0 the notice
+  is `left <team>`; otherwise `could not leave the team: <compacted
+  stderr>`, or `could not leave the team` when stderr is empty. Either way
+  a registry poll starts at once.
+- **Source:** `zellij/src/panel.rs` (request_leave_team, run_intent, team_clear_argv, team_result_notice, on_team_result)
+- **Decision:** D-071
+- **Verified by:** `zellij/src/panel.rs` capital_t_leaves_the_team_and_both_keys_need_an_agent, team_results_are_said_in_plain_words; running the command and the poll `UNTESTED`
 
 #### ZK-027 `u`: check for a new release
 - **Behavior:** `u` MUST ask at once whether a newer release exists
@@ -1857,6 +1932,12 @@ pair for manual checks are described in
   detail lines have no provider icon (ZK-013, ZR-024).
 - **Rename prompt**: long text truncates the cursor out of view;
   `Alt-<char>` inserts the character; there is no cursor movement (ZK-021).
+- **Joining a folded team loses the selection.** Grouped by team, an agent
+  put into a team whose group is folded is no longer a row, so the
+  selection falls back to the same index (ZG-009) instead of opening the
+  team.
+- **The team prompt completes from the list in hand** (ZK-031): during a
+  search, only the teams of the matching agents.
 - **Half page** uses the whole panel height in rows of `items` (ZK-006).
 - **Help hides the list but keys still act on it** (ZK-007): `x`, `n` and
   `Enter` operate on an invisible selection.

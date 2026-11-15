@@ -104,7 +104,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** `zellij/src/panes.rs` `recognizes_server_connection_failures_without_hiding_other_errors`
 
 ### ZH-012 Command result routing
-- **Behavior:** The panel MUST route `RunCommandResult` by the context value under key `zellij-noc`: `agent-snapshot` (ZH-010), `stop-agent`, `rename-agent` (ZH-013), `guest-snapshot` (ZX-021), `guest-open` (ZX-031), `update-check` (ZH-022), `host-info` (ZX-038). Results with no such key or any other value, including `host-action`, MUST be ignored. The details window handles only `agent-details`.
+- **Behavior:** The panel MUST route `RunCommandResult` by the context value under key `zellij-noc`: `agent-snapshot` (ZH-010), `stop-agent`, `rename-agent` (ZH-013), `join-team`, `leave-team` ([07-zellij-panel.md](07-zellij-panel.md) ZK-032, ZK-033), `guest-snapshot` (ZX-021), `guest-open` (ZX-031), `update-check` (ZH-022), `host-info` (ZX-038). Results with no such key or any other value, including `host-action`, MUST be ignored. The details window handles only `agent-details`.
 - **Source:** `zellij/src/main.rs` (`on_command_result`); `zellij/src/details.rs` (`update_details`)
 - **Verified by:** UNTESTED
 

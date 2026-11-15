@@ -484,7 +484,8 @@ The first frontend is `zellij-noc`, a Zellij plugin that shows the registry
 as a sidebar beside the user's own Zellij session. It reads only
 `noc ls --json --all`, `noc search --json` and `noc show --json`, and acts
 only through
-`noc attach`, `noc rename`, and `noc stop`. See [`ZELLIJ.md`](ZELLIJ.md).
+`noc attach`, `noc rename`, `noc stop`, `noc team set` and `noc team clear`.
+See [`ZELLIJ.md`](ZELLIJ.md).
 
 ## Security and privacy
 

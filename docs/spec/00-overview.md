@@ -333,7 +333,7 @@ requirement says so and the gap is repeated under
    (`plugin location="..." { ... }`), reads the registry only through
    `noc ls --json --all`, `noc search --json` and `noc show --json`, and
    acts only by running
-   `noc attach`, `noc rename`, and `noc stop`.
+   `noc attach`, `noc rename`, `noc stop`, `noc team set` and `noc team clear`.
 
 ### 4.2 Repository layout
 

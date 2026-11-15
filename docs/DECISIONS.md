@@ -464,8 +464,8 @@ All Zellij rendering, layout, permissions, key handling, and pane navigation
 live in the `zellij-noc` plugin. The Go application has no Zellij command,
 does not launch Zellij, and does not depend on a frontend for its lifecycle.
 The plugin reads the versioned CLI JSON (`noc ls --json --all`,
-`noc show --json`) and acts through `noc attach`, `noc rename`, and
-`noc stop`.
+`noc show --json`) and acts through `noc attach`, `noc rename`,
+`noc stop`, `noc team set` and `noc team clear`.
 
 Frontend bindings are generic registry facts. The plugin interprets a
 binding of kind `zellij` and validates it before use; a stale or absent

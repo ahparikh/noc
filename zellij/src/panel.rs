@@ -1,13 +1,16 @@
 //! Key handling and intents, polling, stop/rename, opening agents, and
 //! keyboard ownership between the panel and the inner session.
 
-use crate::app::{PendingStop, Transport, ZellijNoc};
+use crate::app::{is_team_char, is_team_name, PendingStop, Transport, ZellijNoc, TEAM_NAME_MAX};
 use crate::guest::keyboard_signal;
 use crate::model::{parse_snapshot, Agent, AgentGroup};
 use crate::panes::{
     compact_error, focused_pane, is_server_unavailable, other_running_session, tab_panes, ScanPane,
 };
-use crate::{ctx, now_secs, Role, State, CTX_RENAME, CTX_STOP, GRAB_WINDOW, KEY_AGENT, KEY_TITLE};
+use crate::{
+    ctx, now_secs, Role, State, CTX_RENAME, CTX_STOP, CTX_TEAM_JOIN, CTX_TEAM_LEAVE, GRAB_WINDOW,
+    KEY_AGENT, KEY_TITLE,
+};
 use std::collections::BTreeMap;
 use zellij_tile::prelude::*;
 
@@ -35,6 +38,16 @@ pub enum Intent {
     Rename {
         agent_id: String,
         name: String,
+    },
+    /// Put the agent in the team, making the team if it is new.
+    JoinTeam {
+        agent_id: String,
+        team: String,
+    },
+    /// Take the agent out of the team it is in.
+    LeaveTeam {
+        agent_id: String,
+        team: String,
     },
 }
 
@@ -110,6 +123,104 @@ fn handle_rename_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> Option<Inten
     None
 }
 
+/// Keys while the team prompt is open. Only characters a team name may hold
+/// are taken; `Tab` completes to a team that exists.
+fn handle_team_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> Option<Intent> {
+    let ctrl = key.key_modifiers.contains(&KeyModifier::Ctrl);
+    let alt = key.key_modifiers.contains(&KeyModifier::Alt);
+    match key.bare_key {
+        BareKey::Esc => {
+            app.pending_team = None;
+            app.set_notice("team cancelled");
+        }
+        BareKey::Enter => {
+            let team = app.pending_team.as_ref()?.text.clone();
+            if team.is_empty() {
+                app.pending_team = None;
+                app.set_notice("team cancelled");
+            } else if !is_team_name(&team) {
+                app.set_notice("not a team name");
+            } else {
+                let pending = app.pending_team.take()?;
+                return Some(Intent::JoinTeam {
+                    agent_id: pending.agent_id,
+                    team,
+                });
+            }
+        }
+        BareKey::Tab => app.complete_team(),
+        BareKey::Backspace => {
+            if let Some(pending) = app.pending_team.as_mut() {
+                pending.text.pop();
+                pending.typed = None;
+            }
+        }
+        BareKey::Char('u') if ctrl => {
+            if let Some(pending) = app.pending_team.as_mut() {
+                pending.text.clear();
+                pending.typed = None;
+            }
+        }
+        BareKey::Char(c) if !ctrl && !alt => {
+            if let Some(pending) = app.pending_team.as_mut() {
+                let at = pending.text.chars().count();
+                if at < TEAM_NAME_MAX && is_team_char(c, at) {
+                    pending.text.push(c);
+                    pending.typed = None;
+                }
+            }
+        }
+        _ => {}
+    }
+    None
+}
+
+/// `T`: take the selected agent out of its team, if it is in one.
+fn request_leave_team(app: &mut ZellijNoc) -> Option<Intent> {
+    let Some(agent) = app.selected_agent() else {
+        app.set_notice("no agent is selected");
+        return None;
+    };
+    let team = agent.team_name().to_string();
+    if team.is_empty() {
+        app.set_notice("not in a team");
+        return None;
+    }
+    Some(Intent::LeaveTeam {
+        agent_id: agent.id.clone(),
+        team,
+    })
+}
+
+/// `noc team set <team> <id>`.
+pub fn team_set_argv<'a>(noc_bin: &'a str, team: &'a str, agent_id: &'a str) -> Vec<&'a str> {
+    vec![noc_bin, "team", "set", team, agent_id]
+}
+
+/// `noc team clear <id>`.
+pub fn team_clear_argv<'a>(noc_bin: &'a str, agent_id: &'a str) -> Vec<&'a str> {
+    vec![noc_bin, "team", "clear", agent_id]
+}
+
+/// What the panel says when `noc team set` (`joined`) or `noc team clear`
+/// has run.
+pub fn team_result_notice(joined: bool, exit: Option<i32>, stderr: &str, team: &str) -> String {
+    if exit == Some(0) {
+        return format!("{} {team}", if joined { "joined" } else { "left" });
+    }
+    let what = if joined {
+        "could not join the team"
+    } else {
+        "could not leave the team"
+    };
+    let detail = compact_error(stderr);
+    if detail.is_empty() {
+        what.to_string()
+    } else {
+        format!("{what}: {detail}")
+    }
+}
+
 /// Keys while a search is being typed. Every change asks for new results;
 /// Enter keeps the search and returns to the list, Esc drops it.
 fn handle_search_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> Option<Intent> {
@@ -140,6 +251,9 @@ fn handle_search_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> Option<Inten
 pub fn process_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> (bool, Option<Intent>) {
     if app.pending_rename.is_some() {
         return (true, handle_rename_key(app, key));
+    }
+    if app.pending_team.is_some() {
+        return (true, handle_team_key(app, key));
     }
     if app.is_typing_search() {
         return (true, handle_search_key(app, key));
@@ -231,6 +345,12 @@ pub fn process_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> (bool, Option<
                 app.set_notice("no agent is selected");
             }
         }
+        BareKey::Char('t') => {
+            if !app.begin_team() {
+                app.set_notice("no agent is selected");
+            }
+        }
+        BareKey::Char('T') => intent = request_leave_team(app),
         _ => {}
     }
     (true, intent)
@@ -290,6 +410,21 @@ impl State {
                     ],
                     context,
                 );
+            }
+            Intent::JoinTeam { agent_id, team } => {
+                let mut context = ctx(CTX_TEAM_JOIN);
+                context.insert(KEY_AGENT.to_string(), agent_id.clone());
+                context.insert(KEY_TITLE.to_string(), team.clone());
+                run_command(
+                    &team_set_argv(&self.config.noc_bin, &team, &agent_id),
+                    context,
+                );
+            }
+            Intent::LeaveTeam { agent_id, team } => {
+                let mut context = ctx(CTX_TEAM_LEAVE);
+                context.insert(KEY_AGENT.to_string(), agent_id.clone());
+                context.insert(KEY_TITLE.to_string(), team);
+                run_command(&team_clear_argv(&self.config.noc_bin, &agent_id), context);
             }
         }
     }
@@ -379,6 +514,22 @@ impl State {
                 detail
             });
         }
+        true
+    }
+
+    /// The result of `noc team set` (`joined`) or `noc team clear`. Either
+    /// way the list is read again, so a change that did land is shown.
+    pub fn on_team_result(
+        &mut self,
+        joined: bool,
+        exit: Option<i32>,
+        stderr: &[u8],
+        context: &BTreeMap<String, String>,
+    ) -> bool {
+        let team = context.get(KEY_TITLE).cloned().unwrap_or_default();
+        self.app
+            .set_notice(team_result_notice(joined, exit, &lossy(stderr), &team));
+        self.refresh();
         true
     }
 
@@ -872,6 +1023,188 @@ mod tests {
         assert_eq!(app.notice.as_deref(), Some("no agent is selected"));
     }
 
+    const TEAM_AGENTS: &str = r#"{"schema_version":1,"generated_at":"2026-09-24T12:00:00Z","agents":[
+        {"id":"a","provider":"claude","name":"A","team":"auth","lead":true,"display_state":"working","bucket":"working","native_session_id":"s-a"},
+        {"id":"b","provider":"claude","name":"B","team":"billing","display_state":"ready","bucket":"review","native_session_id":"s-b"},
+        {"id":"c","provider":"claude","name":"C","display_state":"working","bucket":"working","native_session_id":"s-c"},
+        {"id":"q","provider":"claude","name":"Q","display_state":"idle","bucket":"quiet","last_activity_at":"2026-09-24T10:00:00Z"}]}"#;
+
+    fn team_app() -> ZellijNoc {
+        let mut app = ZellijNoc::new(Config::default());
+        app.apply_snapshot(parse_snapshot(TEAM_AGENTS).unwrap(), Transport::Poll);
+        app
+    }
+
+    fn team_text(app: &ZellijNoc) -> &str {
+        &app.pending_team.as_ref().unwrap().text
+    }
+
+    #[test]
+    fn the_team_prompt_captures_every_key_and_takes_only_name_characters() {
+        let mut app = team_app();
+        select(&mut app, "c");
+        let (redraw, intent) = process_key(&mut app, &key('t'));
+        assert!(redraw && intent.is_none());
+        assert_eq!(team_text(&app), "", "an agent in no team starts empty");
+        // A name cannot start with - or ., and holds no spaces or symbols.
+        for c in "-. /!".chars() {
+            process_key(&mut app, &key(c));
+        }
+        assert_eq!(team_text(&app), "");
+        for c in "we b-1._x".chars() {
+            process_key(&mut app, &key(c));
+        }
+        process_key(&mut app, &with(&[KeyModifier::Shift], BareKey::Char('Z')));
+        process_key(&mut app, &with(&[KeyModifier::Alt], BareKey::Char('q')));
+        assert_eq!(team_text(&app), "web-1._xZ");
+        // Keys that normally move, group or quit the prompt's neighbours.
+        let (redraw, _) = process_key(&mut app, &with(&[KeyModifier::Ctrl], BareKey::Char('d')));
+        assert!(redraw);
+        process_key(&mut app, &bare(BareKey::Left));
+        process_key(&mut app, &bare(BareKey::Backspace));
+        assert_eq!(team_text(&app), "web-1._x");
+        assert_eq!(app.selected_agent().unwrap().id, "c");
+        process_key(&mut app, &with(&[KeyModifier::Ctrl], BareKey::Char('u')));
+        assert_eq!(team_text(&app), "");
+        // At most 48 characters.
+        for _ in 0..60 {
+            process_key(&mut app, &key('a'));
+        }
+        assert_eq!(team_text(&app).len(), 48);
+        // Esc cancels with a notice, whatever its modifiers.
+        process_key(&mut app, &with(&[KeyModifier::Alt], BareKey::Esc));
+        assert!(app.pending_team.is_none());
+        assert_eq!(app.notice.as_deref(), Some("team cancelled"));
+        // An agent in a team starts with it.
+        select(&mut app, "b");
+        process_key(&mut app, &key('t'));
+        assert_eq!(team_text(&app), "billing");
+    }
+
+    #[test]
+    fn tab_in_the_team_prompt_completes_to_an_existing_team() {
+        let mut app = team_app();
+        select(&mut app, "c");
+        process_key(&mut app, &key('t'));
+        process_key(&mut app, &bare(BareKey::Tab));
+        assert_eq!(team_text(&app), "auth");
+        process_key(&mut app, &bare(BareKey::Tab));
+        assert_eq!(team_text(&app), "billing");
+        process_key(&mut app, &bare(BareKey::Tab));
+        assert_eq!(team_text(&app), "auth");
+        // Typing ends the walk: the next Tab completes the new text.
+        process_key(&mut app, &with(&[KeyModifier::Ctrl], BareKey::Char('u')));
+        process_key(&mut app, &key('b'));
+        process_key(&mut app, &bare(BareKey::Tab));
+        assert_eq!(team_text(&app), "billing");
+        process_key(&mut app, &bare(BareKey::Backspace));
+        process_key(&mut app, &bare(BareKey::Tab));
+        assert_eq!(team_text(&app), "billing");
+        // No team starts with it: Tab leaves the text alone.
+        process_key(&mut app, &key('x'));
+        process_key(&mut app, &bare(BareKey::Tab));
+        assert_eq!(team_text(&app), "billingx");
+    }
+
+    #[test]
+    fn enter_in_the_team_prompt_joins_a_valid_team_only() {
+        let mut app = team_app();
+        select(&mut app, "c");
+        // Empty: closed, nothing run.
+        process_key(&mut app, &key('t'));
+        let (_, intent) = process_key(&mut app, &bare(BareKey::Enter));
+        assert!(intent.is_none() && app.pending_team.is_none());
+        assert_eq!(app.notice.as_deref(), Some("team cancelled"));
+        // `none` is not a team: the prompt stays open.
+        process_key(&mut app, &key('t'));
+        for c in "none".chars() {
+            process_key(&mut app, &key(c));
+        }
+        let (_, intent) = process_key(&mut app, &bare(BareKey::Enter));
+        assert!(intent.is_none());
+        assert_eq!(app.notice.as_deref(), Some("not a team name"));
+        assert_eq!(team_text(&app), "none");
+        // A new name makes the team.
+        process_key(&mut app, &key('w'));
+        let (_, intent) = process_key(&mut app, &bare(BareKey::Enter));
+        assert_eq!(
+            intent,
+            Some(Intent::JoinTeam {
+                agent_id: "c".into(),
+                team: "nonew".into()
+            })
+        );
+        assert!(app.pending_team.is_none());
+        assert_eq!(
+            team_set_argv("/opt/noc", "nonew", "c"),
+            ["/opt/noc", "team", "set", "nonew", "c"]
+        );
+    }
+
+    #[test]
+    fn capital_t_leaves_the_team_and_both_keys_need_an_agent() {
+        let mut app = team_app();
+        select(&mut app, "a");
+        assert_eq!(
+            process_key(&mut app, &with(&[KeyModifier::Shift], BareKey::Char('T'))).1,
+            Some(Intent::LeaveTeam {
+                agent_id: "a".into(),
+                team: "auth".into()
+            })
+        );
+        assert_eq!(team_clear_argv("noc", "a"), ["noc", "team", "clear", "a"]);
+        select(&mut app, "c");
+        assert_eq!(process_key(&mut app, &key('T')).1, None);
+        assert_eq!(app.notice.as_deref(), Some("not in a team"));
+        // A section row, a team heading and a team's Quiet row are no agent.
+        app.select_last();
+        for c in ['t', 'T'] {
+            app.notice = None;
+            assert_eq!(process_key(&mut app, &key(c)).1, None);
+            assert_eq!(app.notice.as_deref(), Some("no agent is selected"), "{c}");
+            assert!(app.pending_team.is_none());
+        }
+        process_key(&mut app, &key('v'));
+        for row in [0, app.items.len() - 1] {
+            app.selected_index = row;
+            assert!(app.selected_agent().is_none());
+            for c in ['t', 'T'] {
+                app.notice = None;
+                assert_eq!(process_key(&mut app, &key(c)).1, None);
+                assert_eq!(app.notice.as_deref(), Some("no agent is selected"));
+            }
+        }
+        // Grouped by team, and in search results, the keys act on the agent.
+        select(&mut app, "b");
+        assert!(matches!(
+            process_key(&mut app, &key('T')).1,
+            Some(Intent::LeaveTeam { .. })
+        ));
+        process_key(&mut app, &key('t'));
+        assert_eq!(team_text(&app), "billing");
+        let mut empty = ZellijNoc::new(Config::default());
+        process_key(&mut empty, &key('t'));
+        assert_eq!(empty.notice.as_deref(), Some("no agent is selected"));
+    }
+
+    #[test]
+    fn team_results_are_said_in_plain_words() {
+        assert_eq!(team_result_notice(true, Some(0), "", "auth"), "joined auth");
+        assert_eq!(team_result_notice(false, Some(0), "", "auth"), "left auth");
+        assert_eq!(
+            team_result_notice(true, Some(1), "noc: agent was\n  not found\n", "auth"),
+            "could not join the team: noc: agent was not found"
+        );
+        assert_eq!(
+            team_result_notice(false, None, "  ", "auth"),
+            "could not leave the team"
+        );
+        assert_eq!(
+            team_result_notice(true, Some(2), "", "auth"),
+            "could not join the team"
+        );
+    }
+
     #[test]
     fn v_switches_the_grouping_and_enter_folds_a_team() {
         let mut app = ZellijNoc::new(Config::default());
@@ -968,7 +1301,6 @@ mod tests {
         );
         // Unbound keys only redraw.
         for unbound in [
-            key('t'),
             key('q'),
             bare(BareKey::Right),
             bare(BareKey::Tab),

@@ -123,6 +123,34 @@ pub struct PendingRename {
     pub text: String,
 }
 
+/// The prompt that puts an agent in a team.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingTeam {
+    pub agent_id: String,
+    pub text: String,
+    /// What was typed before `Tab` completed it; repeated `Tab`s walk the
+    /// teams that start with it.
+    pub typed: Option<String>,
+}
+
+/// The longest team name `noc` accepts.
+pub const TEAM_NAME_MAX: usize = 48;
+
+/// Whether `c` may stand at position `at` of a team name: letters, digits,
+/// `.`, `_` and `-`, the first neither `-` nor `.`.
+pub fn is_team_char(c: char, at: usize) -> bool {
+    (c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        && !(at == 0 && matches!(c, '-' | '.'))
+}
+
+/// Whether `noc` takes `name` as a team name. `none` means "no team" there.
+pub fn is_team_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "none"
+        && name.chars().count() <= TEAM_NAME_MAX
+        && name.chars().enumerate().all(|(at, c)| is_team_char(c, at))
+}
+
 /// A search: the query, and whether it is still being typed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Search {
@@ -367,6 +395,7 @@ pub struct ZellijNoc {
     pub update: Option<String>,
     pub pending_stop: Option<PendingStop>,
     pub pending_rename: Option<PendingRename>,
+    pub pending_team: Option<PendingTeam>,
     pub search: Option<Search>,
     /// The list holds search results: every match is a row, Quiet agents
     /// are not folded into sections, and none is too old to show.
@@ -414,6 +443,7 @@ impl ZellijNoc {
             update: None,
             pending_stop: None,
             pending_rename: None,
+            pending_team: None,
             search: None,
             flat: false,
             show_details: true,
@@ -897,6 +927,62 @@ impl ZellijNoc {
         true
     }
 
+    /// Open the team prompt for the selected agent, holding its team.
+    pub fn begin_team(&mut self) -> bool {
+        let Some(agent) = self.selected_agent() else {
+            return false;
+        };
+        self.pending_team = Some(PendingTeam {
+            agent_id: agent.id.clone(),
+            text: agent.team_name().to_string(),
+            typed: None,
+        });
+        true
+    }
+
+    /// The names of the teams that have an agent, in name order.
+    pub fn team_names(&self) -> Vec<&str> {
+        let names: BTreeSet<&str> = self
+            .agents
+            .iter()
+            .map(Agent::team_name)
+            .filter(|name| !name.is_empty())
+            .collect();
+        names.into_iter().collect()
+    }
+
+    /// `Tab` in the team prompt: fill in the first team that starts with
+    /// what was typed; again, the next one, and round to the first.
+    pub fn complete_team(&mut self) {
+        let Some(pending) = self.pending_team.as_ref() else {
+            return;
+        };
+        let typed = pending
+            .typed
+            .clone()
+            .unwrap_or_else(|| pending.text.clone());
+        let matches: Vec<&str> = self
+            .team_names()
+            .into_iter()
+            .filter(|name| name.starts_with(typed.as_str()))
+            .collect();
+        if matches.is_empty() {
+            return;
+        }
+        let next = match (
+            &pending.typed,
+            matches.iter().position(|m| *m == pending.text),
+        ) {
+            (Some(_), Some(at)) => (at + 1) % matches.len(),
+            _ => 0,
+        };
+        let text = matches[next].to_string();
+        if let Some(pending) = self.pending_team.as_mut() {
+            pending.text = text;
+            pending.typed = Some(typed);
+        }
+    }
+
     pub fn set_notice(&mut self, text: impl Into<String>) {
         self.notice = Some(text.into());
         self.notice_age = 0;
@@ -1186,6 +1272,87 @@ mod tests {
             .items
             .iter()
             .all(|item| matches!(item, ListItem::Agent(_))));
+    }
+
+    #[test]
+    fn team_names_follow_the_rules_noc_applies() {
+        for good in ["auth", "a", "Auth_2.x-y", "9lives", &"a".repeat(48)] {
+            assert!(is_team_name(good), "{good}");
+        }
+        for bad in [
+            "",
+            "none",
+            "-auth",
+            ".auth",
+            "two words",
+            "caf\u{e9}",
+            &"a".repeat(49),
+        ] {
+            assert!(!is_team_name(bad), "{bad:?}");
+        }
+        assert!(is_team_name("None") && is_team_name("nonesuch"));
+        assert!(is_team_char('-', 1) && !is_team_char('-', 0));
+        assert!(is_team_char('.', 3) && !is_team_char('.', 0));
+        assert!(!is_team_char(' ', 1) && !is_team_char('/', 1));
+    }
+
+    #[test]
+    fn tab_completes_and_then_cycles_through_the_teams() {
+        let mut app = panel();
+        app.apply_snapshot(list(TEAMS), Transport::Poll);
+        assert_eq!(app.team_names(), ["auth", "billing"]);
+        // Starting from the agent's own team, or from nothing.
+        assert!(app.select_agent("w1"));
+        assert!(app.begin_team());
+        assert_eq!(app.pending_team.as_ref().unwrap().text, "billing");
+        assert!(app.select_agent("solo"));
+        assert!(app.begin_team());
+        let text = |app: &ZellijNoc| app.pending_team.as_ref().unwrap().text.clone();
+        assert_eq!(text(&app), "");
+        // Nothing typed: every team, in name order, and round again.
+        app.complete_team();
+        assert_eq!(text(&app), "auth");
+        app.complete_team();
+        assert_eq!(text(&app), "billing");
+        app.complete_team();
+        assert_eq!(text(&app), "auth");
+        // A prefix: only the teams that start with it.
+        let pending = app.pending_team.as_mut().unwrap();
+        pending.text = "b".into();
+        pending.typed = None;
+        app.complete_team();
+        assert_eq!(text(&app), "billing");
+        app.complete_team();
+        assert_eq!(text(&app), "billing", "the only match");
+        // No team starts with it: the text stays.
+        let pending = app.pending_team.as_mut().unwrap();
+        pending.text = "zz".into();
+        pending.typed = None;
+        app.complete_team();
+        assert_eq!(text(&app), "zz");
+        // No prompt, nothing to complete; no agent, no prompt.
+        app.pending_team = None;
+        app.complete_team();
+        app.toggle_group_by();
+        app.selected_index = 0;
+        assert!(!app.begin_team(), "a heading is not an agent");
+    }
+
+    #[test]
+    fn a_joined_agent_stays_selected_when_the_list_regroups() {
+        let mut app = team_panel();
+        assert!(app.select_agent("solo"));
+        let joined = TEAMS.replace(
+            r#"{"id":"solo","name":"Solo","#,
+            r#"{"id":"solo","name":"Solo","team":"auth","#,
+        );
+        app.apply_snapshot(list(&joined), Transport::Poll);
+        assert_eq!(app.selected_agent().unwrap().id, "solo");
+        assert_eq!(row_ids(&app)[0], "<auth 3 open 0/1/1>");
+        let left = TEAMS.replace(r#""team":"billing","lead":true,"#, "");
+        assert!(app.select_agent("lead"));
+        app.apply_snapshot(list(&left), Transport::Poll);
+        assert_eq!(app.selected_agent().unwrap().id, "lead");
     }
 
     #[test]

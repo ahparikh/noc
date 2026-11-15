@@ -111,6 +111,8 @@ In the sidebar (after `Alt m`):
 | `w` | Open a shell in the agent's worktree |
 | `d` / `D` | Toggle details / open the details window |
 | `n` | Rename the agent |
+| `t` | Put the agent in a team: type a name (`Tab` completes to an existing team), `Enter` joins it, making the team if it is new |
+| `T` | Take the agent out of its team |
 | `x` | Stop the agent (asks `y`/`n`) |
 | `r` | Refresh |
 | `/` | Search (below) |

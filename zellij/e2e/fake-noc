@@ -38,6 +38,19 @@ show)
 	fi
 	printf '%s\n' "$line"
 	;;
+watch)
+	# One line now, then one whenever the snapshot changes, for as long as
+	# whoever started it is there.
+	last=
+	while kill -0 "$PPID" 2>/dev/null; do
+		now=$(source_file | cksum)
+		if [ "$now" != "$last" ]; then
+			last=$now
+			echo '{}'
+		fi
+		sleep 0.1
+	done
+	;;
 rename)
 	mkdir -p "$out"
 	echo "$*" >>"$out/renames.log"

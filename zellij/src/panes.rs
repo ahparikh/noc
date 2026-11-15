@@ -1,7 +1,7 @@
 //! Pane records and the pure pane, command, title and pipe helpers.
 
 use crate::model::{parse_snapshot, parse_terminal_pane_id, Agent, AgentGroup, AgentList};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use zellij_tile::prelude::{PaneInfo, PaneManifest};
 
@@ -10,9 +10,9 @@ pub const TAB_NAME_LIMIT: usize = 32;
 
 // ---- pane records ----
 
-/// One pane, from `zellij action list-panes --all --json` or built from a
-/// `PaneUpdate` manifest, so both feed the same pure helpers.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+/// One pane, built from a `PaneUpdate` manifest: the host session's own, or
+/// the inner session's as its relay sends them.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ScanPane {
     pub id: u32,
@@ -26,10 +26,13 @@ pub struct ScanPane {
     pub title: String,
     pub plugin_url: Option<String>,
     pub terminal_command: Option<String>,
+    /// Only for the inner session's panes: what runs in the pane right now,
+    /// which for a shell is the command typed into it.
+    pub pane_command: Option<String>,
     pub pane_columns: usize,
     pub pane_rows: usize,
     pub tab_position: usize,
-    /// Only in `list-panes` output: the tab's stable id and its name.
+    /// Only for the inner session's panes: the tab's stable id and its name.
     pub tab_id: Option<u32>,
     pub tab_name: String,
 }
@@ -48,6 +51,7 @@ impl Default for ScanPane {
             title: String::new(),
             plugin_url: None,
             terminal_command: None,
+            pane_command: None,
             pane_columns: 0,
             pane_rows: 0,
             tab_position: 0,
@@ -71,6 +75,7 @@ impl ScanPane {
             title: info.title.clone(),
             plugin_url: info.plugin_url.clone(),
             terminal_command: info.terminal_command.clone(),
+            pane_command: None,
             pane_columns: info.pane_columns,
             pane_rows: info.pane_rows,
             tab_position,
@@ -200,6 +205,48 @@ pub fn attached_agent_id(command: &str, noc_bin: &str) -> Option<String> {
     (basename(tokens[0]) == basename(noc_bin)).then(|| tokens[tokens.len() - 1].to_string())
 }
 
+/// The agent a command line names: `<noc_bin> attach <id>`, or else the one
+/// agent whose native session id (whole or short) is one of the command's
+/// words, as in `claude attach 2f5ac2d2` or `codex resume <id>`. A word is
+/// also what follows `=` (`--resume=<id>`).
+pub fn agent_named_by_command<'a>(
+    agents: &'a [Agent],
+    command: &str,
+    noc_bin: &str,
+) -> Option<&'a Agent> {
+    if let Some(agent) =
+        attached_agent_id(command, noc_bin).and_then(|id| agents.iter().find(|a| a.id == id))
+    {
+        return Some(agent);
+    }
+    let words: Vec<&str> = command
+        .split_whitespace()
+        .map(|t| t.trim_matches(|c| c == '\'' || c == '"'))
+        .map(|t| t.rsplit('=').next().unwrap_or(t))
+        .filter(|t| !t.is_empty())
+        .collect();
+    let mut matches = agents.iter().filter(|a| {
+        [a.native_session_id.trim(), a.native_short_id.trim()]
+            .iter()
+            .any(|id| !id.is_empty() && words.contains(id))
+    });
+    let first = matches.next()?;
+    matches.next().is_none().then_some(first)
+}
+
+/// The agent named by the command a pane was started with or, failing
+/// that, by the command running in it now.
+pub fn agent_named_by_pane_command<'a>(
+    agents: &'a [Agent],
+    pane: &ScanPane,
+    noc_bin: &str,
+) -> Option<&'a Agent> {
+    [&pane.terminal_command, &pane.pane_command]
+        .into_iter()
+        .flatten()
+        .find_map(|command| agent_named_by_command(agents, command, noc_bin))
+}
+
 /// `NOC: ` and a leading `✳ ` (or any non-alphanumerics) are not the name.
 fn pane_title_name(title: &str) -> &str {
     let title = title.strip_prefix("NOC: ").unwrap_or(title);
@@ -238,12 +285,7 @@ pub fn agent_in_pane<'a>(
     {
         return Some(agent);
     }
-    if let Some(agent) = pane
-        .terminal_command
-        .as_deref()
-        .and_then(|c| attached_agent_id(c, noc_bin))
-        .and_then(|id| agents.iter().find(|a| a.id == id))
-    {
+    if let Some(agent) = agent_named_by_pane_command(agents, pane, noc_bin) {
         return Some(agent);
     }
     if let Some(agent) = agent_named_by_pane_title(agents, &pane.title) {
@@ -651,6 +693,52 @@ mod tests {
         assert_eq!(
             id_of(&command_pane(20, 0, "noc attach cmd"), None).as_deref(),
             Some("cmd")
+        );
+        // A shell pane running a provider command that names the agent's
+        // native session, whole or short.
+        let ids = vec![
+            agent(
+                r#"{"id":"n1","native_session_id":"2f5ac2d2-f543-4b7e","native_short_id":"2f5ac2d2"}"#,
+            ),
+            agent(
+                r#"{"id":"n2","native_session_id":"128fa5db-09e1-40e5","native_short_id":"128fa5db"}"#,
+            ),
+            agent(r#"{"id":"n3"}"#),
+        ];
+        let running = |command: &str| {
+            let pane = ScanPane {
+                pane_command: Some(command.to_string()),
+                ..terminal(40, 0, 1, 1)
+            };
+            agent_in_pane(&ids, &pane, &BTreeMap::new(), "/opt/bin/noc", None).map(|a| a.id.clone())
+        };
+        assert_eq!(running("claude attach 2f5ac2d2").as_deref(), Some("n1"));
+        assert_eq!(
+            running("claude --resume=128fa5db-09e1-40e5").as_deref(),
+            Some("n2")
+        );
+        assert_eq!(
+            running("codex resume '128fa5db-09e1-40e5'").as_deref(),
+            Some("n2")
+        );
+        assert_eq!(running("noc attach n3").as_deref(), Some("n3"));
+        for other in [
+            "claude",
+            "vim 2f5ac2d2.txt",
+            "claude attach 2f5ac2",
+            "",
+            "diff 2f5ac2d2 128fa5db",
+        ] {
+            assert_eq!(running(other), None, "{other:?}");
+        }
+        // The command the pane was started with comes first.
+        let both = ScanPane {
+            pane_command: Some("claude attach 2f5ac2d2".to_string()),
+            ..command_pane(41, 0, "noc attach n3")
+        };
+        assert_eq!(
+            agent_in_pane(&ids, &both, &BTreeMap::new(), "noc", None).map(|a| a.id.as_str()),
+            Some("n3")
         );
         // Two bindings on pane 30: the newest observation wins; its empty session matches.
         assert_eq!(

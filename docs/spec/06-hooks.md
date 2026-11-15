@@ -571,7 +571,7 @@ Malformed payload (`not json`, or `{"session_id":"s","hook_event_name":"Bogus","
 - **Verified by:** `go/internal/hookconfig/hookconfig_test.go` (uninstall removes `len(RequiredEvents(claude))` = 9 handlers)
 
 #### HC-003 Managed command string
-- **Behavior:** The installed command MUST be `shellQuote(canonicalExecutable) + " hook ingest --provider " + provider`, where `shellQuote` wraps in single quotes and replaces each `'` with `'"'"'`, and `canonicalExecutable` = `filepath.Clean(TrimSpace(path))` with symlinks resolved when possible (empty/`.` → empty → `noc executable path is required`).
+- **Behavior:** The installed command MUST be `shellQuote(canonicalExecutable) + " hook ingest --provider " + provider`, where `shellQuote` wraps in single quotes and replaces each `'` with `'"'"'`, and `canonicalExecutable` = `filepath.Clean(TrimSpace(path))` (empty/`.` → empty → `noc executable path is required`). Symlinks MUST NOT be resolved: the command names the path it was given, so a package manager's stable name (Homebrew's `bin/noc`) keeps working when an upgrade replaces the versioned file behind it. Whether a handler belongs to an executable (HC-015, HC-017) is still decided with symlinks resolved on both sides.
 - **Source:** `go/internal/hookconfig/hookconfig.go`
 - **Decision:** D-030
 - **Verified by:** `go/internal/hookconfig/hookconfig_test.go` (indirect)
@@ -704,10 +704,10 @@ the following applies.
 - **Verified by:** `go/internal/cli/run_test.go` TestSetupRejectsConflictingActions; other branches UNTESTED
 
 #### HC-019 Executable resolution
-- **Behavior:** The registered executable MUST be `--executable` or `os.Executable()`, made absolute, symlink-resolved when possible, and MUST be a regular file with at least one execute bit; otherwise `resolve noc executable: …`, `inspect noc executable "<p>": …`, or `noc executable "<p>" is not an executable regular file`.
+- **Behavior:** The registered executable MUST be `--executable` or, without it, the name the process was started by: `os.Args[0]`, looked up on `PATH` when it has no directory separator, made absolute, when that name resolves (symlinks followed) to the same file as `os.Executable()`; otherwise `os.Executable()`. Either is made absolute and its symlinks are kept. It MUST lead to a regular file with at least one execute bit; otherwise `resolve noc executable: …`, `inspect noc executable "<p>": …`, or `noc executable "<p>" is not an executable regular file`.
 - **Source:** `go/internal/setup/setup.go`
 - **Decision:** D-029, D-030
-- **Verified by:** `go/internal/setup/setup_test.go` (valid executable); failure paths UNTESTED
+- **Verified by:** `go/internal/setup/setup_test.go` `TestResolveExecutable`, `TestHooksSurviveAnUpgradeBehindASymlink`
 
 #### HC-020 Orchestration
 - **Behavior:** `setup.Run` MUST default action to `install`, reject other actions (`unsupported setup action`) and providers (`unsupported setup provider`), default providers to `[claude, codex]` (no detection of installed providers), and for each provider in order: run Install or Uninstall (check does nothing), record `path/changed/removed` and any error string, then always run `Inspect` and set `complete`. For `uninstall`, if the inspection shows `managed_in_codex_config`, `error` MUST be set (overwriting any prior error) to `<config.toml> still contains a noc hook and was not modified`.

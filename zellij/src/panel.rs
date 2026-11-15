@@ -366,6 +366,34 @@ pub fn snapshot_argv<'a>(noc_bin: &'a str, query: &'a str) -> Vec<&'a str> {
     }
 }
 
+pub const CTX_REGISTRY_WATCH: &str = "registry-watch";
+/// How long after the registry watcher ended before it is started again.
+pub const REGISTRY_WATCH_RETRY_SECS: f64 = 5.0;
+
+/// Runs until the registry or the host session goes away. `$1` is noc,
+/// `$2` the host session, `$3` a tag naming it. It first ends any watcher an
+/// earlier load of the plugin left for the same session, then says
+/// "changed" to the panel for every line `noc watch` prints. The lines
+/// themselves are not read: the panel reads the registry with `noc ls`.
+/// `zellij pipe` must not inherit the loop's input: it would read it, and
+/// wait on it.
+const REGISTRY_WATCH_SCRIPT: &str = "for pid in $(pgrep -f -- \"$3\\$\"); do [ \"$pid\" != \"$$\" ] && kill \"$pid\"; done 2>/dev/null\n\"$1\" watch --json --all | while IFS= read -r _; do zellij --session \"$2\" pipe --name zellij-noc.changed -- 1 </dev/null >/dev/null 2>&1 || exit 1; done";
+
+pub fn registry_watch_command(noc_bin: &str, host: &str) -> Vec<String> {
+    [
+        "/bin/sh",
+        "-c",
+        REGISTRY_WATCH_SCRIPT,
+        "sh",
+        noc_bin,
+        host,
+        &format!("zellij-noc-registry-watch={host}"),
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
 // ---- host side ----
 
 fn lossy(bytes: &[u8]) -> String {
@@ -447,8 +475,48 @@ impl State {
         run_command(&snapshot_argv(&self.config.noc_bin, &query), context);
     }
 
+    /// Keep one `noc watch` running that tells the panel when the registry
+    /// changed. The timed poll goes on underneath it.
+    pub fn watch_registry(&mut self) {
+        if self.role != Role::Panel
+            || self.config.transport == Transport::Pipe
+            || !self.permissions_granted
+            || self.registry_watching
+            || now_secs() < self.registry_watch_retry
+        {
+            return;
+        }
+        let Some(host) = self.session_name.clone() else {
+            return;
+        };
+        self.registry_watching = true;
+        let command = registry_watch_command(&self.config.noc_bin, &host);
+        let argv: Vec<&str> = command.iter().map(String::as_str).collect();
+        run_command(&argv, ctx(CTX_REGISTRY_WATCH));
+    }
+
+    /// The watcher ended: the registry is not running, or was restarted.
+    pub fn on_registry_watch_ended(&mut self) -> bool {
+        self.registry_watching = false;
+        self.registry_watch_retry = now_secs() + REGISTRY_WATCH_RETRY_SECS;
+        false
+    }
+
+    /// The registry changed: read it now, or as soon as the read in flight
+    /// is back.
+    pub fn on_registry_changed(&mut self) {
+        if self.command_in_flight {
+            self.registry_changed = true;
+        } else {
+            self.refresh();
+        }
+    }
+
     pub fn on_snapshot_result(&mut self, exit: Option<i32>, stdout: &[u8], stderr: &[u8]) -> bool {
         self.command_in_flight = false;
+        if std::mem::take(&mut self.registry_changed) {
+            self.refresh();
+        }
         if exit == Some(0) {
             match std::str::from_utf8(stdout) {
                 Err(e) => self
@@ -890,6 +958,29 @@ mod tests {
             snapshot_argv("/bin/noc", "--json older:2w"),
             ["/bin/noc", "search", "--json", "--", "--json older:2w"]
         );
+    }
+
+    #[test]
+    fn the_registry_watcher_takes_its_names_as_arguments() {
+        let command = registry_watch_command("/opt/my noc", "outer");
+        assert_eq!(command[..2], ["/bin/sh", "-c"]);
+        assert_eq!(
+            command[3..],
+            [
+                "sh",
+                "/opt/my noc",
+                "outer",
+                "zellij-noc-registry-watch=outer"
+            ]
+        );
+        let script = &command[2];
+        assert!(script.contains("\"$1\" watch --json --all"));
+        assert!(script.contains("pipe --name zellij-noc.changed -- 1 </dev/null"));
+        assert!(
+            !script.contains("outer") && !script.contains("my noc"),
+            "arguments never enter the script"
+        );
+        assert_eq!(crate::PIPE_CHANGED, "zellij-noc.changed");
     }
 
     #[test]

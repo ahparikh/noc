@@ -319,10 +319,12 @@ Codex.
 `noc setup [claude|codex]` writes hook handlers, `--check` reports coverage
 without changing anything, and `--uninstall` removes them. The rules:
 
-- The handler command is the absolute, symlink-resolved path of the `noc`
-  executable running setup (or `--executable`), followed by
-  `hook ingest --provider <provider>`. Run setup again after moving the
-  binary; `noc doctor` flags handlers that point at a different executable.
+- The handler command is the absolute path `noc` was started by when
+  setup ran (or `--executable`), followed by
+  `hook ingest --provider <provider>`. Symlinks are kept, so with Homebrew
+  it is `<prefix>/bin/noc`, which `brew upgrade` keeps pointing at the
+  current version. Run setup again after moving the binary; `noc doctor`
+  flags handlers that point at a different executable.
 - Edits are structural JSON edits. Unrelated settings, matchers, and handlers
   are preserved.
 - Only handlers whose command is a `noc` executable invoking exactly

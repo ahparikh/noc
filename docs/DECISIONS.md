@@ -450,6 +450,9 @@ those and uninstalling removes only those. Writes are atomic, and a
 configuration file that is a symlink is updated at its target. A malformed
 file is an error and is left untouched. An existing `noc` hook in Codex's
 `config.toml` is a conflict: setup refuses to add a second representation.
+The path is the one `noc` was started by, symlinks kept: a package manager
+replaces the versioned file on every upgrade and keeps only its stable name
+pointing at it.
 
 **Why:** recognizing handlers by their exact shape makes install, upgrade,
 and uninstall reversible without a custom marker format.
@@ -512,8 +515,9 @@ only deployment. The host session sees every key first, binds three
 (`Alt m` keyboard to the sidebar and back, `Alt o` hide or show the sidebar,
 `Alt d` detach) and passes everything else to the inner session unchanged.
 The sidebar is selectable only while it has the keyboard, so the inner
-session's pane navigation never lands on it. The plugin opens, focuses and
-follows agents in the inner session over the Zellij CLI.
+session's pane navigation never lands on it. The plugin opens and focuses
+agents in the inner session over the Zellij CLI, and follows them through
+its relay there (D-078).
 
 **Why:** a sidebar that belongs to the whole session, rather than to each
 tab, needs no per-tab layout repair and leaves the user's session exactly as
@@ -674,7 +678,11 @@ terminal, set `colors "zellij"`.
 The panel renames an inner tab to its agent's current name when the tab
 holds exactly one agent and its name is either the one the panel last gave
 or saw there, or one Zellij made up (`Tab #3`). A tab the user named is
-never renamed.
+never renamed. The panel's memory of a name belongs to the tab, not to the
+agent, so a tab it named goes on to the next agent that runs alone in it.
+An agent is found in a pane by, among other things, the command running
+there: `noc attach <id>`, or any command carrying the agent's native
+session id, such as a `claude attach <id>` typed into a shell.
 
 **Why:** an agent's name changes (a rename in noc, or the provider's own
 title for the conversation), and a tab bar that still shows the old name
@@ -750,6 +758,48 @@ user starts `zellij web`, which binds to 127.0.0.1 and requires a login
 token; noc never starts it. Anyone holding a token for that server can
 attach to the host and type in it. `web_sharing "off"` in the layout opts
 out.
+
+### D-078: the inner session reports itself
+
+The sidebar learns the inner session's panes, tabs and focus from the relay,
+the plugin instance that runs inside it. Zellij tells the relay when any of
+them changes, and the relay sends the sidebar a snapshot with `zellij
+--session <host> pipe`. The sidebar asks the relay to watch every two
+seconds, which starts it when it is not running and is answered with a
+snapshot. The sidebar no longer runs `list-clients` and `list-panes`.
+
+**Why:** reading the inner session on a timer made the sidebar follow a tab
+switch up to a second late, and cost three processes per read whether or
+not anything had changed. Zellij's own events arrive at once and cost
+nothing while nothing happens. The relay also asks Zellij what runs in each
+pane, which is how an agent attached by hand is recognised (D-064).
+**Consequence:** following takes under a tenth of a second. The layout
+files do not change: the sidebar starts the relay with the settings the
+theme bindings use, so there is one relay. Actions on the inner session
+stay CLI calls, since a message to the relay would cost the same one
+process. Zellij also announces a change of the command running in a pane,
+so an agent attached by hand is recognised as fast as a tab switch. The
+two-second request is a heartbeat, not the way the sidebar learns things.
+
+### D-079: events first, with a poll underneath; and only noc's data
+
+Whatever the sidebar shows, it learns from an event where one exists and
+from a timed read as well. For the registry: one `noc watch` runs beside
+the sidebar and tells it that something changed, and the sidebar then
+reads `noc ls` as it does on every timed poll. For the inner session: the
+relay (D-078), with its two-second heartbeat. The watcher's own output is
+not read.
+
+**Why:** an event is faster and costs nothing while nothing happens, but
+it can be lost: a watcher dies, a message is dropped, a session restarts.
+A poll underneath makes a lost event cost a second, not a wrong list. And
+reading the list the same way in both cases means there is one source of
+what the sidebar shows, the registry as `noc ls` prints it. Zellij is asked
+only where an agent of that list is, never which agents there are.
+**Consequence:** a change in the registry reaches the sidebar in about a
+tenth of a second. `poll_interval_ms` now sets how long a lost event can
+last, so it can be raised without the list feeling slow. One more process
+(`noc watch`) runs for as long as the pair does.
 
 ## Names, state, and grouping
 

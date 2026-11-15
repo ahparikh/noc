@@ -158,7 +158,9 @@ search shows a flat list in either grouping.
 
 A tab that holds one agent is named after it and renamed when the agent's
 name changes. That applies to tabs the sidebar opened and to tabs still
-called `Tab #N`; a tab you named yourself keeps your name.
+called `Tab #N`; a tab you named yourself keeps your name. An agent you
+attach by hand in a shell (`claude attach <id>`) counts like one the
+sidebar opened.
 
 ## Configuration reference
 
@@ -183,7 +185,7 @@ pair and start it again.
 | `noc_bin` | `noc` | The noc executable. A bare name is looked up on the `PATH` Zellij was started with. Use an absolute path if the sidebar reports that it cannot run noc. |
 | `guest_session` | `noc` | The inner session's name. Must match `inner=` in the layout. |
 | `icons` | `unicode` | `nerd` to use Nerd Font provider icons. |
-| `poll_interval_ms` | `1000` | How often the sidebar reads `noc ls`. Clamped to 250..60000. |
+| `poll_interval_ms` | `1000` | How often the sidebar reads `noc ls` on a timer. It also reads it whenever the registry reports a change, so this is the backup. Clamped to 250..60000. |
 | `home_theme`, `away_theme` | unset | Optional pair, see below. |
 | `pane_titles` | `show` | What the frames of the inner session's panes say. `name` (the shipped setting) names each pane for its machine and what runs in it: `ohm-2 · claude` for an agent, `ohm-2 · vim` for a pane started with a command, `ohm-2 · zsh` for a shell. `hide` blanks the title, which leaves a small gap in the border. `show` leaves the titles programs set. With `name` or `hide`, a title a program sets later is not shown. |
 | `group_by` | `status` | How the list is grouped when the sidebar starts: `status` (Blocked, Working, Review, Quiet) or `team` (one group per team). `v` switches while it runs. |
@@ -348,18 +350,24 @@ bind "Alt t" { FocusPreviousPane; Write 27 116; }   // ESC t
 ## How it works
 
 - **One plugin, three roles.** The same file runs as the sidebar, as the
-  floating details window, and as a hidden relay in the inner session that
-  only switches themes.
-- **The inner session is driven over the Zellij CLI.** A plugin can only
-  act on its own session, so the sidebar reads the inner session with
-  `zellij --session noc action list-clients` / `list-panes`, and opens and
+  floating details window, and as a hidden relay in the inner session.
+- **The relay tells the sidebar what the inner session is doing.** A plugin
+  can only see and act on its own session. The relay sees every change of
+  pane, tab and focus in the inner session as it happens and sends it to the
+  sidebar, which starts the relay itself. It also switches the themes.
+- **The inner session is driven over the Zellij CLI.** The sidebar opens and
   focuses agents there with `zellij --session noc action …` and `zellij run`.
 - **The guest pane is a small shell loop**, written out in the layout. It
   creates the inner session on first start, re-attaches when the client
   detaches, and ends the host session when the inner session ends.
 - **The registry is read through the CLI only**: `noc ls --json --all`,
   `noc search --json` and `noc show --json`. Opening an agent runs `noc attach <id>`; rename and stop
-  run `noc rename` and `noc stop`.
+  run `noc rename` and `noc stop`. The sidebar shows only what those
+  commands print: nothing in it comes from anywhere but noc.
+- **The registry says when it changed.** The sidebar keeps one `noc watch`
+  running and reads the registry the moment it reports a change. It also
+  reads it every `poll_interval_ms`, so a watcher that stops costs speed,
+  not correctness.
 - **Permissions.** The plugin asks for six: read and change application
   state, open panes, reconfigure (the relay's theme switch), run commands,
   and message other plugins.

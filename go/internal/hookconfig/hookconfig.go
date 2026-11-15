@@ -100,7 +100,9 @@ func (i Inspection) Complete() bool {
 
 // Install registers the managed hooks for a provider.
 func Install(p apiv1.Provider, executable string, paths Paths) (Change, error) {
-	exe := canonicalPath(executable)
+	// Written as given: a symlink the caller chose outlives the file it
+	// points at today.
+	exe := cleanPath(executable)
 	if exe == "" {
 		return Change{}, errors.New("noc executable path is required")
 	}
@@ -607,13 +609,24 @@ func atomicWrite(path string, data []byte, mode os.FileMode) (err error) {
 	return nil
 }
 
-func canonicalPath(path string) string {
+// cleanPath trims and cleans a path; empty and "." are no path.
+func cleanPath(path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return ""
 	}
 	path = filepath.Clean(path)
 	if path == "." {
+		return ""
+	}
+	return path
+}
+
+// canonicalPath is cleanPath with symlinks resolved when possible, for
+// telling whether two paths are the same executable.
+func canonicalPath(path string) string {
+	path = cleanPath(path)
+	if path == "" {
 		return ""
 	}
 	if resolved, err := filepath.EvalSymlinks(path); err == nil {

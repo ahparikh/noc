@@ -124,7 +124,8 @@ fi
 sleep 2
 dismiss_welcome
 
-if screen | grep -q 'asks permission to'; then
+# The prompt wraps in the narrow sidebar, so look for its last line.
+if screen | grep -q -F 'Allow? (y/n)'; then
 	echo "nested.sh: the plugin is waiting for its permissions." >&2
 	echo "Run 'make dev' once, answer the prompt in the sidebar with y, then run this again." >&2
 	exit 1
@@ -138,6 +139,8 @@ check "host session has the sidebar and one guest pane" \
 	[ "$SIDEBAR" != "Pnull" -a "$GUEST" != "Tnull" ]
 check "sidebar lists the registry's agents" \
 	wait_for 10 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q '2 agents'"
+check "the sidebar runs a registry watcher" \
+	wait_for 10 pgrep -f -- "zellij-noc-registry-watch=$HOST\$"
 check "guest pane keeps exactly one client on the inner session" \
 	[ "$(clients "$INNER")" = 1 ]
 check "the keyboard starts in the inner session" host_focus_is "$GUEST"
@@ -192,6 +195,17 @@ mv "$RENAMED.tmp" "$RENAMED"
 check "the tab is renamed when the agent's name changes" wait_for 10 inner_has_tab 'Renamed agent'
 rm -f "$RENAMED"
 wait_for 10 inner_has_tab 'E2E agent' || true
+
+# An agent attached by hand: a plain shell tab whose command names the
+# agent's native session. `cat -` just waits on the terminal.
+z --session "$INNER" action new-tab >/dev/null
+sleep 1
+z --session "$INNER" action write-chars 'cat - 5e55a2b0'
+z --session "$INNER" action write 13
+check "a tab whose shell runs a command naming an agent is named after it" \
+	wait_for 15 inner_has_tab 'Second agent'
+z --session "$INNER" action close-tab
+sleep 1.5 # let the sidebar follow the inner focus back
 
 # ---- 4. details window ----
 keys M-m

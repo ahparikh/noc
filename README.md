@@ -179,7 +179,9 @@ keeps the settings you changed in `noc-host.kdl`. If you edited
 `noc-inner.kdl`, yours is kept and only its plugin location is updated.
 Whatever it replaces is kept as `<name>.bak`. Zellij asks for the plugin's
 permissions again, because its location changed. `brew upgrade noc`
-upgrades the binary.
+upgrades the binary. If you set noc up with v0.1.4 or earlier, run
+`noc setup` once after upgrading: those versions wrote hooks that name
+the old version's directory, which the upgrade removes.
 
 [docs/ZELLIJ.md](docs/ZELLIJ.md) has the rest: every setting, all the keys,
 dimming, settings for your session only, and troubleshooting.

@@ -1,20 +1,30 @@
-//! The inner ("guest") session: reading and driving it over the Zellij CLI,
-//! the keyboard signals typed into it, and the `relay` role that runs inside
-//! it to switch its theme.
+//! The inner ("guest") session: the `relay` role that runs inside it, sends
+//! the panel its panes, tabs and focus as they change and switches its
+//! theme; and the panel's side: asking the relay to watch, driving the
+//! inner session over the Zellij CLI, and the keyboard signals typed into it.
 
 use crate::app::{is_plain_name, Config, PaneTitles};
 use crate::model::{parse_terminal_pane_id, Agent};
-use crate::panes::{attached_agent_id, compact_error, LaunchedPane, ScanPane};
-use crate::{ctx, now_secs, State, PIPE_RELAY};
+use crate::panes::{
+    agent_named_by_pane_command, compact_error, manifest_panes, LaunchedPane, ScanPane,
+};
+use crate::{ctx, now_secs, State, KEY, PIPE_GUEST, PIPE_RELAY};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use zellij_tile::prelude::*;
 
-pub const GUEST_SEPARATOR: &str = "--zellij-noc-guest-panes--";
-pub const GUEST_POLL_SECS: f64 = 0.75;
+/// How often the panel asks the relay to watch. Each ask is answered with a
+/// snapshot, and starts the relay when it is not running.
+pub const GUEST_WATCH_SECS: f64 = 2.0;
+/// The same, while the panel has no usable answer.
+pub const GUEST_RETRY_SECS: f64 = 0.75;
 /// How long the inner session may be unreadable before the panel says so.
 /// It takes a moment to start, and it is briefly gone while it restarts.
 pub const GUEST_MISSING_SECS: f64 = 5.0;
-pub const CTX_SNAPSHOT: &str = "guest-snapshot";
+/// How long a relay keeps sending after it was last asked to watch.
+pub const RELAY_WATCH_SECS: f64 = 10.0;
+pub const CTX_WATCH: &str = "guest-watch";
+pub const CTX_RELAY_PUSH: &str = "relay-push";
 pub const CTX_OPEN: &str = "guest-open";
 pub const CTX_HOST_ACTION: &str = "host-action";
 pub const KEY_GUEST_AGENT: &str = "zellij-noc-guest-agent";
@@ -24,18 +34,22 @@ pub const KEY_GUEST_AGENT: &str = "zellij-noc-guest-agent";
 /// this itself; without it the inner client draws itself as unfocused.
 pub const FOCUS_FRAME: [u8; 14] = [27, 80, 50, 54, 54, 54, 49, 110, 83, 103, 65, 61, 27, 92];
 
-const SNAPSHOT_SCRIPT: &str = "zellij --session \"$1\" action list-clients && echo --zellij-noc-guest-panes-- && zellij --session \"$1\" action list-panes --all --json";
 const RUN_SCRIPT: &str = "guest=$1; host=$2; shift 2\nzellij --session \"$guest\" \"$@\"; status=$?\n[ -n \"$host\" ] && zellij --session \"$host\" action focus-previous-pane >/dev/null 2>&1\nexit $status";
 
 #[derive(Debug, Default)]
 pub struct GuestState {
     pub snapshot: Option<GuestSnapshot>,
+    /// A watch request is running.
     pub in_flight: bool,
-    pub last_read: Option<f64>,
+    /// When the last watch request started, and whether it reached the
+    /// inner session.
+    pub last_watch: Option<f64>,
+    pub watch_ok: bool,
+    /// When the relay last sent a snapshot.
+    pub last_push: Option<f64>,
     pub launched: BTreeMap<String, LaunchedPane>,
-    /// Inner tabs named after an agent, by tab id: the agent and the name
-    /// the tab had when the panel last looked or renamed it.
-    pub named_tabs: BTreeMap<u32, (String, String)>,
+    /// Inner tabs whose name is the panel's to change, by tab id.
+    pub named_tabs: BTreeMap<u32, TabName>,
     /// For each pane the panel has seen: the title it had by itself, and
     /// the name the panel gave it (empty when it gave none).
     pub titles: BTreeMap<u32, (String, String)>,
@@ -46,34 +60,119 @@ pub struct GuestState {
     pub failing_since: Option<f64>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// A tab name the panel gave, or found to be an agent's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabName {
+    pub name: String,
+    /// The name the tab had when the panel asked for `name`, until a
+    /// snapshot shows the rename.
+    pub before: Option<String>,
+}
+
+/// The inner session as its relay sees it: how many clients are attached,
+/// the terminal pane the first of them has the keyboard in, and the
+/// terminal panes of every tab.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+#[serde(default)]
 pub struct GuestSnapshot {
     pub clients: usize,
     pub focused: Option<u32>,
     pub panes: Vec<ScanPane>,
 }
 
+/// The relay's side: what it last heard from Zellij and from the panel.
+#[derive(Debug, Default)]
+pub struct RelayState {
+    /// The session whose panel asked to watch, and when it last asked.
+    pub host: Option<String>,
+    pub watched_at: f64,
+    pub panes: Vec<ScanPane>,
+    pub tabs: Vec<TabInfo>,
+    /// The snapshot last sent, as sent.
+    pub sent: Option<String>,
+    pub in_flight: bool,
+    /// The newest snapshot, waiting for the one being sent.
+    pub pending: Option<String>,
+}
+
 // ---- pure helpers ----
 
-/// `list-clients` output, the separator, then `list-panes --all --json`.
-/// The focused pane is the second field of the first client row.
+/// A snapshot as the relay sent it. Plugin panes are dropped.
 pub fn parse_guest_snapshot(text: &str) -> Option<GuestSnapshot> {
-    let (clients, panes) = text.split_once(GUEST_SEPARATOR)?;
-    let panes: Vec<ScanPane> = serde_json::from_str(panes.trim()).ok()?;
-    let rows: Vec<&str> = clients
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .skip(1)
+    let mut snapshot: GuestSnapshot = serde_json::from_str(text.trim()).ok()?;
+    snapshot.panes.retain(|p| !p.is_plugin);
+    Some(snapshot)
+}
+
+/// The relay's snapshot: the session's terminal panes, each with its tab's
+/// id and name, and the pane the first client has the keyboard in.
+pub fn relay_snapshot(
+    panes: &[ScanPane],
+    tabs: &[TabInfo],
+    clients: &[ClientInfo],
+) -> GuestSnapshot {
+    let panes = panes
+        .iter()
+        .filter(|p| !p.is_plugin)
+        .map(|pane| {
+            let mut pane = pane.clone();
+            if let Some(tab) = tabs.iter().find(|t| t.position == pane.tab_position) {
+                pane.tab_id = u32::try_from(tab.tab_id).ok();
+                pane.tab_name = tab.name.clone();
+            }
+            pane
+        })
         .collect();
-    let focused = rows
-        .first()
-        .and_then(|row| row.split_whitespace().nth(1))
-        .and_then(parse_terminal_pane_id);
-    Some(GuestSnapshot {
-        clients: rows.len(),
+    let focused = clients.first().and_then(|client| match client.pane_id {
+        PaneId::Terminal(id) => Some(id),
+        PaneId::Plugin(_) => None,
+    });
+    GuestSnapshot {
+        clients: clients.len(),
         focused,
-        panes: panes.into_iter().filter(|p| !p.is_plugin).collect(),
-    })
+        panes,
+    }
+}
+
+/// The host session a `watch <session>` message names.
+pub fn watch_host(payload: &str) -> Option<String> {
+    let name = payload.trim().strip_prefix("watch ")?.trim();
+    is_plain_name(name).then(|| name.to_string())
+}
+
+/// The panel's request to the relay: watch the inner session for the panel
+/// in `host`. `zellij pipe` starts the relay when it is not running; the
+/// configuration is the one the relay bindings load it with, so there is
+/// one relay.
+pub fn watch_command(guest: &str, plugin_url: &str, host: &str) -> Vec<String> {
+    strings(&[
+        "zellij",
+        "--session",
+        guest,
+        "pipe",
+        "--plugin",
+        plugin_url,
+        "--plugin-configuration",
+        "role=relay",
+        "--name",
+        PIPE_RELAY,
+        "--",
+        &format!("watch {host}"),
+    ])
+}
+
+/// The relay's message to the panel: one snapshot.
+pub fn push_command(host: &str, snapshot: &str) -> Vec<String> {
+    strings(&[
+        "zellij",
+        "--session",
+        host,
+        "pipe",
+        "--name",
+        PIPE_GUEST,
+        "--",
+        snapshot,
+    ])
 }
 
 /// The theme a relay message asks for: `away` or `home` (named by the
@@ -109,17 +208,18 @@ pub fn keyboard_signal(config: &Config, to_guest: bool) -> Vec<u8> {
 }
 
 /// The inner tabs whose name should follow their agent, as `(tab id, new
-/// name)`. A tab is the panel's to name when exactly one agent runs in it
-/// and its name is the one the panel knows it by (`named`), or one Zellij
-/// made up (`Tab #3`). A tab the user named themselves is left alone.
-/// `named` is brought up to date with what the snapshot shows.
+/// name)`. A tab's name is the panel's to change when it is one the panel
+/// gave or found to be an agent's (`named`), or one Zellij made up
+/// (`Tab #3`); the tab is renamed while exactly one agent runs in it. A tab
+/// the user named themselves is left alone. `named` is brought up to date
+/// with what the snapshot shows.
 pub fn tab_renames(
     agents: &[Agent],
     snapshot: &GuestSnapshot,
     launched: &BTreeMap<String, LaunchedPane>,
     guest_session: &str,
     noc_bin: &str,
-    named: &mut BTreeMap<u32, (String, String)>,
+    named: &mut BTreeMap<u32, TabName>,
 ) -> Vec<(u32, String)> {
     // tab id -> (current name, the agents in it)
     let mut tabs: BTreeMap<u32, (&str, Vec<&Agent>)> = BTreeMap::new();
@@ -139,24 +239,40 @@ pub fn tab_renames(
     named.retain(|tab, _| tabs.contains_key(tab));
     let mut renames = Vec::new();
     for (tab, (name, agents_in_tab)) in tabs {
+        match named.get_mut(&tab) {
+            Some(known) if known.name == name => known.before = None,
+            // A rename the panel asked for has not shown yet.
+            Some(known) if known.before.as_deref() == Some(name) => {}
+            // Someone else named the tab: it is theirs.
+            Some(_) => {
+                named.remove(&tab);
+            }
+            None => {}
+        }
         let [agent] = agents_in_tab.as_slice() else {
-            named.remove(&tab);
             continue;
         };
         let want = crate::panes::agent_tab_name(agent);
         if want.is_empty() {
             continue;
         }
-        let known = named
-            .get(&tab)
-            .is_some_and(|(id, last)| id == &agent.id && last == name);
+        let known = named.get(&tab).map(|known| known.name.as_str());
         if name == want {
-            named.insert(tab, (agent.id.clone(), want));
-        } else if known || crate::panes::is_default_tab_name(name) {
-            named.insert(tab, (agent.id.clone(), want.clone()));
+            named.entry(tab).or_insert(TabName {
+                name: want,
+                before: None,
+            });
+        } else if known == Some(want.as_str()) {
+            // Asked for already.
+        } else if known.is_some() || crate::panes::is_default_tab_name(name) {
+            named.insert(
+                tab,
+                TabName {
+                    name: want.clone(),
+                    before: Some(name.to_string()),
+                },
+            );
             renames.push((tab, want));
-        } else {
-            named.remove(&tab);
         }
     }
     renames
@@ -270,8 +386,8 @@ pub fn agent_cwd(agent: &Agent) -> Option<String> {
     (!path.is_empty()).then(|| path.to_string())
 }
 
-/// An agent's live pane in the inner session: launched pane, attach command,
-/// then a binding to exactly that session.
+/// An agent's live pane in the inner session: launched pane, a command that
+/// names it, then a binding to exactly that session.
 pub fn guest_agent_pane(
     agent: &Agent,
     snapshot: &GuestSnapshot,
@@ -284,14 +400,12 @@ pub fn guest_agent_pane(
             return Some(l.id);
         }
     }
-    if let Some(pane) = snapshot.panes.iter().find(|p| {
-        !p.exited
-            && p.terminal_command
-                .as_deref()
-                .and_then(|c| attached_agent_id(c, noc_bin))
-                .as_deref()
-                == Some(agent.id.as_str())
-    }) {
+    let one = std::slice::from_ref(agent);
+    if let Some(pane) = snapshot
+        .panes
+        .iter()
+        .find(|p| !p.exited && agent_named_by_pane_command(one, p, noc_bin).is_some())
+    {
         return Some(pane.id);
     }
     agent.zellij_bindings().into_iter().find_map(|b| {
@@ -354,10 +468,6 @@ pub fn guest_run_command(guest: &str, host: &str, args: &[String]) -> Vec<String
     command
 }
 
-pub fn snapshot_command(guest: &str) -> Vec<String> {
-    strings(&["/bin/sh", "-c", SNAPSHOT_SCRIPT, "sh", guest])
-}
-
 fn run(command: &[String], context: BTreeMap<String, String>) {
     let argv: Vec<&str> = command.iter().map(String::as_str).collect();
     run_command(&argv, context);
@@ -366,38 +476,59 @@ fn run(command: &[String], context: BTreeMap<String, String>) {
 // ---- state methods ----
 
 impl State {
-    /// Read the inner session, at most every `GUEST_POLL_SECS`. Returns
-    /// whether the panel needs a redraw.
-    pub fn poll_guest(&mut self) -> bool {
+    /// Ask the inner session's relay to watch for this panel: every
+    /// `GUEST_WATCH_SECS`, or every `GUEST_RETRY_SECS` while there is no
+    /// usable answer. Returns whether the panel needs a redraw.
+    pub fn watch_guest(&mut self) -> bool {
         if !self.permissions_granted || self.guest.in_flight {
             return false;
         }
+        // The relay is this plugin, so the panel must know where it was
+        // loaded from, and the relay must know which session to answer.
+        let (Some(url), Some(host)) = (self.panel_url.clone(), self.session_name.clone()) else {
+            return false;
+        };
         let now = now_secs();
-        if self
-            .guest
-            .last_read
-            .is_some_and(|t| now - t < GUEST_POLL_SECS)
-        {
+        let healthy = self.guest.snapshot.is_some() && self.guest.failing_since.is_none();
+        let every = if healthy {
+            GUEST_WATCH_SECS
+        } else {
+            GUEST_RETRY_SECS
+        };
+        if self.guest.last_watch.is_some_and(|t| now - t < every) {
             return false;
         }
+        // The last request reached the inner session and nothing came back.
+        let unanswered = self.guest.watch_ok
+            && self
+                .guest
+                .last_watch
+                .is_some_and(|asked| self.guest.last_push.is_none_or(|push| push < asked));
         self.guest.in_flight = true;
-        self.guest.last_read = Some(now);
+        self.guest.last_watch = Some(now);
         run(
-            &snapshot_command(&self.config.guest_session),
-            ctx(CTX_SNAPSHOT),
+            &watch_command(&self.config.guest_session, &url, &host),
+            ctx(CTX_WATCH),
         );
-        false
+        unanswered && self.on_guest_unreadable("is not answering")
     }
 
-    pub fn on_guest_snapshot(&mut self, exit: Option<i32>, stdout: &[u8]) -> bool {
+    /// The watch request ran: it fails when the inner session is not there.
+    pub fn on_guest_watch(&mut self, exit: Option<i32>) -> bool {
         self.guest.in_flight = false;
-        let snapshot = (exit == Some(0))
-            .then(|| std::str::from_utf8(stdout).ok())
-            .flatten()
-            .and_then(parse_guest_snapshot);
-        let Some(mut snapshot) = snapshot else {
-            return self.on_guest_unreadable();
+        self.guest.watch_ok = exit == Some(0);
+        if self.guest.watch_ok {
+            return false;
+        }
+        self.on_guest_unreadable("is not running")
+    }
+
+    /// The relay sent a snapshot.
+    pub fn on_guest_push(&mut self, payload: &str) -> bool {
+        let Some(mut snapshot) = parse_guest_snapshot(payload) else {
+            return false;
         };
+        self.guest.last_push = Some(now_secs());
         if self.config.pane_titles != PaneTitles::Show {
             restore_titles(&mut snapshot, &mut self.guest.titles);
             let renames = match (&self.config.pane_titles, &self.guest.host) {
@@ -465,7 +596,7 @@ impl State {
         redraw
     }
 
-    fn on_guest_unreadable(&mut self) -> bool {
+    fn on_guest_unreadable(&mut self, what: &str) -> bool {
         self.guest.client_seen = false;
         let now = now_secs();
         let since = *self.guest.failing_since.get_or_insert(now);
@@ -473,7 +604,7 @@ impl State {
             return false;
         }
         self.app.guest_problem = Some(format!(
-            "inner session {:?} is not running",
+            "inner session {:?} {what}",
             self.config.guest_session
         ));
         true
@@ -531,7 +662,7 @@ impl State {
         stderr: &[u8],
         context: &BTreeMap<String, String>,
     ) -> bool {
-        self.guest.last_read = None;
+        self.guest.last_watch = None;
         if exit != Some(0) {
             let detail = compact_error(&String::from_utf8_lossy(stderr));
             self.app.set_notice(format!(
@@ -625,19 +756,103 @@ impl State {
         self.guest_run(shell_args(dir), None);
     }
 
-    /// Relay role: switch the inner session's theme live.
+    /// Relay role: start watching for a panel, or switch the inner
+    /// session's theme live.
     pub fn relay_pipe(&mut self, message: &PipeMessage) {
         if message.name != PIPE_RELAY {
             return;
         }
-        let Some(name) = message
-            .payload
-            .as_deref()
-            .and_then(|p| relay_theme(p, &self.config))
-        else {
+        let payload = message.payload.as_deref().unwrap_or_default();
+        if let Some(host) = watch_host(payload) {
+            self.relay.host = Some(host);
+            self.relay.watched_at = now_secs();
+            // Every request is answered, changed or not.
+            self.relay.sent = None;
+            list_clients();
+            return;
+        }
+        if let Some(name) = relay_theme(payload, &self.config) {
+            reconfigure(format!("theme \"{name}\""), false);
+        }
+    }
+
+    /// Relay role: Zellij's events in the inner session.
+    pub fn update_relay(&mut self, event: Event) {
+        match event {
+            Event::PermissionRequestResult(_) => hide_self(),
+            Event::PaneUpdate(manifest) => {
+                self.relay.panes = manifest_panes(&manifest);
+                self.relay_changed();
+            }
+            Event::TabUpdate(tabs) => {
+                self.relay.tabs = tabs;
+                self.relay_changed();
+            }
+            // What runs in a pane changed: a command was typed, or ended.
+            // Zellij says so a moment after the `PaneUpdate` for the same
+            // key press, by which time the new command is certain to show.
+            Event::CommandChanged(..) => self.relay_changed(),
+            Event::ListClients(clients) => self.relay_push(&clients),
+            Event::RunCommandResult(_, _, _, context)
+                if context.get(KEY).map(String::as_str) == Some(CTX_RELAY_PUSH) =>
+            {
+                self.relay.in_flight = false;
+                if let Some(snapshot) = self.relay.pending.take() {
+                    self.relay_send(snapshot);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Something changed: ask who is attached and where, which comes back
+    /// as `ListClients` and completes the snapshot.
+    fn relay_changed(&mut self) {
+        if self.relay_host().is_some() {
+            list_clients();
+        }
+    }
+
+    /// The session to send to, while its panel keeps asking.
+    fn relay_host(&self) -> Option<String> {
+        let host = self.relay.host.clone()?;
+        (now_secs() - self.relay.watched_at < RELAY_WATCH_SECS).then_some(host)
+    }
+
+    fn relay_push(&mut self, clients: &[ClientInfo]) {
+        if self.relay_host().is_none() {
+            return;
+        }
+        // Zellij's pane records do not say what runs in a pane; it answers
+        // when asked, pane by pane.
+        let mut panes = self.relay.panes.clone();
+        for pane in panes.iter_mut().filter(|p| !p.is_plugin && !p.exited) {
+            if let Ok(command) = get_pane_running_command(PaneId::Terminal(pane.id)) {
+                pane.pane_command = Some(command.join(" "));
+            }
+        }
+        let snapshot = relay_snapshot(&panes, &self.relay.tabs, clients);
+        let Ok(snapshot) = serde_json::to_string(&snapshot) else {
             return;
         };
-        reconfigure(format!("theme \"{name}\""), false);
+        if self.relay.sent.as_deref() == Some(snapshot.as_str()) {
+            return;
+        }
+        self.relay_send(snapshot);
+    }
+
+    /// One send at a time; the newest snapshot waits for it.
+    fn relay_send(&mut self, snapshot: String) {
+        if self.relay.in_flight {
+            self.relay.pending = Some(snapshot);
+            return;
+        }
+        let Some(host) = self.relay_host() else {
+            return;
+        };
+        run(&push_command(&host, &snapshot), ctx(CTX_RELAY_PUSH));
+        self.relay.in_flight = true;
+        self.relay.sent = Some(snapshot);
     }
 }
 
@@ -646,14 +861,13 @@ mod tests {
     use super::*;
     use crate::model::parse_agent;
 
-    const CLIENTS: &str =
-        "CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND\n1         terminal_3     vim\n";
-
-    fn panes_json() -> &'static str {
-        r#"[{"id":3,"is_plugin":false,"is_focused":true,"title":"vim","terminal_command":null},
+    /// A snapshot as the relay sends it.
+    fn pushed() -> &'static str {
+        r#"{"clients":1,"focused":3,"panes":[
+            {"id":3,"is_plugin":false,"is_focused":true,"title":"vim","terminal_command":null},
             {"id":4,"is_plugin":false,"title":"x","terminal_command":"noc attach a1","exited":false},
             {"id":5,"is_plugin":false,"terminal_command":"noc attach a2","exited":true},
-            {"id":9,"is_plugin":true,"plugin_url":"zellij:status-bar"}]"#
+            {"id":9,"is_plugin":true,"plugin_url":"zellij:status-bar"}]}"#
     }
 
     #[test]
@@ -816,6 +1030,50 @@ mod tests {
         ];
         assert!(renames(&after, &shared).is_empty());
 
+        // The agent is renamed again before the first rename shows: the tab
+        // still follows, and stays the panel's.
+        let last = [agent("a1", "Last name")];
+        let slow = [(8, "Old name", "noc attach a1")];
+        assert!(renames(&before, &slow).is_empty());
+        assert_eq!(renames(&after, &slow), [(8, "New name".to_string())]);
+        assert_eq!(renames(&last, &slow), [(8, "Last name".to_string())]);
+        assert!(renames(&last, &[(8, "Last name", "noc attach a1")]).is_empty());
+        assert_eq!(
+            renames(&after, &[(8, "Last name", "noc attach a1")]),
+            [(8, "New name".to_string())]
+        );
+        // A tab the panel named goes on to another agent once the first
+        // has left it, also with no agent in between.
+        let moved = [(9, "Tab #9", "noc attach a1")];
+        assert_eq!(renames(&after, &moved), [(9, "New name".to_string())]);
+        assert!(renames(&after, &[(9, "New name", "")]).is_empty());
+        assert_eq!(
+            renames(&after, &[(9, "New name", "noc attach a2")]),
+            [(9, "Other".to_string())]
+        );
+        // A hand-attached agent, known only by the command in its shell.
+        let native = [
+            parse_agent(r#"{"id":"n1","name":"By hand","native_short_id":"2f5ac2d2"}"#).unwrap(),
+        ];
+        let by_hand = GuestSnapshot {
+            clients: 1,
+            focused: Some(0),
+            panes: vec![ScanPane {
+                tab_id: Some(10),
+                tab_name: "Tab #10".to_string(),
+                pane_command: Some("claude attach 2f5ac2d2".to_string()),
+                ..ScanPane::default()
+            }],
+        };
+        assert_eq!(
+            tab_renames(&native, &by_hand, &launched, "inner", "noc", &mut named),
+            [(10, "By hand".to_string())]
+        );
+        assert_eq!(
+            guest_agent_pane(&native[0], &by_hand, &launched, "inner", "noc"),
+            Some(0)
+        );
+
         assert_eq!(
             rename_tab_args(7, "-x"),
             ["action", "rename-tab", "--tab-id", "7", "--", "-x"]
@@ -828,8 +1086,7 @@ mod tests {
 
     #[test]
     fn parses_the_inner_sessions_terminals_and_focus() {
-        let text = format!("{CLIENTS}{GUEST_SEPARATOR}\n{}", panes_json());
-        let snapshot = parse_guest_snapshot(&text).unwrap();
+        let snapshot = parse_guest_snapshot(pushed()).unwrap();
         assert_eq!(snapshot.focused, Some(3));
         assert_eq!(snapshot.clients, 1);
         let ids: Vec<u32> = snapshot.panes.iter().map(|p| p.id).collect();
@@ -839,30 +1096,73 @@ mod tests {
             snapshot.panes[1].terminal_command.as_deref(),
             Some("noc attach a1")
         );
-        // A bare numeric id parses too.
-        let text = format!("CLIENT_ID PANE\n1 7 sh\n{GUEST_SEPARATOR}\n[]");
-        assert_eq!(parse_guest_snapshot(&text).unwrap().focused, Some(7));
+        // Missing fields take their defaults; anything else is refused.
+        assert_eq!(parse_guest_snapshot("{}"), Some(GuestSnapshot::default()));
+        for bad in ["", "not json", "7", r#"{"panes":3}"#] {
+            assert_eq!(parse_guest_snapshot(bad), None, "{bad:?}");
+        }
     }
 
     #[test]
-    fn a_focused_plugin_or_garbage_is_no_focus() {
-        let plugin = format!("CLIENT_ID P R\n1 plugin_3 x\n{GUEST_SEPARATOR}\n[]");
-        assert_eq!(parse_guest_snapshot(&plugin).unwrap().focused, None);
-        let empty = format!("CLIENT_ID P R\n{GUEST_SEPARATOR}\n[]");
-        assert_eq!(parse_guest_snapshot(&empty).unwrap().focused, None);
-        assert_eq!(parse_guest_snapshot(&empty).unwrap().clients, 0);
-        let garbage_clients = format!("???\nwhat is this\n{GUEST_SEPARATOR}\n[]");
+    fn the_relay_sends_terminals_with_their_tab_and_the_first_clients_focus() {
+        let pane = |id: u32, tab: usize, plugin: bool, command: &str| ScanPane {
+            id,
+            is_plugin: plugin,
+            tab_position: tab,
+            pane_command: (!command.is_empty()).then(|| command.to_string()),
+            ..ScanPane::default()
+        };
+        let panes = [
+            pane(0, 0, false, ""),
+            pane(1, 0, true, ""),
+            pane(3, 1, false, "claude attach 2f5ac2d2"),
+            pane(4, 2, false, ""),
+        ];
+        let tab = |position: usize, id: usize, name: &str| TabInfo {
+            position,
+            tab_id: id,
+            name: name.to_string(),
+            ..TabInfo::default()
+        };
+        let tabs = [tab(0, 0, "Tab #1"), tab(1, 7, "work")];
+        let client = |pane| ClientInfo::new(1, pane, "zsh".to_string(), true);
+        let snapshot = relay_snapshot(
+            &panes,
+            &tabs,
+            &[client(PaneId::Terminal(3)), client(PaneId::Terminal(0))],
+        );
+        assert_eq!(snapshot.clients, 2);
+        assert_eq!(snapshot.focused, Some(3), "the first client's pane");
+        let seen: Vec<_> = snapshot
+            .panes
+            .iter()
+            .map(|p| (p.id, p.tab_id, p.tab_name.as_str()))
+            .collect();
         assert_eq!(
-            parse_guest_snapshot(&garbage_clients).unwrap().focused,
+            seen,
+            [
+                (0, Some(0), "Tab #1"),
+                (3, Some(7), "work"),
+                // A tab Zellij has not reported yet: no id, so no rename.
+                (4, None, ""),
+            ]
+        );
+        // What the relay sends is what the panel reads.
+        let sent = serde_json::to_string(&snapshot).unwrap();
+        assert_eq!(parse_guest_snapshot(&sent), Some(snapshot));
+        // The keyboard in a plugin pane, or nobody attached: no focus.
+        assert_eq!(
+            relay_snapshot(&panes, &tabs, &[client(PaneId::Plugin(1))]).focused,
             None
         );
-        // Output that does not parse at all keeps the previous snapshot.
-        assert_eq!(parse_guest_snapshot("no separator here"), None);
-        assert_eq!(
-            parse_guest_snapshot(&format!("{CLIENTS}{GUEST_SEPARATOR}\nnot json")),
-            None
-        );
-        assert_eq!(parse_guest_snapshot(""), None);
+        let nobody = relay_snapshot(&panes, &tabs, &[]);
+        assert_eq!((nobody.clients, nobody.focused), (0, None));
+
+        assert_eq!(watch_host("watch noc-host").as_deref(), Some("noc-host"));
+        assert_eq!(watch_host("  watch   a.b_c "), Some("a.b_c".to_string()));
+        for bad in ["watch", "watch ", "watch a b", "watch a;b", "theme x", ""] {
+            assert_eq!(watch_host(bad), None, "{bad:?}");
+        }
     }
 
     fn config(pairs: &[(&str, &str)]) -> Config {
@@ -935,8 +1235,7 @@ mod tests {
 
     #[test]
     fn finds_an_agents_inner_pane_in_order() {
-        let text = format!("{CLIENTS}{GUEST_SEPARATOR}\n{}", panes_json());
-        let snapshot = parse_guest_snapshot(&text).unwrap();
+        let snapshot = parse_guest_snapshot(pushed()).unwrap();
         let a1 = parse_agent(r#"{"id":"a1"}"#).unwrap();
         let a2 = parse_agent(r#"{"id":"a2"}"#).unwrap();
         let launched: BTreeMap<String, LaunchedPane> = [(
@@ -1027,10 +1326,36 @@ mod tests {
             "arguments never enter the script"
         );
         assert!(command[2].contains("focus-previous-pane"));
-        let snapshot = snapshot_command("a b");
-        assert_eq!(snapshot[4], "a b");
-        assert!(snapshot[2].contains(GUEST_SEPARATOR));
-        assert!(!snapshot[2].contains("a b"));
+        assert_eq!(
+            watch_command("inner", "file:/p/zellij-noc.wasm", "outer"),
+            [
+                "zellij",
+                "--session",
+                "inner",
+                "pipe",
+                "--plugin",
+                "file:/p/zellij-noc.wasm",
+                "--plugin-configuration",
+                "role=relay",
+                "--name",
+                "zellij-noc.relay",
+                "--",
+                "watch outer"
+            ]
+        );
+        assert_eq!(
+            push_command("outer", "{}"),
+            [
+                "zellij",
+                "--session",
+                "outer",
+                "pipe",
+                "--name",
+                "zellij-noc.guest",
+                "--",
+                "{}"
+            ]
+        );
     }
 
     #[test]

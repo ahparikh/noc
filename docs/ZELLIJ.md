@@ -321,11 +321,12 @@ bind "Alt t" { FocusPreviousPane; Write 27 116; }   // ESC t
 ## How it works
 
 - **One plugin, three roles.** The same file runs as the sidebar, as the
-  floating details window, and as a hidden relay in the inner session that
-  only switches themes.
-- **The inner session is driven over the Zellij CLI.** A plugin can only
-  act on its own session, so the sidebar reads the inner session with
-  `zellij --session noc action list-clients` / `list-panes`, and opens and
+  floating details window, and as a hidden relay in the inner session.
+- **The relay tells the sidebar what the inner session is doing.** A plugin
+  can only see and act on its own session. The relay sees every change of
+  pane, tab and focus in the inner session as it happens and sends it to the
+  sidebar, which starts the relay itself. It also switches the themes.
+- **The inner session is driven over the Zellij CLI.** The sidebar opens and
   focuses agents there with `zellij --session noc action …` and `zellij run`.
 - **The guest pane is a small shell loop**, written out in the layout. It
   creates the inner session on first start, re-attaches when the client

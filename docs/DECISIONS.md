@@ -512,8 +512,9 @@ only deployment. The host session sees every key first, binds three
 (`Alt m` keyboard to the sidebar and back, `Alt o` hide or show the sidebar,
 `Alt d` detach) and passes everything else to the inner session unchanged.
 The sidebar is selectable only while it has the keyboard, so the inner
-session's pane navigation never lands on it. The plugin opens, focuses and
-follows agents in the inner session over the Zellij CLI.
+session's pane navigation never lands on it. The plugin opens and focuses
+agents in the inner session over the Zellij CLI, and follows them through
+its relay there (D-076).
 
 **Why:** a sidebar that belongs to the whole session, rather than to each
 tab, needs no per-tab layout repair and leaves the user's session exactly as
@@ -738,6 +739,27 @@ at a glance; the words matter only when the colour is not green.
 **Consequence:** a problem is no longer spelled out until the box is
 opened. A prompt or a notice still takes the whole line while it lasts, so
 the count is hidden while a search is being typed.
+
+### D-076: the inner session reports itself
+
+The sidebar learns the inner session's panes, tabs and focus from the relay,
+the plugin instance that runs inside it. Zellij tells the relay when any of
+them changes, and the relay sends the sidebar a snapshot with `zellij
+--session <host> pipe`. The sidebar asks the relay to watch every two
+seconds, which starts it when it is not running and is answered with a
+snapshot. The sidebar no longer runs `list-clients` and `list-panes`.
+
+**Why:** reading the inner session on a timer made the sidebar follow a tab
+switch up to a second late, and cost three processes per read whether or
+not anything had changed. Zellij's own events arrive at once and cost
+nothing while nothing happens. The relay also asks Zellij what runs in each
+pane, which is how an agent attached by hand is recognised (D-064).
+**Consequence:** following takes under a tenth of a second. The layout
+files do not change: the sidebar starts the relay with the settings the
+theme bindings use, so there is one relay. Actions on the inner session
+stay CLI calls, since a message to the relay would cost the same one
+process. What runs in a pane has no event, so that part is as fresh as the
+last snapshot, two seconds at most.
 
 ## Names, state, and grouping
 

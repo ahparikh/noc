@@ -17,7 +17,7 @@ mod view;
 
 use app::{Config, Connection, Transport, ZellijNoc};
 use details::DetailsState;
-use guest::GuestState;
+use guest::{GuestState, RelayState};
 use panes::{manifest_panes, ScanPane};
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -39,8 +39,11 @@ pub const CTX_RENAME: &str = "rename-agent";
 
 /// Outer session: hand the keyboard to the panel, or back to the inner session.
 pub const PIPE_GRAB: &str = "zellij-noc.grab";
-/// Inner session: switch between the home and away themes.
+/// Inner session: watch for a panel, or switch between the home and away
+/// themes.
 pub const PIPE_RELAY: &str = "zellij-noc.relay";
+/// Outer session: the inner session's panes, tabs and focus, from its relay.
+pub const PIPE_GUEST: &str = "zellij-noc.guest";
 
 pub const PANEL_TICK_SECONDS: f64 = 0.25;
 pub const GRAB_WINDOW: f64 = 2.0;
@@ -107,6 +110,7 @@ pub struct State {
     pub guest_had_keyboard: Option<bool>,
     // roles
     pub guest: GuestState,
+    pub relay: RelayState,
     pub details: DetailsState,
 }
 
@@ -138,6 +142,7 @@ impl Default for State {
             grab_until: 0.0,
             guest_had_keyboard: None,
             guest: GuestState::default(),
+            relay: RelayState::default(),
             details: DetailsState::default(),
         }
     }
@@ -163,7 +168,13 @@ impl ZellijPlugin for State {
         self.config = config;
         request_permission(&permissions());
         if self.role == Role::Relay {
-            subscribe(&[EventType::PermissionRequestResult]);
+            subscribe(&[
+                EventType::ListClients,
+                EventType::PaneUpdate,
+                EventType::PermissionRequestResult,
+                EventType::RunCommandResult,
+                EventType::TabUpdate,
+            ]);
             return;
         }
         subscribe(&[
@@ -182,9 +193,7 @@ impl ZellijPlugin for State {
     fn update(&mut self, event: Event) -> bool {
         match self.role {
             Role::Relay => {
-                if matches!(event, Event::PermissionRequestResult(_)) {
-                    hide_self();
-                }
+                self.update_relay(event);
                 false
             }
             Role::Details => self.update_details(event),
@@ -301,7 +310,7 @@ impl State {
             }
             CTX_STOP => self.on_stop_result(exit, stderr, context),
             CTX_RENAME => self.on_rename_result(exit, stderr, context),
-            guest::CTX_SNAPSHOT => self.on_guest_snapshot(exit, stdout),
+            guest::CTX_WATCH => self.on_guest_watch(exit),
             guest::CTX_OPEN => self.on_guest_open(exit, stdout, stderr, context),
             guest::CTX_HOST_INFO => {
                 if exit == Some(0) {
@@ -347,7 +356,7 @@ impl State {
         self.tick_armed = true;
         set_timeout(PANEL_TICK_SECONDS);
         self.sync_panel_selectable();
-        let mut redraw = self.poll_guest();
+        let mut redraw = self.watch_guest();
         let now = now_secs();
         if self.next_refresh.is_none_or(|t| now >= t) {
             self.refresh();
@@ -368,6 +377,10 @@ impl State {
                 self.toggle_keyboard();
                 false
             }
+            PIPE_GUEST => match message.payload {
+                Some(payload) => self.on_guest_push(&payload),
+                None => false,
+            },
             name => {
                 if self.config.transport != Transport::Pipe || name != self.config.pipe_name {
                     return false;

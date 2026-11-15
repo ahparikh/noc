@@ -1,7 +1,7 @@
 //! Pane records and the pure pane, command, title and pipe helpers.
 
 use crate::model::{parse_snapshot, parse_terminal_pane_id, Agent, AgentGroup, AgentList};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use zellij_tile::prelude::{PaneInfo, PaneManifest};
 
@@ -10,9 +10,9 @@ pub const TAB_NAME_LIMIT: usize = 32;
 
 // ---- pane records ----
 
-/// One pane, from `zellij action list-panes --all --json` or built from a
-/// `PaneUpdate` manifest, so both feed the same pure helpers.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+/// One pane, built from a `PaneUpdate` manifest: the host session's own, or
+/// the inner session's as its relay sends them.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ScanPane {
     pub id: u32,
@@ -26,13 +26,13 @@ pub struct ScanPane {
     pub title: String,
     pub plugin_url: Option<String>,
     pub terminal_command: Option<String>,
-    /// Only in `list-panes` output: what runs in the pane right now, which
-    /// for a shell is the command typed into it.
+    /// Only for the inner session's panes: what runs in the pane right now,
+    /// which for a shell is the command typed into it.
     pub pane_command: Option<String>,
     pub pane_columns: usize,
     pub pane_rows: usize,
     pub tab_position: usize,
-    /// Only in `list-panes` output: the tab's stable id and its name.
+    /// Only for the inner session's panes: the tab's stable id and its name.
     pub tab_id: Option<u32>,
     pub tab_name: String,
 }

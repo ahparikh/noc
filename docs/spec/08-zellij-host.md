@@ -88,10 +88,16 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 ## 2. Registry transport
 
 ### ZH-009 Polling the registry
-- **Behavior:** With the default transport the panel MUST read the registry by running `<noc_bin> ls --json --all`, or `<noc_bin> search --json -- <query>` while a search query is in effect ([07-zellij-panel.md](07-zellij-panel.md) ZK-026), with context `zellij-noc=agent-snapshot` and `zellij-noc-query=<query>` (empty with no query). A result whose `zellij-noc-query` differs from the query now in effect MUST be discarded and the registry read again at once. A poll starts only when the role is panel, the transport is not `pipe`, permissions are granted, and no poll is in flight. Starting a poll sets the next due time to now plus the poll interval. Polls start on grant, on a tick once due, on `Visible(true)`, on the Refresh intent (`r`), when the search query changes, and after a successful rename.
+- **Behavior:** With the default transport the panel MUST read the registry by running `<noc_bin> ls --json --all`, or `<noc_bin> search --json -- <query>` while a search query is in effect ([07-zellij-panel.md](07-zellij-panel.md) ZK-026), with context `zellij-noc=agent-snapshot` and `zellij-noc-query=<query>` (empty with no query). A result whose `zellij-noc-query` differs from the query now in effect MUST be discarded and the registry read again at once. A poll starts only when the role is panel, the transport is not `pipe`, permissions are granted, and no poll is in flight. Starting a poll sets the next due time to now plus the poll interval. Polls start on grant, on a tick once due, on `Visible(true)`, on the Refresh intent (`r`), when the search query changes, after a successful rename, and when the registry says it changed (ZH-023).
 - **Source:** `zellij/src/panel.rs` (`refresh`); `zellij/src/main.rs` (`update_panel`, `on_panel_tick`)
 - **Decision:** D-034
 - **Verified by:** `zellij/e2e/nested.sh` "sidebar lists the registry's agents"
+
+### ZH-023 The registry says when it changed
+- **Behavior:** With the default transport, permissions granted and the host session's name known, the panel MUST keep one watcher running: on a tick, when none is running and at least `5.0` s have passed since the last one ended, it runs `/bin/sh -c '<script>' sh <noc_bin> <host session> zellij-noc-registry-watch=<host session>` with context `zellij-noc=registry-watch`. The script first sends `TERM` to every other process whose command line ends in its third argument (a watcher an earlier load of the plugin left for the same session), then runs `<noc_bin> watch --json --all` and, for every line that prints, `zellij --session <host session> pipe --name zellij-noc.changed -- 1` with its input from `/dev/null`, ending when that fails. The names MUST be passed as arguments, never placed in the script text, and the lines `noc watch` prints MUST NOT be read: they only say that something changed. On a `zellij-noc.changed` message the panel MUST start a poll (ZH-009) at once, or, while one is in flight, as soon as its result is in. When the watcher's `RunCommandResult` arrives it has ended (the registry is not running, or was restarted) and is started again as above. The timed polls of ZH-009 go on regardless, so a watcher that cannot run costs only speed.
+- **Source:** `zellij/src/panel.rs` (`watch_registry`, `registry_watch_command`, `on_registry_changed`, `on_registry_watch_ended`, `on_snapshot_result`); `zellij/src/main.rs` (`handle_pipe`, `on_command_result`, `on_panel_tick`)
+- **Decision:** D-077
+- **Verified by:** `zellij/src/panel.rs` `the_registry_watcher_takes_its_names_as_arguments`; `zellij/e2e/nested.sh` "the sidebar runs a registry watcher"; that a change reaches the panel ahead of the timed poll is MANUAL: in a `--fake` dev pair, write `zellij/target/e2e/agents.json` with another name and watch the sidebar
 
 ### ZH-010 Poll results
 - **Behavior:** A result with context `agent-snapshot` MUST clear the in-flight flag and redraw. Exit `0` with a valid snapshot applies it and marks the connection `connected · poll`. Exit `0` with invalid UTF-8 sets the error `noc returned non-UTF-8 output: <error>`; a snapshot that does not parse sets the parser's error. Any other exit takes stderr compacted to one line (whitespace collapsed, at most 180 characters followed by `…`): if it matches ZH-011 the connection becomes server-unavailable; if it is empty the error is `noc ls failed with status <code>` (`unknown` when there is no exit code); otherwise the error is the compacted stderr. A failed poll MUST keep the last good list.
@@ -104,7 +110,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** `zellij/src/panes.rs` `recognizes_server_connection_failures_without_hiding_other_errors`
 
 ### ZH-012 Command result routing
-- **Behavior:** The panel MUST route `RunCommandResult` by the context value under key `zellij-noc`: `agent-snapshot` (ZH-010), `stop-agent`, `rename-agent` (ZH-013), `guest-watch` (ZX-020), `guest-open` (ZX-031), `update-check` (ZH-022), `host-info` (ZX-038). Results with no such key or any other value, including `host-action`, MUST be ignored. The details window handles only `agent-details`.
+- **Behavior:** The panel MUST route `RunCommandResult` by the context value under key `zellij-noc`: `agent-snapshot` (ZH-010), `stop-agent`, `rename-agent` (ZH-013), `registry-watch` (ZH-023), `guest-watch` (ZX-020), `guest-open` (ZX-031), `update-check` (ZH-022), `host-info` (ZX-038). Results with no such key or any other value, including `host-action`, MUST be ignored. The details window handles only `agent-details`.
 - **Source:** `zellij/src/main.rs` (`on_command_result`); `zellij/src/details.rs` (`update_details`)
 - **Verified by:** UNTESTED
 
@@ -124,7 +130,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** `zellij/src/panes.rs` `pipe_decoder_handles_fragmented_and_complete_snapshots`, `pipe_decoder_reports_complete_invalid_frames`
 
 ### ZH-016 Pipe names by role
-- **Behavior:** The panel MUST handle `zellij-noc.grab` (ZX-012), `zellij-noc.guest` (ZX-021) and, in pipe transport, the registry pipe. The relay MUST handle only `zellij-noc.relay` (ZX-019, ZX-039). The details window MUST ignore every pipe message. No pipe handler requests a redraw except a registry payload that produced at least one frame, and an inner-session snapshot that changed the selection or cleared a problem.
+- **Behavior:** The panel MUST handle `zellij-noc.grab` (ZX-012), `zellij-noc.guest` (ZX-021), `zellij-noc.changed` (ZH-023) and, in pipe transport, the registry pipe. The relay MUST handle only `zellij-noc.relay` (ZX-019, ZX-039). The details window MUST ignore every pipe message. No pipe handler requests a redraw except a registry payload that produced at least one frame, and an inner-session snapshot that changed the selection or cleared a problem.
 - **Source:** `zellij/src/main.rs` (`pipe`, `handle_pipe`)
 - **Verified by:** `zellij/e2e/nested.sh` "Alt-m gives the keyboard to the sidebar", "inner session wears the away theme while the sidebar has the keyboard"
 
@@ -496,7 +502,7 @@ The panel does not read the inner session itself. The relay there (ZX-039) sends
 - **Verified by:** `zellij/e2e/nested.sh` "guest pane keeps exactly one client on the inner session", "sidebar lists the registry's agents", "inner session wears the away theme while the sidebar has the keyboard"
 
 ### ZE-009 Start, stop, status
-- **Behavior:** `start` MUST fail with `dev.sh: run this from a plain terminal, not inside Zellij` when `ZELLIJ` is set. If the host session is running it attaches, except that without `--fake` it MUST first fail with `dev.sh: the dev pair is running with the <mode> configuration; stop it first (make dev-stop)` when `<out>/mode` names the other source. Otherwise it renders, starts the development registry server and deletes any dead host session. Either way it then runs the command users run (ZX-008) against the rendered directory: `zellij --config-dir <out> attach --create <host> options --default-layout <host>`. Starting the server means running `<out>/noc server stop` (failure ignored) and then `<out>/noc server --bg`, so the server is always the current build; if that fails, `start` MUST exit `1` with `dev.sh: could not start the dev server (see <runtime dir>/noc.log)`. With `--fake` no server is started. `stop` runs `zellij delete-session --force` for the host then the inner session, then `<out>/noc server stop` when the wrapper exists, ignoring failures. `status` prints `== configuration: <mode>` when `<out>/mode` exists, then, for each session, `== <name>` and its client list, or `== <name>: not running`, then `== dev server: running (<N> agents)` or `== dev server: not running`. Ending the pair from inside Zellij leaves the server running until `stop`. `render` prints the output directory.
+- **Behavior:** `start` MUST fail with `dev.sh: run this from a plain terminal, not inside Zellij` when `ZELLIJ` is set. If the host session is running it attaches, except that without `--fake` it MUST first fail with `dev.sh: the dev pair is running with the <mode> configuration; stop it first (make dev-stop)` when `<out>/mode` names the other source. Otherwise it renders, starts the development registry server and deletes any dead host session. Either way it then runs the command users run (ZX-008) against the rendered directory: `zellij --config-dir <out> attach --create <host> options --default-layout <host>`. Starting the server means running `<out>/noc server stop` (failure ignored) and then `<out>/noc server --bg`, so the server is always the current build; if that fails, `start` MUST exit `1` with `dev.sh: could not start the dev server (see <runtime dir>/noc.log)`. With `--fake` no server is started. `stop` runs `zellij delete-session --force` for the host then the inner session, ends the sidebar's registry watcher (`pkill -f` on a command line ending in `zellij-noc-registry-watch=<host>`), then runs `<out>/noc server stop` when the wrapper exists, ignoring failures. `status` prints `== configuration: <mode>` when `<out>/mode` exists, then, for each session, `== <name>` and its client list, or `== <name>: not running`, then `== dev server: running (<N> agents)` or `== dev server: not running`. Ending the pair from inside Zellij leaves the server running until `stop`. `render` prints the output directory.
 - **Source:** `zellij/dev.sh` (`cmd_start`, `cmd_stop`, `cmd_status`)
 - **Verified by:** `zellij/e2e/nested.sh` "starting again attaches to the running pair"; `stop` is used by the harness cleanup; the server steps UNTESTED
 
@@ -542,31 +548,32 @@ The panel does not read the inner session itself. The relay there (ZX-039) sends
   |---|---|---|
   | 1 | host session has the sidebar and one guest pane | a tiled plugin pane titled `NOC` and a tiled terminal exist in the host |
   | 2 | sidebar lists the registry's agents | the screen shows `2 agents` within 10 s |
-  | 3 | guest pane keeps exactly one client on the inner session | inner client count is 1 |
-  | 4 | the keyboard starts in the inner session | host focus is the guest pane |
-  | 5 | inner session takes its options from noc-inner.kdl | screen row 1 contains `Zellij ` and neither `(<inner>)` nor `running` |
-  | 6 | Alt-m gives the keyboard to the sidebar | host focus becomes the panel within 5 s |
-  | 7 | inner session wears the away theme while the sidebar has the keyboard | the dominant background colour of screen row 1 changed |
-  | 8 | Alt-m gives the keyboard back | host focus becomes the guest pane |
-  | 9 | inner session returns to its home theme | row 1 colour equals the first reading |
-  | 10 | Enter opens the agent in a new inner tab named after it | an inner tab `E2E agent` exists within 10 s |
-  | 11 | the new tab runs noc attach for that agent | an inner pane command matches `attach agent-e2e` |
-  | 12 | the keyboard follows into the inner session | host focus becomes the guest pane |
-  | 13 | exactly one tab was added | inner tab count rose by 1 |
-  | 14 | Enter on an agent that is already open focuses it instead of opening a copy | inner tab count unchanged |
-  | 15 | the tab is renamed when the agent's name changes | after the fake registry reports the agent as `Renamed agent`, an inner tab has that name within 10 s |
-  | 16 | a tab whose shell runs a command naming an agent is named after it | after a new inner tab's shell is given `cat - 5e55a2b0` (the second agent's native short id), an inner tab `Second agent` exists within 15 s; the tab is then closed |
-  | 17 | D opens the floating details window | a floating plugin pane titled with `E2E agent` exists in the host |
-  | 18 | q closes it | no visible floating plugin pane remains |
-  | 19 | / lists the agents that match what is typed | with the keyboard on the panel, after `/`, `second` and `Enter` the screen shows `1 match` within 8 s |
-  | 20 | Esc ends the search | after `Esc` the screen shows `2 agents` within 8 s |
-  | 21 | Alt-o hides the sidebar | a host tab reports `is_fullscreen_active` true |
-  | 22 | Alt-o shows it again | it reports false |
-  | 23 | Alt-d detaches the host client | host client count is 0 |
-  | 24 | both sessions keep running | both listed and not `EXITED` |
-  | 25 | the inner client stays attached in the guest pane | inner client count is 1 |
-  | 26 | starting again attaches to the running pair | host client count is 1 within 10 s |
-  | 27 | ending the inner session ends the host session | after `kill-session <inner>`, the host is gone within 10 s (skipped with `--keep`) |
+  | 3 | the sidebar runs a registry watcher | a process whose command line ends in `zellij-noc-registry-watch=<host>` exists within 10 s |
+  | 4 | guest pane keeps exactly one client on the inner session | inner client count is 1 |
+  | 5 | the keyboard starts in the inner session | host focus is the guest pane |
+  | 6 | inner session takes its options from noc-inner.kdl | screen row 1 contains `Zellij ` and neither `(<inner>)` nor `running` |
+  | 7 | Alt-m gives the keyboard to the sidebar | host focus becomes the panel within 5 s |
+  | 8 | inner session wears the away theme while the sidebar has the keyboard | the dominant background colour of screen row 1 changed |
+  | 9 | Alt-m gives the keyboard back | host focus becomes the guest pane |
+  | 10 | inner session returns to its home theme | row 1 colour equals the first reading |
+  | 11 | Enter opens the agent in a new inner tab named after it | an inner tab `E2E agent` exists within 10 s |
+  | 12 | the new tab runs noc attach for that agent | an inner pane command matches `attach agent-e2e` |
+  | 13 | the keyboard follows into the inner session | host focus becomes the guest pane |
+  | 14 | exactly one tab was added | inner tab count rose by 1 |
+  | 15 | Enter on an agent that is already open focuses it instead of opening a copy | inner tab count unchanged |
+  | 16 | the tab is renamed when the agent's name changes | after the fake registry reports the agent as `Renamed agent`, an inner tab has that name within 10 s |
+  | 17 | a tab whose shell runs a command naming an agent is named after it | after a new inner tab's shell is given `cat - 5e55a2b0` (the second agent's native short id), an inner tab `Second agent` exists within 15 s; the tab is then closed |
+  | 18 | D opens the floating details window | a floating plugin pane titled with `E2E agent` exists in the host |
+  | 19 | q closes it | no visible floating plugin pane remains |
+  | 20 | / lists the agents that match what is typed | with the keyboard on the panel, after `/`, `second` and `Enter` the screen shows `1 match` within 8 s |
+  | 21 | Esc ends the search | after `Esc` the screen shows `2 agents` within 8 s |
+  | 22 | Alt-o hides the sidebar | a host tab reports `is_fullscreen_active` true |
+  | 23 | Alt-o shows it again | it reports false |
+  | 24 | Alt-d detaches the host client | host client count is 0 |
+  | 25 | both sessions keep running | both listed and not `EXITED` |
+  | 26 | the inner client stays attached in the guest pane | inner client count is 1 |
+  | 27 | starting again attaches to the running pair | host client count is 1 within 10 s |
+  | 28 | ending the inner session ends the host session | after `kill-session <inner>`, the host is gone within 10 s (skipped with `--keep`) |
 
   It ends with `nested: all checks passed` and exit `0`, or `nested: <N> check(s) failed` and exit `1`.
 - **Source:** `zellij/e2e/nested.sh`
@@ -578,7 +585,7 @@ The panel does not read the inner session itself. The relay there (ZX-039) sends
 - **Verified by:** MANUAL: session list before and after a run
 
 ### ZE-015 The fake `noc`
-- **Behavior:** `zellij/e2e/fake-noc` is a plain `sh` stand-in. `ls` prints `zellij/target/e2e/agents.json` if it exists, else a built-in snapshot of two Quiet agents: `agent-e2e` (Codex, name `E2E agent`) and `agent-two` (Claude background, name `Second agent`), both with workspace `/tmp`. `show --json <id>` prints that agent's line, or `noc server: agent was not found` with exit `1`. `rename <id> <name>` appends its arguments to `zellij/target/e2e/renames.log` and prints `Named <id> "<name>".`. `stop <id>` prints `stopped <id>`. `attach <id>` for the two known ids prints `attached <id>` and then blocks (reading lines on a terminal, where `exit <N>` exits with `N`); for other ids it prints `noc: refusing to attach <id>` and exits `1`. Any other command prints `unexpected test command: …` and exits `2`.
+- **Behavior:** `zellij/e2e/fake-noc` is a plain `sh` stand-in. `ls` prints `zellij/target/e2e/agents.json` if it exists, else a built-in snapshot of two Quiet agents: `agent-e2e` (Codex, name `E2E agent`) and `agent-two` (Claude background, name `Second agent`), both with workspace `/tmp`. `show --json <id>` prints that agent's line, or `noc server: agent was not found` with exit `1`. `watch` prints `{}` at once and again whenever what `ls` prints has changed, looking every `0.1` s, until the process that started it is gone. `rename <id> <name>` appends its arguments to `zellij/target/e2e/renames.log` and prints `Named <id> "<name>".`. `stop <id>` prints `stopped <id>`. `attach <id>` for the two known ids prints `attached <id>` and then blocks (reading lines on a terminal, where `exit <N>` exits with `N`); for other ids it prints `noc: refusing to attach <id>` and exits `1`. Any other command prints `unexpected test command: …` and exits `2`.
 - **Source:** `zellij/e2e/fake-noc`
 - **Verified by:** `zellij/e2e/nested.sh` checks 2, 9, 10, 14
 
@@ -688,6 +695,10 @@ Neither the unit tests nor `nested.sh` cover:
 - Polls have no timeout. The registry poll, the watch request, the relay's
   send and the details read each wait for their `RunCommandResult`; if one
   is lost, that one never runs again until the plugin reloads.
+- The registry watcher needs `pgrep` and `kill` on the `PATH` Zellij was
+  started with to end an earlier watcher; without them an earlier one stays
+  and the panel is told twice. A watcher whose host session has ended lasts
+  until the registry next changes, when its message fails and it exits.
 - A snapshot travels as one argument of a `zellij pipe` process, so the
   inner session's pane titles and commands show in the process list for the
   moment it runs.

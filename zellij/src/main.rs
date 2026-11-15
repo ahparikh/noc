@@ -42,6 +42,8 @@ pub const PIPE_GRAB: &str = "zellij-noc.grab";
 /// Inner session: watch for a panel, or switch between the home and away
 /// themes.
 pub const PIPE_RELAY: &str = "zellij-noc.relay";
+/// Outer session: the registry changed, from the panel's `noc watch`.
+pub const PIPE_CHANGED: &str = "zellij-noc.changed";
 /// Outer session: the inner session's panes, tabs and focus, from its relay.
 pub const PIPE_GUEST: &str = "zellij-noc.guest";
 
@@ -108,6 +110,11 @@ pub struct State {
     pub selectable_set: Option<bool>,
     pub grab_until: f64,
     pub guest_had_keyboard: Option<bool>,
+    /// The `noc watch` that says when the registry changed is running.
+    pub registry_watching: bool,
+    pub registry_watch_retry: f64,
+    /// The registry changed while a read was in flight.
+    pub registry_changed: bool,
     // roles
     pub guest: GuestState,
     pub relay: RelayState,
@@ -141,6 +148,9 @@ impl Default for State {
             selectable_set: None,
             grab_until: 0.0,
             guest_had_keyboard: None,
+            registry_watching: false,
+            registry_watch_retry: 0.0,
+            registry_changed: false,
             guest: GuestState::default(),
             relay: RelayState::default(),
             details: DetailsState::default(),
@@ -311,6 +321,7 @@ impl State {
             }
             CTX_STOP => self.on_stop_result(exit, stderr, context),
             CTX_RENAME => self.on_rename_result(exit, stderr, context),
+            panel::CTX_REGISTRY_WATCH => self.on_registry_watch_ended(),
             guest::CTX_WATCH => self.on_guest_watch(exit),
             guest::CTX_OPEN => self.on_guest_open(exit, stdout, stderr, context),
             guest::CTX_HOST_INFO => {
@@ -358,6 +369,7 @@ impl State {
         set_timeout(PANEL_TICK_SECONDS);
         self.sync_panel_selectable();
         let mut redraw = self.watch_guest();
+        self.watch_registry();
         let now = now_secs();
         if self.next_refresh.is_none_or(|t| now >= t) {
             self.refresh();
@@ -376,6 +388,10 @@ impl State {
         match message.name.as_str() {
             PIPE_GRAB => {
                 self.toggle_keyboard();
+                false
+            }
+            PIPE_CHANGED => {
+                self.on_registry_changed();
                 false
             }
             PIPE_GUEST => match message.payload {

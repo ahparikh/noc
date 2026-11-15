@@ -157,7 +157,7 @@ pair and start it again.
 | `noc_bin` | `noc` | The noc executable. A bare name is looked up on the `PATH` Zellij was started with. Use an absolute path if the sidebar reports that it cannot run noc. |
 | `guest_session` | `noc` | The inner session's name. Must match `inner=` in the layout. |
 | `icons` | `unicode` | `nerd` to use Nerd Font provider icons. |
-| `poll_interval_ms` | `1000` | How often the sidebar reads `noc ls`. Clamped to 250..60000. |
+| `poll_interval_ms` | `1000` | How often the sidebar reads `noc ls` on a timer. It also reads it whenever the registry reports a change, so this is the backup. Clamped to 250..60000. |
 | `home_theme`, `away_theme` | unset | Optional pair, see below. |
 | `pane_titles` | `show` | What the frames of the inner session's panes say. `name` (the shipped setting) names each pane for its machine and what runs in it: `ohm-2 · claude` for an agent, `ohm-2 · vim` for a pane started with a command, `ohm-2 · zsh` for a shell. `hide` blanks the title, which leaves a small gap in the border. `show` leaves the titles programs set. With `name` or `hide`, a title a program sets later is not shown. |
 | `colors` | built-in | The sidebar's colours: by default a fixed dark palette (blue header, red Blocked, yellow Working, teal Review, grey Quiet). `zellij` follows your Zellij theme instead; use it on a light terminal. |
@@ -333,7 +333,12 @@ bind "Alt t" { FocusPreviousPane; Write 27 116; }   // ESC t
   detaches, and ends the host session when the inner session ends.
 - **The registry is read through the CLI only**: `noc ls --json --all`,
   `noc search --json` and `noc show --json`. Opening an agent runs `noc attach <id>`; rename and stop
-  run `noc rename` and `noc stop`.
+  run `noc rename` and `noc stop`. The sidebar shows only what those
+  commands print: nothing in it comes from anywhere but noc.
+- **The registry says when it changed.** The sidebar keeps one `noc watch`
+  running and reads the registry the moment it reports a change. It also
+  reads it every `poll_interval_ms`, so a watcher that stops costs speed,
+  not correctness.
 - **Permissions.** The plugin asks for six: read and change application
   state, open panes, reconfigure (the relay's theme switch), run commands,
   and message other plugins.

@@ -762,6 +762,26 @@ process. Zellij also announces a change of the command running in a pane,
 so an agent attached by hand is recognised as fast as a tab switch. The
 two-second request is a heartbeat, not the way the sidebar learns things.
 
+### D-077: events first, with a poll underneath; and only noc's data
+
+Whatever the sidebar shows, it learns from an event where one exists and
+from a timed read as well. For the registry: one `noc watch` runs beside
+the sidebar and tells it that something changed, and the sidebar then
+reads `noc ls` as it does on every timed poll. For the inner session: the
+relay (D-076), with its two-second heartbeat. The watcher's own output is
+not read.
+
+**Why:** an event is faster and costs nothing while nothing happens, but
+it can be lost: a watcher dies, a message is dropped, a session restarts.
+A poll underneath makes a lost event cost a second, not a wrong list. And
+reading the list the same way in both cases means there is one source of
+what the sidebar shows, the registry as `noc ls` prints it. Zellij is asked
+only where an agent of that list is, never which agents there are.
+**Consequence:** a change in the registry reaches the sidebar in about a
+tenth of a second. `poll_interval_ms` now sets how long a lost event can
+last, so it can be raised without the list feeling slow. One more process
+(`noc watch`) runs for as long as the pair does.
+
 ## Names, state, and grouping
 
 ### D-042: names are two-way and the most recent rename wins

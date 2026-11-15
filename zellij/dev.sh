@@ -217,6 +217,9 @@ cmd_start() {
 cmd_stop() {
 	z delete-session --force "$HOST" >/dev/null 2>&1 || true
 	z delete-session --force "$INNER" >/dev/null 2>&1 || true
+	# The sidebar's registry watcher would otherwise last until the
+	# registry next changes, which the fake one never does.
+	pkill -f -- "zellij-noc-registry-watch=$HOST\$" 2>/dev/null || true
 	if [ -x "$OUT/noc" ]; then
 		"$OUT/noc" server stop >/dev/null 2>&1 || true
 	fi

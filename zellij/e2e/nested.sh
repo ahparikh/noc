@@ -139,6 +139,8 @@ check "host session has the sidebar and one guest pane" \
 	[ "$SIDEBAR" != "Pnull" -a "$GUEST" != "Tnull" ]
 check "sidebar lists the registry's agents" \
 	wait_for 10 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q '2 agents'"
+check "the sidebar runs a registry watcher" \
+	wait_for 10 pgrep -f -- "zellij-noc-registry-watch=$HOST\$"
 check "guest pane keeps exactly one client on the inner session" \
 	[ "$(clients "$INNER")" = 1 ]
 check "the keyboard starts in the inner session" host_focus_is "$GUEST"

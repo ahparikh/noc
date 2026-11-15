@@ -121,7 +121,7 @@ also how you upgrade later (below). From a checkout the same script is
 The settings live in the `plugin` block of `noc-host.kdl`:
 
 ```kdl
-plugin location="https://github.com/ahparikh/noc/releases/download/v0.1.4/zellij-noc.wasm" {
+plugin location="https://github.com/ahparikh/noc/releases/download/v0.2.0/zellij-noc.wasm" {
     noc_bin "noc"
     guest_session "noc"
     icons "unicode"

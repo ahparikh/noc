@@ -8,7 +8,7 @@ provider snapshots with existing and hook-derived data, the
 process signal for hook-only rows, frontend-binding clearing, and the semantic
 events it journals), the retention sweep, the SQLite store (driver, pragmas,
 permissions, every table, index and migration, JSON storage, and the semantics
-of list/get/upsert/rename/forget/prune), and read-only Git workspace
+of list/get/upsert/rename/team/forget/prune), and read-only Git workspace
 inspection. The HTTP handlers, hook normalization/projection, provider
 adapters, and CLI lifecycle (PID file, `--bg`, `stop`, `restart`) are specified in
 [02-api.md](02-api.md), [06-hooks.md](06-hooks.md), [05-providers.md](05-providers.md)
@@ -19,7 +19,7 @@ Source files covered:
 - `go/internal/server/run.go`, `go/internal/server/discovery.go`, `go/internal/server/health.go`
 - `go/internal/server/run_test.go`, `go/internal/server/health_test.go`, `go/internal/server/retention_test.go`
 - `go/internal/reconcile/reconciler.go`, `go/internal/reconcile/reconciler_test.go`, `go/internal/reconcile/reconciler_bindings_test.go`
-- `go/internal/storage/sqlite/store.go`, `go/internal/storage/sqlite/migrations.go`, `go/internal/storage/sqlite/store_test.go`
+- `go/internal/storage/sqlite/store.go`, `go/internal/storage/sqlite/migrations.go`, `go/internal/storage/sqlite/store_test.go`, `go/internal/storage/sqlite/teams_test.go`
 - `go/internal/storage/sqlite/hooks.go` (schema and timestamp conventions of the `observations`/`hook_outbox` tables only)
 - `go/internal/workspace/inspect.go`, `go/internal/workspace/inspect_test.go`
 
@@ -80,7 +80,7 @@ Neighbors read for context (not specified here): `go/internal/provider/provider.
                                                                       events; health.update(startup)
                                  (11) localapi.Listen(SocketPath) ──▶ refuse live socket / non-socket,
                                                                       remove stale socket, listen, chmod 0600
-                                 (12) build health closure, hookWake chan(1), handler, renamers,
+                                 (12) build health closure, hookWake chan(1), handler, renamers, spawn support,
                                       http.Server{ReadHeaderTimeout 5s, IdleTimeout 30s}
                                  (13) go server.Serve(listener)
  readiness signal ◀───────────── (14) Config.Ready()
@@ -165,6 +165,12 @@ Neighbors read for context (not specified here): `go/internal/provider/provider.
 - **Source:** `go/internal/server/run.go` (Run)
 - **Decision:** D-042
 - **Verified by:** `go/internal/server/run_test.go` TestRunWithDisabledDiscoveryNeverProbesAndKeepsRenamers; `go/internal/localapi/rename_test.go` TestRenamePushesNameToProvidersThatSupportIt (handler)
+
+#### SRV-032 Spawn registration support
+- **Behavior:** After the renamers, `Run` MUST call `handler.SetSpawnSupport(hostID, inspector)` with the host identity of SRV-004 and the shared workspace inspector of SRV-008, independent of probe results and of `DisableDiscovery`. This is what lets `POST /v1/agents` register a spawned agent ([02-api.md](02-api.md) HTTP-036). The server itself MUST NOT start a provider session: the registration only records one that the caller started.
+- **Source:** `go/internal/server/run.go` (Run)
+- **Decision:** D-076
+- **Verified by:** `go/internal/cli/teams_test.go` TestSpawnStartsClaudeInTheBackground (a server run with `--discovery=false` registers spawns and describes the directory)
 
 #### SRV-014 Readiness
 - **Behavior:** `Config.Ready` (if non-nil) MUST be invoked exactly once, after the listener is bound and the `Serve` goroutine is launched, and before background workers start. The CLI uses it to signal the `--bg` parent (D-026).
@@ -386,8 +392,9 @@ the merge only through `existing`.
 | `native_short_id` | `N.NativeShortID` if non-empty, else `existing` |
 | `name` | `N.Name` if non-empty; else `existing.name` unless it is an ID placeholder (REC-011), else `""` |
 | `user_name` | not written by the reconciler; store column rule DB-016 |
+| `team`, `lead`, `parent_id` | not written by the reconciler; store column rule DB-027 |
 | `source_kind` | `N.SourceKind` if non-empty, else `existing` |
-| `origin` | `existing.origin` if non-empty, else `"reconcile"` |
+| `origin` | `existing.origin` if non-empty (`hook`, `spawn`), else `"reconcile"` |
 | `live_state` | always `live` (`N.LiveState` is ignored) |
 | `runtime_state` | `N.RuntimeState` (always overwrites, even empty) |
 | `activity_state` | `N.ActivityState` (always overwrites, even empty) |
@@ -428,6 +435,12 @@ the merge only through `existing`.
 - **Decision:** D-035, D-042
 - **Verified by:** `go/internal/storage/sqlite/store_test.go` TestProviderRenameReplacesUserName; `go/internal/registry/registry_test.go` TestMemoryProviderRenameReplacesUserName
 
+#### REC-030 Team, lead and parent are not the reconciler's
+- **Behavior:** The reconciler MUST NOT set an agent's `team`, `lead` or `parent_id`: the materialized agent carries none, and the store ignores them on an existing row and keeps what it has (DB-027). A row first created by the reconciler therefore has no team and no parent. The aging pass upserts rows it read from the store; the store ignores the overlay values those rows carry, so aging changes none of them either.
+- **Source:** `go/internal/reconcile/reconciler.go` (materialize, RunOnce), `go/internal/storage/sqlite/store.go` (Upsert)
+- **Decision:** D-071
+- **Verified by:** `go/internal/storage/sqlite/teams_test.go` TestTeamLeadAndParentAreStoredBesideTheSnapshot (an upsert of the whole agent changes none of them). Not tested through the reconciler itself.
+
 #### REC-013 Attention merge
 - **Behavior:** `attention` MUST start as `N.Attention`; an empty type becomes `none`. For a non-`none` type, `since` MUST be preserved from `existing.attention.since` when a row exists with the same `type`, the same `detail`, and a non-nil `since`; otherwise `since = now`. For `none`, `since` is whatever `N` supplied (normally nil). `native_request_id` comes from `N`.
 - **Source:** `go/internal/reconcile/reconciler.go` (materialize, mergeAttention)
@@ -457,14 +470,16 @@ the merge only through `existing`.
 - **Verified by:** `go/internal/reconcile/reconciler_test.go` TestReconcilerDropsProcessID
 
 #### REC-018 Origin preserved
-- **Behavior:** `origin` MUST be preserved from the existing row (e.g. `hook`); only a row first created by the reconciler gets `reconcile`.
+- **Behavior:** `origin` MUST be preserved from the existing row (`hook`, or `spawn` for a row a spawn registration created, [02-api.md](02-api.md) HTTP-036); only a row first created by the reconciler gets `reconcile`.
 - **Source:** `go/internal/reconcile/reconciler.go` (materialize)
 - **Verified by:** `go/internal/reconcile/reconciler_test.go` TestReconcilerPreservesHookPreviewAndConfirmsSnapshotCoverage
 
 ### Liveness state machine
 
 A row is **hook-only** when `snapshot_confirmed_at == nil && origin != "reconcile"`
-(`hookOnly` in `reconciler.go`); every other row is **snapshot-covered**. The aging pass
+(`hookOnly` in `reconciler.go`); every other row is **snapshot-covered**. A row
+that a spawn registration created (`origin` `spawn`) is hook-only by this
+definition until a snapshot includes its session. The aging pass
 reads `store.List(IncludeNotLive: true)` after all upserts and considers only rows
 with this reconciler's `host_id` and provider.
 
@@ -687,6 +702,19 @@ Discovery error: all rows unchanged, no events (REC-004).
 - **Decision:** D-035, D-042
 - **Verified by:** `go/internal/storage/sqlite/store_test.go` TestStorePersistsHostAndAgents
 
+#### DB-026 Migration 4
+- **Behavior:** Version 4 MUST execute, in one transaction:
+  ```sql
+  ALTER TABLE agents ADD COLUMN team TEXT NOT NULL DEFAULT '';
+  ALTER TABLE agents ADD COLUMN team_lead INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE agents ADD COLUMN parent_id TEXT NOT NULL DEFAULT '';
+  CREATE INDEX agents_team_idx ON agents (team);
+  ```
+  Rows that existed before the migration are in no team, lead nothing and have no parent.
+- **Source:** `go/internal/storage/sqlite/migrations.go` (migrations)
+- **Decision:** D-071
+- **Verified by:** `go/internal/storage/sqlite/teams_test.go` TestTeamLeadAndParentAreStoredBesideTheSnapshot; `go/internal/storage/sqlite/store_test.go` TestMigrationsAreIdempotentAndTolerateNewerDatabases (four migrations recorded). Migrating a database that already holds rows is UNTESTED.
+
 Effective schema after all migrations:
 
 | Table | Column | Type / constraint | Written by |
@@ -701,8 +729,11 @@ Effective schema after all migrations:
 | | `live_state` | `TEXT NOT NULL` (`live`/`candidate_stale`/`not_live`/…) | Upsert |
 | | `display_state` | `TEXT NOT NULL` (derived) | Upsert |
 | | `last_seen_at` | `TEXT NOT NULL`, Go `time.RFC3339Nano` UTC (variable fraction digits) | Upsert |
-| | `snapshot_json` | `BLOB NOT NULL`, JSON of `apiv1.Agent` without `user_name` | Upsert |
+| | `snapshot_json` | `BLOB NOT NULL`, JSON of `apiv1.Agent` without `user_name`, `team`, `lead`, `parent_id` | Upsert |
 | | `user_name` | `TEXT NOT NULL DEFAULT ''` | SetUserName; cleared by Upsert |
+| | `team` | `TEXT NOT NULL DEFAULT ''` (`''` = no team) | Upsert on insert only; SetTeam |
+| | `team_lead` | `INTEGER NOT NULL DEFAULT 0` (`1` = the team's lead) | SetLead; cleared by SetTeam |
+| | `parent_id` | `TEXT NOT NULL DEFAULT ''` (a noc agent id; not a foreign key) | Upsert on insert only; SetParent |
 | `observations` | `id` | `TEXT PRIMARY KEY` (event ID) | RecordObservation |
 | | `schema_version` | `INTEGER NOT NULL` | RecordObservation |
 | | `provider`, `host_id` | `TEXT NOT NULL` | RecordObservation |
@@ -720,7 +751,7 @@ Effective schema after all migrations:
 | | `processed_at` | `TEXT` | MarkObservationProcessed |
 | | `last_error` | `TEXT`, ≤ 1024 bytes | MarkObservationFailed |
 
-Indexes: `agents_live_display_idx`, `observations_session_received_idx`,
+Indexes: `agents_live_display_idx`, `agents_team_idx`, `observations_session_received_idx`,
 `observations_received_idx`, `hook_outbox_pending_idx`, plus SQLite's implicit
 `sqlite_autoindex_agents_1` (PK), `sqlite_autoindex_agents_2` (natural-key
 UNIQUE), `sqlite_autoindex_hook_outbox_1`, `sqlite_autoindex_metadata_1`,
@@ -728,7 +759,7 @@ UNIQUE), `sqlite_autoindex_hook_outbox_1`, `sqlite_autoindex_metadata_1`,
 `foreign_keys` is enabled but no table declares a foreign key.
 
 #### DB-011 JSON blob storage
-- **Behavior:** JSON columns MUST be written as Go `[]byte` (`json.Marshal` output), so SQLite stores them with type `blob`; SQL JSON functions (`json_extract`) operate on them directly. `snapshot_json` MUST be the full `apiv1.Agent` JSON (field names per its `json` tags, `omitempty` fields absent, timestamps as RFC3339Nano) with `schema_version = 1`, derived `display_state` and `bucket`, and `user_name` removed.
+- **Behavior:** JSON columns MUST be written as Go `[]byte` (`json.Marshal` output), so SQLite stores them with type `blob`; SQL JSON functions (`json_extract`) operate on them directly. `snapshot_json` MUST be the full `apiv1.Agent` JSON (field names per its `json` tags, `omitempty` fields absent, timestamps as RFC3339Nano) with `schema_version = 1`, derived `display_state` and `bucket`, and `user_name`, `team`, `lead` and `parent_id` removed.
 - **Source:** `go/internal/storage/sqlite/store.go` (Upsert)
 - **Verified by:** MANUAL: Verification procedure M3 — `SELECT typeof(snapshot_json), json_extract(snapshot_json,'$.user_name') FROM agents;` prints `blob|` (NULL).
 
@@ -743,18 +774,18 @@ UNIQUE), `sqlite_autoindex_hook_outbox_1`, `sqlite_autoindex_metadata_1`,
 ### Agent rows
 
 #### DB-013 Upsert validation and derived fields
-- **Behavior:** `Upsert` MUST reject an agent missing `id`, `host_id`, `provider`, or `native_session_id` with `agent ID, host ID, provider, and native session ID are required`. Before encoding it MUST set `schema_version = 1`, `display_state = DeriveDisplayState(agent)`, `bucket = DeriveBucket(agent)`, and `user_name = ""`. Encoding failure → `encode agent: <err>`.
+- **Behavior:** `Upsert` MUST reject an agent missing `id`, `host_id`, `provider`, or `native_session_id` with `agent ID, host ID, provider, and native session ID are required`. Before encoding it MUST set `schema_version = 1`, `display_state = DeriveDisplayState(agent)`, `bucket = DeriveBucket(agent)`, and `user_name = ""`; it MUST also take `team` and `parent_id` aside for the insert (DB-027) and blank `team`, `lead` and `parent_id` in the value it encodes. Encoding failure → `encode agent: <err>`.
 - **Source:** `go/internal/storage/sqlite/store.go` (Upsert)
 - **Decision:** D-046
 - **Verified by:** `go/internal/storage/sqlite/store_test.go` TestStorePersistsHostAndAgents
 
 #### DB-014 Upsert statement
-- **Behavior:** `Upsert` MUST execute exactly (parameters: id, host_id, provider, native_session_id, live_state, display_state, `last_seen_at.UTC().Format(RFC3339Nano)`, snapshot bytes, name, name):
+- **Behavior:** `Upsert` MUST execute exactly (parameters: id, host_id, provider, native_session_id, live_state, display_state, `last_seen_at.UTC().Format(RFC3339Nano)`, snapshot bytes, team, parent_id, name, name):
   ```sql
   INSERT INTO agents (
       id, host_id, provider, native_session_id, live_state,
-      display_state, last_seen_at, snapshot_json
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      display_state, last_seen_at, snapshot_json, team, parent_id
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
       host_id = excluded.host_id,
       provider = excluded.provider,
@@ -769,7 +800,7 @@ UNIQUE), `sqlite_autoindex_hook_outbox_1`, `sqlite_autoindex_metadata_1`,
       END,
       snapshot_json = excluded.snapshot_json
   ```
-  The conflict target is `id` only: inserting a different `id` for an existing natural key MUST fail with `upsert agent: ... UNIQUE constraint failed: agents.host_id, agents.provider, agents.native_session_id`. A new row gets `user_name = ''`. Each upsert is a single autocommit statement.
+  The conflict target is `id` only: inserting a different `id` for an existing natural key MUST fail with `upsert agent: ... UNIQUE constraint failed: agents.host_id, agents.provider, agents.native_session_id`. A new row gets `user_name = ''` and `team_lead = 0`. Each upsert is a single autocommit statement.
 - **Source:** `go/internal/storage/sqlite/store.go` (Upsert)
 - **Decision:** D-016
 - **Verified by:** `go/internal/storage/sqlite/store_test.go` TestStorePersistsHostAndAgents, TestUpsertNaturalKeyConflictWithDifferentIDFails
@@ -787,26 +818,43 @@ UNIQUE), `sqlite_autoindex_hook_outbox_1`, `sqlite_autoindex_metadata_1`,
 - **Verified by:** `go/internal/storage/sqlite/store_test.go` TestProviderRenameReplacesUserName, TestStorePersistsHostAndAgents
 
 #### DB-017 List
-- **Behavior:** `List` MUST execute `SELECT snapshot_json, user_name FROM agents [WHERE live_state <> 'not_live'] ORDER BY display_state, id`, the `WHERE` clause present unless `IncludeNotLive`. Ordering is byte-wise on the `display_state` string then `id`. An empty result MUST be a non-nil empty slice. Errors: `list agents`, `iterate agents`, or a decode error.
+- **Behavior:** `List` MUST execute `SELECT snapshot_json, user_name, team, team_lead, parent_id FROM agents [WHERE live_state <> 'not_live'] ORDER BY display_state, id`, the `WHERE` clause present unless `IncludeNotLive`. Ordering is byte-wise on the `display_state` string then `id`. An empty result MUST be a non-nil empty slice. Errors: `list agents`, `iterate agents`, or a decode error.
 - **Source:** `go/internal/storage/sqlite/store.go` (List)
 - **Verified by:** `go/internal/storage/sqlite/store_test.go` TestStorePersistsHostAndAgents, TestListFiltersAndOrdersAlphabetically
 
 #### DB-018 Get and GetByNativeIdentity
-- **Behavior:** `Get` MUST select by `id = ?`; `GetByNativeIdentity` by `host_id = ? AND provider = ? AND native_session_id = ?`. `sql.ErrNoRows` MUST map to `registry.ErrNotFound`; other errors are returned as is.
+- **Behavior:** Both select the same five columns as `List` (DB-017). `Get` MUST select by `id = ?`; `GetByNativeIdentity` by `host_id = ? AND provider = ? AND native_session_id = ?`. `sql.ErrNoRows` MUST map to `registry.ErrNotFound`; other errors are returned as is.
 - **Source:** `go/internal/storage/sqlite/store.go` (Get, GetByNativeIdentity, getWhere)
 - **Verified by:** `go/internal/storage/sqlite/store_test.go` TestStorePersistsHostAndAgents, TestForgetDeletesOnlyTheNamedAgent
 
 #### DB-019 Row decoding
-- **Behavior:** Decoding MUST unmarshal `snapshot_json` into `apiv1.Agent` (`decode stored agent: <err>` on failure), set `UserName` from the column, and recompute `Bucket = DeriveBucket(agent)` (so a row always carries the bucket the current rules give it, whatever was stored). `DisplayState` is NOT recomputed on read. `process_id` MUST round-trip.
+- **Behavior:** Decoding MUST unmarshal `snapshot_json` into `apiv1.Agent` (`decode stored agent: <err>` on failure), set `UserName`, `Team` and `ParentID` from their columns, set `Lead` to true only when `team_lead` is set and `team` is not empty, and recompute `Bucket = DeriveBucket(agent)` (so a row always carries the bucket the current rules give it, whatever was stored). `DisplayState` is NOT recomputed on read. `process_id` MUST round-trip.
 - **Source:** `go/internal/storage/sqlite/store.go` (scanAgent)
 - **Decision:** D-046
-- **Verified by:** `go/internal/storage/sqlite/store_test.go` TestForgetDeletesOnlyTheNamedAgent (process ID round trip)
+- **Verified by:** `go/internal/storage/sqlite/store_test.go` TestForgetDeletesOnlyTheNamedAgent (process ID round trip); `go/internal/storage/sqlite/teams_test.go` TestTeamLeadAndParentAreStoredBesideTheSnapshot (team, lead, parent). A set `team_lead` beside an empty `team` is UNTESTED (no method produces it).
 
 #### DB-020 SetUserName
 - **Behavior:** `SetUserName(id, name)` MUST execute `UPDATE agents SET user_name = ? WHERE id = ?` with the value as given (no trimming here; empty clears), return `registry.ErrNotFound` when no row was updated, and otherwise return `Get(id)`. Errors: `set agent user name`, `confirm agent user name`.
 - **Source:** `go/internal/storage/sqlite/store.go` (SetUserName)
 - **Decision:** D-035, D-042
 - **Verified by:** `go/internal/storage/sqlite/store_test.go` TestStorePersistsHostAndAgents
+
+#### DB-027 team, lead and parent on Upsert
+- **Behavior:** The `INSERT` of DB-014 MUST write the incoming agent's `team` and `parent_id` to their columns, and leave `team_lead` at its default `0`, whatever `lead` the incoming agent carries. The `ON CONFLICT` update MUST NOT name `team`, `team_lead` or `parent_id`, so an existing row keeps all three and the incoming values are ignored. The memory registry MUST apply the same rule: a new agent keeps its incoming team and parent with `Lead = false`; an existing one takes all three from the stored agent. ([02-api.md](02-api.md) REG-021 states the consequence for callers.)
+- **Source:** `go/internal/storage/sqlite/store.go` (Upsert), `go/internal/registry/registry.go` (Memory.Upsert)
+- **Decision:** D-071
+- **Verified by:** `go/internal/storage/sqlite/teams_test.go` TestTeamLeadAndParentAreStoredBesideTheSnapshot; `go/internal/localapi/teams_test.go` TestTeamMembershipAndLead, TestSpawnRegistrationRules (memory)
+
+#### DB-028 SetTeam, SetLead, SetParent
+- **Behavior:**
+  - `SetTeam(id, team)` MUST execute `UPDATE agents SET team_lead = CASE WHEN team = ? THEN team_lead ELSE 0 END, team = ? WHERE id = ?` (parameters team, team, id): the lead mark is kept only when the team does not change. Errors wrap as `set agent team: <err>`.
+  - `SetLead(id)` MUST, in one transaction, read `SELECT team FROM agents WHERE id = ?` (no row → `registry.ErrNotFound`; empty team → `registry.ErrNoTeam`, nothing written), execute `UPDATE agents SET team_lead = (id = ?) WHERE team = ?` (parameters id, team), and commit. Every other agent of the team loses the mark in the same statement. Errors wrap as `set team lead: <err>`.
+  - `SetParent(id, parentID)` MUST execute `UPDATE agents SET parent_id = ? WHERE id = ?`. Errors wrap as `set agent parent: <err>`.
+
+  `SetTeam` and `SetParent` return `registry.ErrNotFound` when no row was updated. All three return `Get(id)` on success. Values are stored as given; validating a team name is the HTTP handler's job.
+- **Source:** `go/internal/storage/sqlite/store.go` (SetTeam, SetLead, SetParent, updateOne)
+- **Decision:** D-071
+- **Verified by:** `go/internal/storage/sqlite/teams_test.go` TestTeamLeadAndParentAreStoredBesideTheSnapshot
 
 #### DB-021 Forget
 - **Behavior:** `Forget(id)` MUST execute `DELETE FROM agents WHERE id = ?` and return `registry.ErrNotFound` when no row was deleted (including a second forget). Errors: `forget agent`, `confirm forgotten agent`. Observations for the session are not deleted. A live session is recreated (with a new UUID) by its next hook or snapshot.
@@ -846,7 +894,7 @@ UNIQUE), `sqlite_autoindex_hook_outbox_1`, `sqlite_autoindex_metadata_1`,
 - **Verified by:** UNTESTED
 
 #### DB-025 Concurrency
-- **Behavior:** In-process access MUST be serialized through the single pooled connection; no statement nests another query while iterating rows. There are no explicit transactions outside migrations: each upsert, delete, and update is atomic on its own, but reconciler and hook-processor read-modify-write sequences are not, so a hook observation committed between a reconciler's read and its upsert can be overwritten by that upsert. Cross-process writers (each `noc hook ingest` opens its own `Store`) coordinate through WAL and the 5 s busy timeout.
+- **Behavior:** In-process access MUST be serialized through the single pooled connection; no statement nests another query while iterating rows. The only explicit transactions are the migrations and `SetLead` (DB-028): each upsert, delete, and other update is atomic on its own, but reconciler and hook-processor read-modify-write sequences are not, so a hook observation committed between a reconciler's read and its upsert can be overwritten by that upsert. Cross-process writers (each `noc hook ingest` opens its own `Store`) coordinate through WAL and the 5 s busy timeout.
 - **Source:** `go/internal/storage/sqlite/store.go` (Open), `go/internal/reconcile/reconciler.go` (RunOnce)
 - **Decision:** D-022, D-028
 - **Verified by:** UNTESTED
@@ -934,6 +982,7 @@ UNIQUE), `sqlite_autoindex_hook_outbox_1`, `sqlite_autoindex_metadata_1`,
 - **No immediate tick in discovery loops; immediate sweep in retention.** Startup already reconciled; retention sweeps on start so that a short-lived server still bounds the registry.
 - **Retention is slow on purpose.** Nothing depends on pruning being prompt, and the 14-day window lets a conversation closed by accident stay recoverable for more than a working week.
 - **`user_name` in its own column.** Provider reconciliation replaces the snapshot and so cannot erase a user's label; the one exception is a provider rename (DB-016).
+- **Team, lead and parent in their own columns too.** The same reasoning, without the exception: nothing a provider reports changes them (DB-027). `team_lead` is a flag on the member's row, not a pointer from a team record, because a team has no record of its own.
 - **Bucket recomputed on read, display state not.** A row that is never upserted again still gets the bucket the current rules give it (DB-019).
 - **Placeholder names not carried forward.** A stored name that only repeats a native ID is not a provider name; carrying it would make a later real name look like a rename (REC-011).
 - **Workspace failure is a plain directory.** Workspace metadata must never make agent discovery fail; failures are cached for the same 15 s.
@@ -1007,9 +1056,10 @@ Rules for every procedure below:
   that mode `PRAGMA journal_mode;` reports `delete`, not `wal`. After an unclean
   stop (`kill -9`) a leftover WAL may hold rows that immutable mode does not
   read.
-- Write SQL only against the real DDL (DB-008..DB-010). `agents` has only `id`,
-  `host_id`, `provider`, `native_session_id`, `live_state`, `display_state`,
-  `last_seen_at`, `snapshot_json`, and `user_name`. Every other agent field
+- Write SQL only against the real DDL (DB-008..DB-010, DB-026). `agents` has
+  only `id`, `host_id`, `provider`, `native_session_id`, `live_state`,
+  `display_state`, `last_seen_at`, `snapshot_json`, `user_name`, `team`,
+  `team_lead`, and `parent_id`. Every other agent field
   (`origin`, `name`, `ended_at`, `process_id`, …) is read with
   `json_extract(snapshot_json, '$.<field>')`.
 
@@ -1058,12 +1108,13 @@ sqlite3 "file:$T/state/noc.db?immutable=1" "
   SELECT sql FROM sqlite_master WHERE name IN ('agents','observations','hook_outbox','metadata');"
 ```
 
-Expected: `delete` with the immutable URI (`wal` with `-readonly` against a running server); versions `1|…`, `2|…`, `3|…` with `YYYY-MM-DDTHH:MM:SS.sssZ`;
-`host_id`; the nine index names listed under DB-010; `snapshot_json` type `blob`
+Expected: `delete` with the immutable URI (`wal` with `-readonly` against a running server); versions `1|…`, `2|…`, `3|…`, `4|…` with `YYYY-MM-DDTHH:MM:SS.sssZ`;
+`host_id`; the ten index names listed under DB-026; `snapshot_json` type `blob`
 and `$.user_name` NULL; observation payloads such as
 `{"native_event":"","reason":"observed_in_provider_snapshot","live_state":"live"}`;
-table DDL matching DB-008 with `user_name TEXT NOT NULL DEFAULT ''` appended to
-`agents`. Never open the database read-write while verifying.
+table DDL matching DB-008 with `user_name TEXT NOT NULL DEFAULT ''`,
+`team TEXT NOT NULL DEFAULT ''`, `team_lead INTEGER NOT NULL DEFAULT 0` and
+`parent_id TEXT NOT NULL DEFAULT ''` appended to `agents`. Never open the database read-write while verifying.
 
 ### M5 — discovery disabled freezes liveness (SRV-020)
 
@@ -1095,8 +1146,11 @@ commits stays `directory` (WS-007). Changes are visible within one poll plus the
 - Reconciler: `candidate_stale → live` revival and the event ID format
   (REC-028) have no automated test.
 - Storage: no test for pragmas (DB-004), migration from an older schema version
-  (DB-006), WAL side-file permissions (DB-005), or SQL `TRIM` vs Go `TrimSpace`
-  parity (DB-023).
+  (DB-006), including migration 4 over existing rows (DB-026), WAL side-file
+  permissions (DB-005), or SQL `TRIM` vs Go `TrimSpace` parity (DB-023).
+- Teams: no reconciler-level test that a snapshot pass or the aging pass
+  leaves `team`, `lead` and `parent_id` alone (REC-030); the storage test
+  covers the upsert rule they rely on.
 - `last_seen_at` is stored with variable fractional digits (RFC3339Nano), so
   the lexical `last_seen_at < ?` comparison in `PruneRetired` can misorder two
   instants within the same second (e.g. `…:35Z` sorts after `…:35.5Z`); the
@@ -1112,6 +1166,17 @@ commits stays `directory` (WS-007). Changes are visible within one poll plus the
 
 ## Known limitations
 
+- A row that a spawn registration created and that no hook or snapshot ever
+  confirms is never retired. It is hook-only with `process_id == 0`, so
+  neither absence from a snapshot (REC-023) nor the process signal (REC-024)
+  applies, and retention prunes only `not_live` rows (DB-022). It stays, as a
+  quiet agent with `runtime_state` `starting`, until `noc forget`
+  ([02-api.md](02-api.md) HTTP-036; `go/internal/reconcile/reconciler.go`
+  RunOnce).
+- Being in a team does not protect a row from retention, and `parent_id` is
+  not a foreign key: when a parent is forgotten or pruned, its children keep
+  an id that names no agent, and a team whose last member is pruned ceases to
+  exist (DB-022, DB-026; `go/internal/storage/sqlite/store.go` PruneRetired).
 - A provider whose startup probe fails gets no discovery worker and is never
   probed again; it recovers only when the server is restarted. Failures of
   `DiscoverLive` after a successful probe do recover on a later poll (SRV-009;

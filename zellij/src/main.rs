@@ -36,6 +36,8 @@ pub const CTX_SNAPSHOT: &str = "agent-snapshot";
 pub const CTX_DETAILS: &str = "agent-details";
 pub const CTX_STOP: &str = "stop-agent";
 pub const CTX_RENAME: &str = "rename-agent";
+pub const CTX_TEAM_JOIN: &str = "join-team";
+pub const CTX_TEAM_LEAVE: &str = "leave-team";
 
 /// Outer session: hand the keyboard to the panel, or back to the inner session.
 pub const PIPE_GRAB: &str = "zellij-noc.grab";
@@ -321,6 +323,8 @@ impl State {
             }
             CTX_STOP => self.on_stop_result(exit, stderr, context),
             CTX_RENAME => self.on_rename_result(exit, stderr, context),
+            CTX_TEAM_JOIN => self.on_team_result(true, exit, stderr, context),
+            CTX_TEAM_LEAVE => self.on_team_result(false, exit, stderr, context),
             panel::CTX_REGISTRY_WATCH => self.on_registry_watch_ended(),
             guest::CTX_WATCH => self.on_guest_watch(exit),
             guest::CTX_OPEN => self.on_guest_open(exit, stdout, stderr, context),

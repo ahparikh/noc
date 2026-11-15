@@ -29,7 +29,7 @@ of them disagrees with this specification, the specification wins.
 | [08-zellij-host.md](08-zellij-host.md) | The host session: layout, plugin configuration and permissions, lifecycle, keyboard ownership, actions in the inner session | `ZH`, `ZX`, `ZE` |
 | [09-verification.md](09-verification.md) | Gates, isolated smoke test, acceptance evidence, Zellij end-to-end test, real-provider checks, audits, change protocol | — |
 | [10-remote-nodes.md](10-remote-nodes.md) | **Planned, not built:** agents on other machines: hosts, the hub, `noc nodes`, routed commands, and the sidebar's host status and grouping | `NODE`, `NCLI`, `ZN` |
-| [11-cells.md](11-cells.md) | **Planned, first draft:** cells (agents that work together) and their handlers in `noc`; in Zellij, a room per cell, a tab per agent, panes as ways into the agent | `CELL`, `ZC` |
+| [11-teams.md](11-teams.md) | **Planned, first draft:** a Zellij view of a team: a room per team, a tab per agent, panes as ways into the agent. Teams themselves are built and specified in 02, 03, 04 and 07 | `ZT` |
 | [verify/isolated-smoke.sh](verify/isolated-smoke.sh) | Self-asserting end-to-end smoke test of the binary, fully isolated | — |
 
 ## Requirement format

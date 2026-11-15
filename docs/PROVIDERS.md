@@ -50,6 +50,8 @@ environment lacks the interactive `PATH` should set them.
 | Lifecycle hooks in `settings.json` | Low-latency events and interactive sessions |
 | `claude attach <short-id>`, `claude --bg --resume <session-id>` | `noc attach` |
 | `claude stop <short-id>` | `noc stop` |
+| `claude --bg --permission-mode auto <prompt>`, then `claude agents --json --all` | `noc spawn`: start a background session, then find its session ID by the job ID Claude printed |
+| `CLAUDE_CODE_SESSION_ID` in the environment of a session's commands | Which agent a `noc` command is run by |
 
 References: [agent view and JSON roster](https://code.claude.com/docs/en/agent-view),
 [hooks](https://code.claude.com/docs/en/hooks-guide),
@@ -156,6 +158,14 @@ never read or stored.
   the daemon's environment, including whatever pane the daemon was first
   started from. Bindings from those hooks would point at the wrong pane, so
   background sessions carry none.
+- **`claude --bg` chooses the session ID.** `--session-id` is ignored with
+  `--bg`, so `noc spawn` learns the ID from the roster entry whose job ID
+  Claude printed. A directory Claude does not trust makes `claude --bg` exit
+  with a message, which `noc spawn` relays.
+- **A background session does not inherit its starter's environment.**
+  `NOC_AGENT_ID` therefore does not reach a spawned agent. Claude sets
+  `CLAUDE_CODE_SESSION_ID` for the commands a session runs, and that is how
+  `noc` tells which agent ran `noc spawn` or `noc team`.
 - **A running session cannot be renamed from outside.** `noc rename` on a
   Claude agent stays a `noc`-side label, and the rename response says so.
 - **Hooks can be disabled** by safe or bare modes or by organization policy.
@@ -289,6 +299,20 @@ Two things are specific to Codex hooks:
   against it.
 - **Source shapes should be rechecked on upgrade.** The accepted sources are
   strings today; a change in representation would silently exclude threads.
+
+## The noc skill
+
+`noc setup skill [claude|codex]` installs one skill, the same for both
+providers, as `skills/noc/SKILL.md` under `~/.claude` (or
+`$CLAUDE_CONFIG_DIR`) and `~/.codex` (or `$CODEX_HOME`). `--check` reports
+whether each is installed and current, and `--uninstall` removes it. It
+teaches an agent to find itself (`noc whoami`), its team, and other agents,
+and to start workers. `noc` carries no messages yet: the skill tells an
+agent to use its provider's own means, addressed by what `noc` reports.
+
+A skill file that `noc` did not install is never written or removed. That
+Codex loads a skill from that path has not been checked against a running
+Codex.
 
 ## Hook setup
 

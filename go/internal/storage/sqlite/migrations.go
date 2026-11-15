@@ -75,6 +75,15 @@ CREATE INDEX hook_outbox_pending_idx
 		version: 3,
 		sql:     `ALTER TABLE agents ADD COLUMN user_name TEXT NOT NULL DEFAULT '';`,
 	},
+	{
+		version: 4,
+		sql: `
+ALTER TABLE agents ADD COLUMN team TEXT NOT NULL DEFAULT '';
+ALTER TABLE agents ADD COLUMN team_lead INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE agents ADD COLUMN parent_id TEXT NOT NULL DEFAULT '';
+CREATE INDEX agents_team_idx ON agents (team);
+`,
+	},
 }
 
 // migrate applies every migration newer than the recorded version, one

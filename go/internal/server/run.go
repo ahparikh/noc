@@ -176,6 +176,7 @@ func Run(ctx context.Context, cfg Config) error {
 		}
 	}
 	handler.SetRenamers(renamers)
+	handler.SetSpawnSupport(hostID, inspector)
 
 	httpServer := &http.Server{
 		Handler:           handler,

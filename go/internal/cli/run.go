@@ -50,24 +50,32 @@ Usage:
   noc server restart
   noc server stop
   noc server status [--json]
-  noc ls [--json] [--all] [--bucket blocked,working,review,quiet]
-  noc search [--json] [--older-than age] [--newer-than age] [--bucket ...] [text...]
+  noc ls [--json] [--all] [--bucket blocked,working,review,quiet] [--team name|none]
+  noc search [--json] [--older-than age] [--newer-than age] [--bucket ...] [--team name|none] [text...]
   noc show [--json] <agent-id>
   noc attach [--force] <agent-id>
   noc rename [--clear] <agent-id> [name]
   noc stop <agent-id>
   noc forget <agent-id> [<agent-id>...]
   noc events [--json] [--provider claude|codex] [--limit count] [agent-id]
-  noc watch [--json] [--all]
+  noc watch [--json] [--all] [--team name|none]
+  noc teams [--json]
+  noc team set <name> [agent-id...]
+  noc team clear [agent-id...]
+  noc team lead <name> [agent-id]
+  noc spawn [--provider claude] [--team name|none] [--name name] [--dir path] <prompt> [-- provider-arguments]
   noc doctor [--json]
   noc setup [--check|--uninstall] [claude|codex]
+  noc setup skill [--check|--uninstall] [claude|codex]
+  noc whoami [--json]
 
 Internal provider hook entrypoint:
   noc hook ingest --provider claude|codex
 
 The server runs in the foreground unless --bg is supplied. Provider discovery
 and durable hook ingestion are implemented. Run noc setup after installing the
-binary to configure Claude and Codex hooks.`
+binary to configure Claude and Codex hooks, and noc setup skill to teach
+agents how to use noc.`
 
 // Run executes the noc command line and returns the process exit code.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -105,6 +113,14 @@ func RunWithIO(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		return runEvents(ctx, rest, stdout, stderr)
 	case "watch":
 		return runWatch(ctx, rest, stdout, stderr)
+	case "team":
+		return runTeam(ctx, rest, stdout, stderr)
+	case "teams":
+		return runTeams(ctx, rest, stdout, stderr)
+	case "spawn":
+		return runSpawn(ctx, rest, stdout, stderr)
+	case "whoami":
+		return runWhoami(ctx, rest, stdout, stderr)
 	case "doctor":
 		return runDoctor(ctx, rest, stdout, stderr)
 	case "setup":
@@ -206,6 +222,7 @@ func runList(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	asJSON := fs.Bool("json", false, "write JSON")
 	all := fs.Bool("all", false, "include retained non-live agents")
 	bucketFlag := fs.String("bucket", "", "comma-separated buckets: blocked, working, review, quiet")
+	teamFlag := fs.String("team", "", "keep one team's agents, or none for agents in no team")
 	socket := fs.String("socket", paths.SocketPath, "server socket")
 	if code, stop := parseFlags(fs, args); stop {
 		return code
@@ -219,6 +236,11 @@ func runList(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "noc ls: %v\n", err)
 		return 2
 	}
+	team, err := parseTeamFilter(*teamFlag)
+	if err != nil {
+		fmt.Fprintf(stderr, "noc ls: %v\n", err)
+		return 2
+	}
 
 	client := localapi.NewClient(*socket)
 	defer client.Close()
@@ -228,7 +250,7 @@ func runList(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return printServerError(stderr, err)
 	}
-	list.Agents = filterBuckets(list.Agents, buckets)
+	list.Agents = filterTeam(filterBuckets(list.Agents, buckets), team)
 	sortByBucket(list.Agents)
 	if list.Agents == nil {
 		list.Agents = []apiv1.Agent{}
@@ -305,9 +327,18 @@ func renderAgents(w io.Writer, agents []apiv1.Agent) {
 		return
 	}
 	table := newTable(w)
-	fmt.Fprintln(table, "ID\tPROVIDER\tBUCKET\tSTATE\tWORKSPACE\tNAME")
+	teams := anyInTeam(agents)
+	if teams {
+		fmt.Fprintln(table, "ID\tTEAM\tPROVIDER\tBUCKET\tSTATE\tWORKSPACE\tNAME")
+	} else {
+		fmt.Fprintln(table, "ID\tPROVIDER\tBUCKET\tSTATE\tWORKSPACE\tNAME")
+	}
 	for _, agent := range agents {
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n", agent.ID, agent.Provider, agent.Bucket,
+		fmt.Fprintf(table, "%s\t", agent.ID)
+		if teams {
+			fmt.Fprintf(table, "%s\t", teamCell(agent))
+		}
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", agent.Provider, agent.Bucket,
 			agent.DisplayState, dash(agentWorkspacePath(agent)), dash(agentDisplayName(agent)))
 	}
 	_ = table.Flush()
@@ -360,6 +391,16 @@ func renderAgent(w io.Writer, agent apiv1.Agent) {
 	}
 	if agent.Name != "" {
 		row("Provider name", agent.Name)
+	}
+	if agent.Team != "" {
+		if agent.Lead {
+			row("Team", agent.Team+" (lead)")
+		} else {
+			row("Team", agent.Team)
+		}
+	}
+	if agent.ParentID != "" {
+		row("Parent", agent.ParentID)
 	}
 	if agent.Model != "" {
 		row("Model", agent.Model)
@@ -501,6 +542,7 @@ func runWatch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	fs := newFlagSet("noc watch", stderr)
 	asJSON := fs.Bool("json", false, "write NDJSON snapshots")
 	all := fs.Bool("all", false, "include retained non-live agents")
+	teamFlag := fs.String("team", "", "keep one team's agents, or none for agents in no team")
 	socket := fs.String("socket", paths.SocketPath, "server socket")
 	if code, stop := parseFlags(fs, args); stop {
 		return code
@@ -509,12 +551,18 @@ func runWatch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		fmt.Fprintln(stderr, "noc watch: unexpected positional arguments")
 		return 2
 	}
+	team, err := parseTeamFilter(*teamFlag)
+	if err != nil {
+		fmt.Fprintf(stderr, "noc watch: %v\n", err)
+		return 2
+	}
 	client := localapi.NewClient(*socket)
 	defer client.Close()
 
 	encoder := json.NewEncoder(stdout)
 	var previous *apiv1.AgentList
 	err = client.WatchAgents(ctx, *all, func(list apiv1.AgentList) error {
+		list.Agents = filterTeam(list.Agents, team)
 		if *asJSON {
 			return encoder.Encode(list)
 		}
@@ -784,6 +832,9 @@ func renderDoctorReport(w io.Writer, report doctor.Report) {
 }
 
 func runSetup(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if rest, ok := withoutSkillWord(args); ok {
+		return runSetupSkill(rest, stdout, stderr)
+	}
 	fs := newFlagSet("noc setup", stderr)
 	check := fs.Bool("check", false, "check hook configuration without changing it")
 	uninstall := fs.Bool("uninstall", false, "remove noc-managed hooks")

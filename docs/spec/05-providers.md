@@ -1344,6 +1344,9 @@ compares versions.
 | 21 | `preview` is usually the first user message | CDX-039 | Codex documentation (D-027) |
 | 22 | `thread/name/set {threadId, name}` renames a thread the way Codex's own rename does | CDX-043 | D-042 |
 | 23 | Closing the socket without a WebSocket Close frame is harmless to the daemon | CDX-013 | 0.154.0 |
+| 24 | `claude --bg <prompt>` starts a background session, returns at once, and prints the job's ID; it chooses the session ID itself and ignores `--session-id`. `--permission-mode auto` and `--name <name>` are accepted with it. It exits 1 with a message in a directory Claude does not trust. | [03-cli.md](03-cli.md) CLI-046 | 2.1.325 (by hand; not in any test) |
+| 25 | A job started that way is listed by `claude agents --json --all` as kind `background`, with `id` equal to the printed job ID and the full `sessionId` | [03-cli.md](03-cli.md) CLI-046 | 2.1.325 (by hand) |
+| 26 | Claude sets `CLAUDE_CODE_SESSION_ID` to the session's ID in the commands a session runs. A background session does not inherit the environment of the command that started it, so `NOC_AGENT_ID` does not reach it. | [03-cli.md](03-cli.md) CLI-043 | 2.1.325 (by hand) |
 
 ---
 

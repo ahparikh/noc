@@ -96,7 +96,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 ### ZH-023 The registry says when it changed
 - **Behavior:** With the default transport, permissions granted and the host session's name known, the panel MUST keep one watcher running: on a tick, when none is running and at least `5.0` s have passed since the last one ended, it runs `/bin/sh -c '<script>' sh <noc_bin> <host session> zellij-noc-registry-watch=<host session>` with context `zellij-noc=registry-watch`. The script first sends `TERM` to every other process whose command line ends in its third argument (a watcher an earlier load of the plugin left for the same session), then runs `<noc_bin> watch --json --all` and, for every line that prints, `zellij --session <host session> pipe --name zellij-noc.changed -- 1` with its input from `/dev/null`, ending when that fails. The names MUST be passed as arguments, never placed in the script text, and the lines `noc watch` prints MUST NOT be read: they only say that something changed. On a `zellij-noc.changed` message the panel MUST start a poll (ZH-009) at once, or, while one is in flight, as soon as its result is in. When the watcher's `RunCommandResult` arrives it has ended (the registry is not running, or was restarted) and is started again as above. The timed polls of ZH-009 go on regardless, so a watcher that cannot run costs only speed.
 - **Source:** `zellij/src/panel.rs` (`watch_registry`, `registry_watch_command`, `on_registry_changed`, `on_registry_watch_ended`, `on_snapshot_result`); `zellij/src/main.rs` (`handle_pipe`, `on_command_result`, `on_panel_tick`)
-- **Decision:** D-077
+- **Decision:** D-079
 - **Verified by:** `zellij/src/panel.rs` `the_registry_watcher_takes_its_names_as_arguments`; `zellij/e2e/nested.sh` "the sidebar runs a registry watcher"; that a change reaches the panel ahead of the timed poll is MANUAL: in a `--fake` dev pair, write `zellij/target/e2e/agents.json` with another name and watch the sidebar
 
 ### ZH-010 Poll results
@@ -110,7 +110,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** `zellij/src/panes.rs` `recognizes_server_connection_failures_without_hiding_other_errors`
 
 ### ZH-012 Command result routing
-- **Behavior:** The panel MUST route `RunCommandResult` by the context value under key `zellij-noc`: `agent-snapshot` (ZH-010), `stop-agent`, `rename-agent` (ZH-013), `registry-watch` (ZH-023), `guest-watch` (ZX-020), `guest-open` (ZX-031), `update-check` (ZH-022), `host-info` (ZX-038). Results with no such key or any other value, including `host-action`, MUST be ignored. The details window handles only `agent-details`.
+- **Behavior:** The panel MUST route `RunCommandResult` by the context value under key `zellij-noc`: `agent-snapshot` (ZH-010), `stop-agent`, `rename-agent` (ZH-013), `join-team`, `leave-team` ([07-zellij-panel.md](07-zellij-panel.md) ZK-032, ZK-033), `registry-watch` (ZH-023), `guest-watch` (ZX-020), `guest-open` (ZX-031), `update-check` (ZH-022), `host-info` (ZX-038). Results with no such key or any other value, including `host-action`, MUST be ignored. The details window handles only `agent-details`.
 - **Source:** `zellij/src/main.rs` (`on_command_result`); `zellij/src/details.rs` (`update_details`)
 - **Verified by:** UNTESTED
 
@@ -152,6 +152,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
   | `away_key`, `home_key` | `Ctrl Alt Shift F11`, `Ctrl Alt Shift F12` | the keys typed into the inner session to switch theme |
   | `update_check` | on | `false` turns the release check (ZH-022) off; any other value does not |
   | `pane_titles` | show | what the frames of the inner session's panes say: `name` names each pane `<host> · <what runs in it>`, `hide` blanks the title, any other value leaves the titles alone (ZX-038) |
+  | `group_by` | `status` | `team` groups the sidebar by team; any other value groups it by status ([07-zellij-panel.md](07-zellij-panel.md) ZG-017) |
   | `colors` | built-in | `zellij` makes the panel follow the Zellij theme; any other value keeps the built-in colours ([07-zellij-panel.md](07-zellij-panel.md) ZR-018) |
   | `agent_id` | empty | details role only |
 
@@ -220,7 +221,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** `zellij/e2e/nested.sh` "host session has the sidebar and one guest pane", "the keyboard starts in the inner session"
 
 ### ZX-005 Host session options
-- **Behavior:** The host layout file MUST set, at top level, `session_serialization false`, `show_startup_tips false`, `show_release_notes false` and `nested_session_handling "never"`. These apply to the host session only.
+- **Behavior:** The host layout file MUST set, at top level, `session_serialization false`, `show_startup_tips false`, `show_release_notes false`, `nested_session_handling "never"` and `web_sharing "on"`. These apply to the host session only. The inner layout MUST NOT set `web_sharing`.
 - **Source:** `zellij/config/layouts/noc-host.kdl`
 - **Verified by:** UNTESTED
 

@@ -289,7 +289,7 @@ func TestErrorCatalogOverRawHTTP(t *testing.T) {
 		status             int
 		allow, code, msg   string
 	}{
-		{"POST", "/v1/agents", "", 405, "GET", "method_not_allowed", "method not allowed"},
+		{"DELETE", "/v1/agents", "", 405, "GET, POST", "method_not_allowed", "method not allowed"},
 		{"POST", "/v1/agents/a1", "", 405, "GET", "method_not_allowed", ""},
 		{"HEAD", "/v1/health", "", 405, "GET", "", ""},
 		{"GET", "/v1/agents/", "", 400, "", "invalid_agent_id", "an agent ID is required"},

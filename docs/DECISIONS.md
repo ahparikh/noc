@@ -735,6 +735,22 @@ at a glance; the words matter only when the colour is not green.
 opened. A prompt or a notice still takes the whole line while it lasts, so
 the count is hidden while a search is being typed.
 
+### D-077: the host session can be opened in Zellij's web client
+
+`layouts/noc-host.kdl` sets `web_sharing "on"` for the host session. The
+inner layout does not set it.
+
+**Why:** the pair is the one shape of the frontend, and a browser that
+attaches to the host gets the whole of it: the inner session is a client
+in the host's guest pane, so it is drawn there like any other program.
+Zellij's default (`"off"`) would make each user find and change the option
+before the pair could be opened that way.
+**Consequence:** the option only permits sharing. Nothing listens until the
+user starts `zellij web`, which binds to 127.0.0.1 and requires a login
+token; noc never starts it. Anyone holding a token for that server can
+attach to the host and type in it. `web_sharing "off"` in the layout opts
+out.
+
 ## Names, state, and grouping
 
 ### D-042: names are two-way and the most recent rename wins

@@ -86,6 +86,22 @@ Answer `y`. Zellij remembers the answer for that plugin location.
 If Zellij shows its own welcome screen in new sessions, it shows it in both
 sessions of the pair. `Ctrl c` in that screen turns it off for good.
 
+### In a browser
+
+The host session allows Zellij's web client (`web_sharing "on"` in
+`layouts/noc-host.kdl`). Nothing is served until you start Zellij's web
+server yourself:
+
+```sh
+zellij web --create-token   # shown once; the browser asks for it
+zellij web -d               # serves on 127.0.0.1:8082
+```
+
+Then open `http://127.0.0.1:8082/noc-host`. Open the host, not the inner
+session: the inner session shows inside it, beside the sidebar. A browser
+may keep some keys for itself. To keep the host out of the browser, set
+`web_sharing "off"` in the layout and start the pair again.
+
 ## Keys
 
 In the host session, anywhere:

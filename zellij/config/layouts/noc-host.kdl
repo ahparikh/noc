@@ -98,6 +98,11 @@ show_startup_tips false
 show_release_notes false
 // The host never takes over the inner session's keys or zooms into it.
 nested_session_handling "never"
+// The host can be opened in a browser while Zellij's web server runs
+// (`zellij web`, which asks for a login token). The inner session shows
+// inside it and needs no sharing of its own. "off" keeps the host out of
+// the browser.
+web_sharing "on"
 
 // The host sees every key first. A key it does not bind is typed into the
 // focused pane unchanged, so the inner session keeps all of its own keys.

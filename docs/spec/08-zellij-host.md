@@ -215,7 +215,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** `zellij/e2e/nested.sh` "host session has the sidebar and one guest pane", "the keyboard starts in the inner session"
 
 ### ZX-005 Host session options
-- **Behavior:** The host layout file MUST set, at top level, `session_serialization false`, `show_startup_tips false`, `show_release_notes false` and `nested_session_handling "never"`. These apply to the host session only.
+- **Behavior:** The host layout file MUST set, at top level, `session_serialization false`, `show_startup_tips false`, `show_release_notes false`, `nested_session_handling "never"` and `web_sharing "on"`. These apply to the host session only. The inner layout MUST NOT set `web_sharing`.
 - **Source:** `zellij/config/layouts/noc-host.kdl`
 - **Verified by:** UNTESTED
 

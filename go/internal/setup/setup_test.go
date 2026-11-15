@@ -128,16 +128,86 @@ func TestRunValidation(t *testing.T) {
 	}
 }
 
+// The hooks must name the path the user runs, not the versioned file a
+// package manager's symlink points at today.
+func TestHooksSurviveAnUpgradeBehindASymlink(t *testing.T) {
+	paths, _ := fixture(t)
+	root := t.TempDir()
+	version := func(v string) string {
+		exe := filepath.Join(root, "Cellar", v, "bin", "noc")
+		if err := os.MkdirAll(filepath.Dir(exe), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(exe, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return exe
+	}
+	old := version("0.1.0")
+	stable := filepath.Join(root, "bin", "noc")
+	if err := os.MkdirAll(filepath.Dir(stable), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(old, stable); err != nil {
+		t.Fatal(err)
+	}
+	onPath := func(string) (string, error) { return stable, nil }
+
+	// Started as `noc`, found on PATH as the symlink.
+	if got := invokedName("noc", old, onPath); got != stable {
+		t.Fatalf("bare name: %q", got)
+	}
+	if got := invokedName(stable, old, onPath); got != stable {
+		t.Fatalf("path: %q", got)
+	}
+	// A name that leads somewhere else, or nowhere, is not trusted.
+	other := version("9.9.9")
+	if got := invokedName(other, old, onPath); got != old {
+		t.Fatalf("other file: %q", got)
+	}
+	missing := func(string) (string, error) { return "", os.ErrNotExist }
+	if got := invokedName("noc", old, missing); got != old {
+		t.Fatalf("not on PATH: %q", got)
+	}
+
+	ctx := context.Background()
+	report, err := run(ctx, Options{Action: ActionInstall, Providers: []apiv1.Provider{apiv1.ProviderClaude}, Executable: stable}, paths)
+	if err != nil || report.ExecutablePath != stable {
+		t.Fatalf("install: %q %v", report.ExecutablePath, err)
+	}
+	data, err := os.ReadFile(paths.ClaudeSettings)
+	if err != nil || !strings.Contains(string(data), stable) || strings.Contains(string(data), "Cellar") {
+		t.Fatalf("settings name the versioned file: %s %v", data, err)
+	}
+
+	// The upgrade: a new version, the symlink moved, the old one removed.
+	next := version("0.2.0")
+	if err := os.Remove(stable); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(next, stable); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Dir(filepath.Dir(old))); err != nil {
+		t.Fatal(err)
+	}
+	check, err := run(ctx, Options{Action: ActionCheck, Providers: []apiv1.Provider{apiv1.ProviderClaude}, Executable: next}, paths)
+	if err != nil || len(check.Results) != 1 || !check.Results[0].Complete {
+		t.Fatalf("hooks did not survive the upgrade: %+v %v", check.Results, err)
+	}
+}
+
 func TestResolveExecutable(t *testing.T) {
 	_, exe := fixture(t)
 	if got, err := resolveExecutable(exe); err != nil || got != exe {
 		t.Fatalf("%q %v", got, err)
 	}
-	link := filepath.Join(t.TempDir(), "link")
+	// A symlink is kept: it is the name that survives an upgrade.
+	link := filepath.Join(t.TempDir(), "noc")
 	if err := os.Symlink(exe, link); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := resolveExecutable(link); err != nil || got != exe {
+	if got, err := resolveExecutable(link); err != nil || got != link {
 		t.Fatalf("symlink: %q %v", got, err)
 	}
 	if _, err := resolveExecutable(filepath.Join(t.TempDir(), "missing")); err == nil || !strings.HasPrefix(err.Error(), "inspect noc executable ") {

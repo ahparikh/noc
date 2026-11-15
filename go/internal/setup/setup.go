@@ -5,7 +5,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"noc.local/noc/internal/hookconfig"
 	apiv1 "noc.local/noc/pkg/api/v1"
@@ -124,19 +126,46 @@ func run(ctx context.Context, opts Options, paths hookconfig.Paths) (Report, err
 	return report, nil
 }
 
+// invokedName returns the name this process was started by (arg0, looked
+// up on PATH when it has no directory) when that name leads to exe, the
+// running executable; otherwise exe itself.
+func invokedName(arg0, exe string, lookPath func(string) (string, error)) string {
+	name := arg0
+	if !strings.ContainsRune(name, filepath.Separator) {
+		found, err := lookPath(name)
+		if err != nil {
+			return exe
+		}
+		name = found
+	}
+	abs, err := filepath.Abs(name)
+	if err != nil {
+		return exe
+	}
+	want, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		return exe
+	}
+	if got, err := filepath.EvalSymlinks(abs); err != nil || got != want {
+		return exe
+	}
+	return abs
+}
+
+// resolveExecutable returns the path the hooks will run. Symlinks are kept:
+// a package manager's stable name (Homebrew's bin/noc) points at a
+// versioned directory that the next upgrade removes.
 func resolveExecutable(path string) (string, error) {
 	if path == "" {
-		var err error
-		if path, err = os.Executable(); err != nil {
+		exe, err := os.Executable()
+		if err != nil {
 			return "", fmt.Errorf("resolve noc executable: %w", err)
 		}
+		path = invokedName(os.Args[0], exe, exec.LookPath)
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", fmt.Errorf("resolve noc executable: %w", err)
-	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = resolved
 	}
 	info, err := os.Stat(abs)
 	if err != nil {

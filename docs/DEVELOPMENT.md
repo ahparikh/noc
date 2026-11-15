@@ -160,7 +160,8 @@ Steps:
 3. When the workflow finishes, upgrade your own machines. Each running
    sidebar shows `↑ vX.Y.Z` within six hours (or when it next starts):
    - binary: `brew update && brew upgrade noc` (or run `install.sh`
-     again), then `noc server restart`;
+     again), then `noc server restart`; and `noc setup` once if the hooks
+     were installed by v0.1.4 or earlier (`noc doctor` says so);
    - plugin: change the version in the plugin URL in your `noc-host.kdl`
      and `noc-inner.kdl`, then
      end the pair (`zellij kill-session noc`) and start it again. Zellij asks for the plugin's permissions again

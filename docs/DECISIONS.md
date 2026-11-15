@@ -450,6 +450,9 @@ those and uninstalling removes only those. Writes are atomic, and a
 configuration file that is a symlink is updated at its target. A malformed
 file is an error and is left untouched. An existing `noc` hook in Codex's
 `config.toml` is a conflict: setup refuses to add a second representation.
+The path is the one `noc` was started by, symlinks kept: a package manager
+replaces the versioned file on every upgrade and keeps only its stable name
+pointing at it.
 
 **Why:** recognizing handlers by their exact shape makes install, upgrade,
 and uninstall reversible without a custom marker format.

@@ -162,11 +162,25 @@ pub fn is_default_tab_name(name: &str) -> bool {
 
 /// The pane holding a tab's keyboard. `is_focused` is per layer, so floating
 /// panes win only while they are visible.
-pub fn focused_pane(panes_in_tab: &[ScanPane], floating_visible: bool) -> Option<&ScanPane> {
+///
+/// Several tiled panes can say they are focused: Zellij keeps the flag set
+/// on the pane a client was in when it detached. The plugin pane `own`
+/// cannot be selected except while it has the keyboard, so when it says it
+/// is focused it is, whatever another pane still says.
+pub fn focused_pane(
+    panes_in_tab: &[ScanPane],
+    floating_visible: bool,
+    own: u32,
+) -> Option<&ScanPane> {
     let tiled = || {
-        panes_in_tab
+        let mut focused = panes_in_tab
             .iter()
-            .find(|p| p.is_focused && !p.is_suppressed && !p.is_floating)
+            .filter(|p| p.is_focused && !p.is_suppressed && !p.is_floating);
+        let first = focused.next()?;
+        if first.is_plugin && first.id == own {
+            return Some(first);
+        }
+        focused.find(|p| p.is_plugin && p.id == own).or(Some(first))
     };
     if floating_visible {
         panes_in_tab
@@ -635,6 +649,49 @@ mod tests {
     }
 
     #[test]
+    fn the_sidebar_has_the_keyboard_when_it_says_so_whatever_the_guest_pane_says() {
+        let sidebar = |focused: bool| ScanPane {
+            is_plugin: true,
+            ..pane_at(2, 0, focused, false)
+        };
+        let has = |panes: &[ScanPane]| focused_pane(panes, false, 2).map(|p| p.is_plugin);
+        // A client detached while in the guest pane: its flag stays set, in
+        // either order of the two panes.
+        assert_eq!(
+            has(&[pane_at(0, 0, true, false), sidebar(true)]),
+            Some(true)
+        );
+        assert_eq!(
+            has(&[sidebar(true), pane_at(0, 0, true, false)]),
+            Some(true)
+        );
+        // The keyboard really is in the guest pane.
+        assert_eq!(
+            has(&[pane_at(0, 0, true, false), sidebar(false)]),
+            Some(false)
+        );
+        // Another plugin pane that is focused is not the sidebar.
+        let other = ScanPane {
+            is_plugin: true,
+            ..pane_at(7, 0, true, false)
+        };
+        assert_eq!(
+            focused_pane(&[other, pane_at(0, 0, true, false)], false, 2).map(|p| p.id),
+            Some(7)
+        );
+        // Terminal 2 is not plugin 2.
+        assert_eq!(
+            focused_pane(
+                &[pane_at(0, 0, true, false), pane_at(2, 0, true, false)],
+                false,
+                2
+            )
+            .map(|p| p.id),
+            Some(0)
+        );
+    }
+
+    #[test]
     fn focused_pane_prefers_visible_floating_panes() {
         let panes = vec![
             pane_at(1, 0, true, false),
@@ -644,12 +701,12 @@ mod tests {
                 ..pane_at(3, 0, true, true)
             },
         ];
-        assert_eq!(focused_pane(&panes, true).map(|p| p.id), Some(2));
-        assert_eq!(focused_pane(&panes, false).map(|p| p.id), Some(1));
+        assert_eq!(focused_pane(&panes, true, 9).map(|p| p.id), Some(2));
+        assert_eq!(focused_pane(&panes, false, 9).map(|p| p.id), Some(1));
         // Falls back to the tiled pane when no floating pane is focused.
         let panes = vec![pane_at(1, 0, true, false), pane_at(2, 0, false, true)];
-        assert_eq!(focused_pane(&panes, true).map(|p| p.id), Some(1));
-        assert!(focused_pane(&[pane_at(1, 0, false, false)], true).is_none());
+        assert_eq!(focused_pane(&panes, true, 9).map(|p| p.id), Some(1));
+        assert!(focused_pane(&[pane_at(1, 0, false, false)], true, 9).is_none());
     }
 
     #[test]

@@ -251,6 +251,17 @@ check "the inner client stays attached in the guest pane" [ "$(clients "$INNER")
 keys "env -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID NOC_DEV_NAME=$INNER '$ROOT/dev.sh' --fake start" Enter
 check "starting again attaches to the running pair" wait_for 10 sh -c "[ \"\$(env -u ZELLIJ -u ZELLIJ_SESSION_NAME zellij --session '$HOST' action list-clients | tail -n +2 | grep -c .)\" = 1 ]"
 
+# Zellij still calls the guest pane focused, for the client that detached.
+# The sidebar must not take that for the keyboard being there.
+sleep 2
+keys M-m
+wait_for 5 host_focus_is "$SIDEBAR"
+sleep 3 # longer than the grab window
+check "the sidebar keeps the keyboard after a detach and re-attach" host_focus_is "$SIDEBAR"
+check "and the inner session wears the away theme" [ "$(bar_colour)" = "$AWAY_COLOUR" ]
+keys M-m
+wait_for 5 host_focus_is "$GUEST"
+
 if [ "$KEEP" = 0 ]; then
 	z kill-session "$INNER" >/dev/null 2>&1
 	host_gone() { ! alive "$HOST"; }

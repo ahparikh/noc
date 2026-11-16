@@ -614,7 +614,7 @@ impl State {
     fn keyboard_pane(&self) -> Option<ScanPane> {
         let tab = self.own_tab_position?;
         let in_tab = tab_panes(&self.panes, tab);
-        focused_pane(&in_tab, self.floating_visible(tab)).cloned()
+        focused_pane(&in_tab, self.floating_visible(tab), self.plugin_id).cloned()
     }
 
     pub fn panel_has_keyboard(&self) -> bool {

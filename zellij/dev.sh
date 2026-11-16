@@ -93,9 +93,14 @@ render() {
 		chmod +x "$noc"
 	fi
 
-	rm -f "$OUT/config.kdl" "$OUT/layouts/$HOST.kdl" "$OUT/layouts/noc-inner.kdl" "$OUT/themes/noc-blue.kdl"
+	# The links first. With --installed, `themes` is a link to the user's own
+	# themes directory, and removing a file through it would remove theirs.
 	find "$OUT" -maxdepth 2 -type l -delete
-	rmdir "$OUT/themes" 2>/dev/null || true
+	rm -f "$OUT/config.kdl" "$OUT/layouts/$HOST.kdl" "$OUT/layouts/noc-inner.kdl"
+	if [ -d "$OUT/themes" ] && [ ! -L "$OUT/themes" ]; then
+		rm -f "$OUT/themes/noc-blue.kdl"
+		rmdir "$OUT/themes" 2>/dev/null || true
+	fi
 	if [ "$MODE" = installed ]; then
 		render_installed
 	else

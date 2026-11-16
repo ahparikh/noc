@@ -264,9 +264,9 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 ## 5. Keyboard ownership
 
 ### ZX-009 Which pane has the keyboard
-- **Behavior:** The panel MUST find its own tab from the `PaneUpdate` manifest entry whose plugin id is its own, and record that entry's plugin URL. The pane with the keyboard is, among the panes of that tab: the focused, non-suppressed floating pane if the tab's floating panes are visible and one is focused; otherwise the focused, non-suppressed tiled pane. The panel has the keyboard when that pane is its own plugin pane. The guest pane has the keyboard when that pane is a terminal; this is unknown until a tab has been reported.
+- **Behavior:** The panel MUST find its own tab from the `PaneUpdate` manifest entry whose plugin id is its own, and record that entry's plugin URL. The pane with the keyboard is, among the panes of that tab: the focused, non-suppressed floating pane if the tab's floating panes are visible and one is focused; otherwise the focused, non-suppressed tiled pane. Several tiled panes can be reported focused, because Zellij leaves the flag set on the pane a client was in when it detached: the panel's own plugin pane MUST then be taken when it is among them (it cannot be selected except while it has the keyboard, ZX-011), and otherwise the first. The panel has the keyboard when that pane is its own plugin pane. The guest pane has the keyboard when that pane is a terminal; this is unknown until a tab has been reported.
 - **Source:** `zellij/src/main.rs` (`on_pane_update`); `zellij/src/panel.rs` (`keyboard_pane`, `panel_has_keyboard`, `guest_has_keyboard`); `zellij/src/panes.rs` (`focused_pane`, `find_plugin_pane`)
-- **Verified by:** `zellij/src/panes.rs` `focused_pane_prefers_visible_floating_panes`, `finds_its_own_plugin_pane_in_the_manifest`
+- **Verified by:** `zellij/src/panes.rs` `focused_pane_prefers_visible_floating_panes`, `the_sidebar_has_the_keyboard_when_it_says_so_whatever_the_guest_pane_says`, `finds_its_own_plugin_pane_in_the_manifest`; `zellij/e2e/nested.sh` "the sidebar keeps the keyboard after a detach and re-attach"
 
 ### ZX-010 The guest pane
 - **Behavior:** The guest pane is the first pane in the panel's tab that is a terminal, not suppressed and not floating.
@@ -484,9 +484,9 @@ The panel does not read the inner session itself. The relay there (ZX-039) sends
 - **Verified by:** `zellij/e2e/nested.sh` (runs under `NOC_DEV_NAME=noc-e2e`); error paths UNTESTED
 
 ### ZE-006 Rendering: the `noc` executable
-- **Behavior:** `render` MUST fail with `missing <wasm> (run: make zellij)` when the plugin is not built. It writes to `zellij/target/dev/<inner>/`. With `--fake`, `noc_bin` is `zellij/e2e/fake-noc`. Without it, `go/bin/noc` MUST exist (else `missing <path> (run: make build)`), and `noc_bin` is a generated executable wrapper `<out>/noc` that runs `go/bin/noc` with `NOC_STATE_DIR=${XDG_STATE_HOME:-$HOME/.local/state}/<inner>` and `NOC_RUNTIME_DIR=${XDG_CACHE_HOME:-$HOME/.cache}/<inner>`.
+- **Behavior:** `render` MUST fail with `missing <wasm> (run: make zellij)` when the plugin is not built. It writes to `zellij/target/dev/<inner>/`, first removing what an earlier render left there: every symbolic link up to two levels deep, then the files it wrote (`config.kdl`, the two layouts, `themes/noc-blue.kdl`). The links MUST go first, and `themes/noc-blue.kdl` MUST be removed only when `themes` is a directory of its own: with `--installed` it is a link to the user's themes directory, and removing through it would delete the user's file. With `--fake`, `noc_bin` is `zellij/e2e/fake-noc`. Without it, `go/bin/noc` MUST exist (else `missing <path> (run: make build)`), and `noc_bin` is a generated executable wrapper `<out>/noc` that runs `go/bin/noc` with `NOC_STATE_DIR=${XDG_STATE_HOME:-$HOME/.local/state}/<inner>` and `NOC_RUNTIME_DIR=${XDG_CACHE_HOME:-$HOME/.cache}/<inner>`.
 - **Source:** `zellij/dev.sh` (`render`)
-- **Verified by:** `zellij/e2e/nested.sh` "sidebar lists the registry's agents" (`--fake` only); the wrapper UNTESTED
+- **Verified by:** `zellij/e2e/nested.sh` "sidebar lists the registry's agents" (`--fake` only); the wrapper UNTESTED; that a second `--installed` render leaves the user's themes alone is MANUAL: `ZELLIJ_CONFIG_DIR=<a copy> dev.sh --installed render` twice, then list the copy's `themes/`
 
 ### ZE-007 Rendering: `config.kdl`
 - **Behavior:** Without `--installed`, `zellij/config/themes/noc-blue.kdl` is copied to `<out>/themes/`, and `<out>/config.kdl` MUST be a header comment, `theme "<home>"`, `show_startup_tips false`, `show_release_notes false`, `session_serialization false`, `pane_frames true`, `pane_frame_style "full"` and `ui { pane_frames { rounded_corners true; }; }` (Zellij's default draws only a title above each pane), and nothing of noc's. The theme pair `<home>`, `<away>` is `noc-blue` and `noc-blue-away`; with `--fake` it is the built-in `catppuccin-mocha` and `catppuccin-macchiato`, whose tab bars differ, which is what the harness looks at (ZE-013).
@@ -574,7 +574,9 @@ The panel does not read the inner session itself. The relay there (ZX-039) sends
   | 25 | both sessions keep running | both listed and not `EXITED` |
   | 26 | the inner client stays attached in the guest pane | inner client count is 1 |
   | 27 | starting again attaches to the running pair | host client count is 1 within 10 s |
-  | 28 | ending the inner session ends the host session | after `kill-session <inner>`, the host is gone within 10 s (skipped with `--keep`) |
+  | 28 | the sidebar keeps the keyboard after a detach and re-attach | `Alt m`, then `3` s later (longer than the grab window) host focus is still the panel |
+  | 29 | and the inner session wears the away theme | row 1 colour equals the away reading of check 8 |
+  | 30 | ending the inner session ends the host session | after `kill-session <inner>`, the host is gone within 10 s (skipped with `--keep`) |
 
   It ends with `nested: all checks passed` and exit `0`, or `nested: <N> check(s) failed` and exit `1`.
 - **Source:** `zellij/e2e/nested.sh`

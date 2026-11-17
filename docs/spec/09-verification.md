@@ -195,6 +195,12 @@ are not touched. `nested.sh --keep` leaves the pair running for inspection.
 location, interactively. Run `make dev` once and grant them in the sidebar;
 until then the script stops with a message saying the plugin is waiting for
 its permissions. This is why the test is a local gate and not a CI job.
+With `NOC_E2E_GRANT=1` in the environment the script answers the prompt
+itself: it moves the host session's focus to the sidebar, sends `y` through
+tmux, waits for the prompt to go, and starts the pair again before the
+first check. Zellij records the grant; the script never writes the
+permission cache. Without the variable the script MUST NOT answer the
+prompt.
 
 The 26 checks, in order:
 

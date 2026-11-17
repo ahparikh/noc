@@ -562,7 +562,10 @@ instance asked for, so roles that ask for different sets overwrite each
 other's grant and stall on a prompt nobody can see. Running commands is
 already granted, so writing through the CLI needs no further permission.
 **Consequence:** the user answers one prompt per plugin location. Nothing
-in the repository writes to Zellij's permission cache.
+in the repository writes to Zellij's permission cache. The one thing that
+answers the prompt for the user is the end-to-end test, only when asked to
+with `NOC_E2E_GRANT=1`, and by pressing `y` in the sidebar as a person
+would: it exists for throwaway machines where nobody is there to answer.
 
 ### D-058: releases are the only way into daily use
 

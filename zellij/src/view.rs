@@ -6,7 +6,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use zellij_tile::prelude::{ModeInfo, PaletteColor};
 
 pub const FOOTER: &str = "[?] keys  [D]etails  [d] window";
-pub const DETAILS_FOOTER: &str = "Esc / D  close";
+pub const DETAILS_FOOTER: &str = "Esc / d  close";
 
 // ---- theme ----
 
@@ -2147,7 +2147,7 @@ mod tests {
         for (i, w) in want.iter().enumerate() {
             assert_eq!(text[i].trim_end(), *w, "line {i}");
         }
-        assert_eq!(text[23].trim_end(), "Esc / D  close");
+        assert_eq!(text[23].trim_end(), "Esc / d  close");
 
         // The stop prompt takes the connection line.
         let mut app = app_with(DEMO);

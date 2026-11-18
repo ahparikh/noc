@@ -719,7 +719,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   `/ {query}`. At the right edge it MUST show the status dot `●` (ZR-003),
   preceded by `↑` and a space (attention colour, bold) when a newer release
   is recorded ([08-zellij-host.md](08-zellij-host.md) ZH-022). The dot and
-  the arrow are never dropped for lack of session: the count is cut with `…`
+  the arrow are never dropped for lack of room: the count is cut with `…`
   instead. Neither says anything in words; the status box does (ZR-034).
 - **Source:** `zellij/src/view.rs` (status_line, shown_agent_count, plural)
 - **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds, a_newer_release_is_marked_on_the_header_and_explained_in_help, search_results_are_a_flat_list_with_the_query_on_the_status_line, details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel
@@ -1217,7 +1217,7 @@ Public API fields that are not modelled are silently ignored, e.g.
 - **Behavior:** `render_details_window` MUST return nothing for zero size;
   with an agent loaded, the roomy agent detail lines (ZR-024, ZR-025) with
   P = `clamp(rows / 5, 2, 8)` and no rule or `Details` heading; then pad to
-  `rows - 1` and add `Esc / D  close` (muted, dim) if there is session; truncate
+  `rows - 1` and add `Esc / d  close` (muted, dim) if there is room; truncate
   to `rows`.
 - **Source:** `zellij/src/view.rs` (render_details_window, DETAILS_FOOTER)
 - **Verified by:** `zellij/src/view.rs` details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel
@@ -1921,7 +1921,7 @@ Floating details window, 70 × 24 (roomy):
 │model     opus · high                                                 │
 │pane      work/7 · observed                                           │
 │  … (blank to the last row) …                                         │
-│Esc / D  close                                                        │
+│Esc / d  close                                                        │
 ```
 
 The three sections, with a team's session running and the agents holding

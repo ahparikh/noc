@@ -5,7 +5,7 @@ use crate::model::{age_label, Agent, AgentGroup};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use zellij_tile::prelude::{ModeInfo, PaletteColor};
 
-pub const FOOTER: &str = "[?] keys  [d]etails  [D] window";
+pub const FOOTER: &str = "[?] keys  [D]etails  [d] window";
 pub const DETAILS_FOOTER: &str = "Esc / D  close";
 
 // ---- theme ----
@@ -683,8 +683,8 @@ fn help_lines(theme: &Theme) -> Vec<Line> {
         "Tab         agents / sessions",
         "Shift-Tab   into the details, and out",
         "S           close / open sessions",
-        "d           close / open details",
-        "D           details window",
+        "D           close / open details",
+        "d           details window",
         "n           rename agent",
         "t / T       join / leave a team",
         "x           stop agent (asks y/n)",

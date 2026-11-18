@@ -239,8 +239,8 @@ sleep 1.5 # let the sidebar follow the inner focus back
 # ---- 4. details window ----
 keys M-m
 wait_for 5 host_focus_is "$SIDEBAR"
-keys D
-check "D opens the floating details window" \
+keys d
+check "d opens the floating details window" \
 	wait_for 8 sh -c "env -u ZELLIJ -u ZELLIJ_SESSION_NAME zellij --session '$HOST' action list-panes --all --json | jq -e 'any(.[]; .is_plugin and .is_floating and (.title | test(\"E2E agent\")))'"
 keys q
 check "q closes it" \

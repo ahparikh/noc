@@ -1112,7 +1112,7 @@ impl ZellijNoc {
                 Focus::Details => self.source,
                 _ if self.show_details => Focus::Details,
                 _ => {
-                    self.set_notice("details are closed; d opens them");
+                    self.set_notice("details are closed; D opens them");
                     return;
                 }
             }

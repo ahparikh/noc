@@ -131,7 +131,7 @@ In the sidebar (after `Alt m`):
 | `v` | Group the list by team, or by status again |
 | `p` / `s` | Open the agent as a pane / a stacked pane in the current inner tab |
 | `w` | Open a shell in the agent's worktree |
-| `d` / `D` | Close the Details section to its title, or open it again / open the details window (closing it returns you to the sidebar) |
+| `D` / `d` | Close the Details section to its title, or open it again / open the details window (closing it returns you to the sidebar) |
 | `n` | Rename the agent |
 | `t` | Put the agent in a team: type a name (`Tab` completes to an existing team), `Enter` joins it, making the team if it is new |
 | `T` | Take the agent out of its team |
@@ -159,7 +159,7 @@ team's lead comes first, then the other agents in the
 usual order, with the Quiet ones behind one `Quiet` row. `Enter` on a
 heading folds the team; a folded heading says what in it needs you
 (`billing  4  1 blocked · 2 working`). An agent is one row of the list; its
-folder, team, request and provider are in the details (`d`). A search shows
+folder, team, request and provider are in the details (`D`). A search shows
 a flat list in either grouping.
 
 Each team has an inner session of its own, named `noc--<team>`; the
@@ -182,7 +182,7 @@ selected in whichever list you were last in. In Sessions `●` marks the
 session you are looking at, and each row says what its team's agents need
 (`auth  1 blocked · 2 working`, or `quiet`).
 
-`S` and `d` close Sessions and Details to their title row and open them
+`S` and `D` close Sessions and Details to their title row and open them
 again; with both closed the list has the whole sidebar but two rows. `Tab`
 moves the keys between Agents and Sessions, and `Shift Tab` into the
 details of the list you are in and back out; the section that has them has

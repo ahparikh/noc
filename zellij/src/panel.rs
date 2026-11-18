@@ -295,7 +295,7 @@ fn handle_session_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> Option<Opti
         BareKey::Esc if !app.show_info && !app.show_help && app.search.is_none() => {
             app.focus_agents()
         }
-        BareKey::Char('p' | 's' | 'w' | 'D' | 'n' | 't' | 'T' | ' ') => {
+        BareKey::Char('p' | 's' | 'w' | 'd' | 'n' | 't' | 'T' | ' ') => {
             app.pending_g = false;
             app.set_notice("that key is for an agent; Tab goes back to them");
         }
@@ -419,7 +419,7 @@ pub fn process_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> (bool, Option<
             app.press_g();
         }
         BareKey::Char('G') => app.select_last(),
-        BareKey::Char('d') => app.toggle_details(),
+        BareKey::Char('D') => app.toggle_details(),
         BareKey::Char('?') => app.toggle_help(),
         BareKey::Char('i') => app.toggle_info(),
         BareKey::Esc => {
@@ -453,7 +453,7 @@ pub fn process_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> (bool, Option<
         BareKey::Char('s') => intent = Some(Intent::Pane { stacked: true }),
         BareKey::Char('w') => intent = Some(Intent::Worktree),
         BareKey::Char('o') => intent = Some(Intent::TeamSession),
-        BareKey::Char('D') => intent = Some(Intent::Details),
+        BareKey::Char('d') => intent = Some(Intent::Details),
         BareKey::Char('r') => intent = Some(Intent::Refresh),
         BareKey::Char('u') => intent = Some(Intent::CheckUpdate),
         BareKey::Char('x') => request_stop(app),
@@ -1199,14 +1199,14 @@ mod tests {
         process_key(&mut app, &details);
         assert_eq!(app.focus, Focus::Agents);
         // `d` closes the details: nothing to go into.
-        process_key(&mut app, &key('d'));
+        process_key(&mut app, &key('D'));
         process_key(&mut app, &details);
         assert_eq!(app.focus, Focus::Agents);
         assert_eq!(
             app.notice.as_deref(),
-            Some("details are closed; d opens them")
+            Some("details are closed; D opens them")
         );
-        process_key(&mut app, &key('d'));
+        process_key(&mut app, &key('D'));
         // With sessions, Tab goes between the two lists and never through
         // the details, which stay about the list the keys are in.
         let names = [
@@ -1226,9 +1226,9 @@ mod tests {
         assert_eq!((app.focus, app.source), (Focus::Agents, Focus::Agents));
         // A closed section gives the keys up, and is not gone to.
         process_key(&mut app, &details);
-        process_key(&mut app, &key('d'));
+        process_key(&mut app, &key('D'));
         assert_eq!(app.focus, Focus::Agents);
-        process_key(&mut app, &key('d'));
+        process_key(&mut app, &key('D'));
         process_key(&mut app, &tab);
         assert_eq!(app.focus, Focus::Sessions);
         process_key(&mut app, &key('S'));
@@ -1298,7 +1298,7 @@ mod tests {
             Some("ending it would end the pair; quit it from inside")
         );
         // An agent's keys are refused; the panel's own still work.
-        for c in ['p', 's', 'w', 'D', 'n', 't', 'T'] {
+        for c in ['p', 's', 'w', 'd', 'n', 't', 'T'] {
             let (_, intent) = process_key(&mut app, &key(c));
             assert!(intent.is_none(), "{c}");
             assert!(app.pending_rename.is_none() && app.pending_team.is_none());
@@ -1700,7 +1700,7 @@ mod tests {
             ('p', Intent::Pane { stacked: false }),
             ('s', Intent::Pane { stacked: true }),
             ('w', Intent::Worktree),
-            ('D', Intent::Details),
+            ('d', Intent::Details),
             ('r', Intent::Refresh),
         ] {
             assert_eq!(process_key(&mut app, &key(c)).1, Some(want), "{c}");
@@ -1729,7 +1729,7 @@ mod tests {
         // Help and details toggles.
         process_key(&mut app, &key('?'));
         assert!(app.show_help);
-        process_key(&mut app, &key('d'));
+        process_key(&mut app, &key('D'));
         assert!(!app.show_help && !app.show_details);
         process_key(&mut app, &key('?'));
         process_key(&mut app, &bare(BareKey::Esc));

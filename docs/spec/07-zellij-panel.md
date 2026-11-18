@@ -762,7 +762,7 @@ Public API fields that are not modelled are silently ignored, e.g.
 - **Verified by:** `zellij/src/view.rs` the_status_box_sits_on_the_status_line_and_a_click_toggles_it, problems_turn_the_dot_yellow_and_are_spelled_out_in_the_status_box, a_newer_release_is_marked_on_the_header_and_explained_in_help
 
 #### ZR-004 Footer
-- **Behavior:** The last line MUST be `[?] keys  [d]etails  [D] window` (two
+- **Behavior:** The last line MUST be `[?] keys  [D]etails  [d] window` (two
   spaces between items; muted, dim) whenever the pane has more than two
   rows. With two rows or fewer there is no footer (ZR-016).
 - **Source:** `zellij/src/view.rs` (render, FOOTER)
@@ -809,8 +809,8 @@ Public API fields that are not modelled are silently ignored, e.g.
   Tab         agents / sessions
   Shift-Tab   into the details, and out
   S           close / open sessions
-  d           close / open details
-  D           details window
+  D           close / open details
+  d           details window
   n           rename agent
   t / T       join / leave a team
   x           stop agent (asks y/n)
@@ -1248,7 +1248,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   The instance rebuilds its theme on `ModeUpdate` (ZR-018) and ignores pipes
   and every other event.
 - **Source:** `zellij/src/details.rs` (update_details, refresh_details, on_details_result), `zellij/src/main.rs` (load, pipe)
-- **Verified by:** `E2E: zellij/e2e/nested.sh` ("D opens the floating details window": a floating plugin pane titled with the agent's name); result mapping `UNTESTED`
+- **Verified by:** `E2E: zellij/e2e/nested.sh` ("d opens the floating details window": a floating plugin pane titled with the agent's name); result mapping `UNTESTED`
 
 #### ZR-032 Details window keys
 - **Behavior:** In the details window, `Esc`, `D`, `d` or `q` (any
@@ -1284,7 +1284,7 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 | `k`, `Up` | — | previous row |
 | `g` `g` | — | first row |
 | `G` | — | last row |
-| `d` | — | toggle inline details; closes help |
+| `D` | — | close or open the Details section; closes help |
 | `?` | — | toggle help |
 | `Esc` | — | close help; cancel pending `g` |
 | `Enter`, `l` | section row | open/close section |
@@ -1302,7 +1302,7 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 | `Tab` | — | give the keys to the other list, Agents or Sessions (ZK-035) |
 | `Shift Tab` | — | give the keys to the Details section, or back to its list (ZK-035) |
 | `S` | — | close the Sessions section to its title, or open it (ZK-035) |
-| `D` | agent row | floating details window (ZK-013) |
+| `d` | agent row | floating details window (ZK-013) |
 | `r` | poll transport | refresh now (ZK-014) |
 | `x` | stoppable agent row | ask `Stop {title}?  y / n` (ZK-016) |
 | `n` | agent row | start inline rename (ZK-020) |
@@ -1365,7 +1365,7 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 - **Verified by:** `zellij/src/app.rs` navigation_clamps_and_supports_gg_and_capital_g; `zellij/src/panel.rs` modifier_rules_gate_every_binding
 
 #### ZK-007 Details and help toggles
-- **Behavior:** `d` MUST close the Details section to its title row, or
+- **Behavior:** `D` MUST close the Details section to its title row, or
   open it again, and set `show_help = false`; closing it while it has the
   keys gives them back to the list its details were about. `?` MUST toggle
   `show_help`. `Esc` MUST set `show_help = false`. While help is shown,
@@ -1442,8 +1442,8 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 - **Source:** `zellij/src/panel.rs` (open_worktree_shell), `zellij/src/guest.rs` (guest_open_shell, shell_args)
 - **Verified by:** `zellij/src/guest.rs` builds_inner_session_commands; the key path and notices `UNTESTED`
 
-#### ZK-013 `D`: floating details window
-- **Behavior:** `D` MUST cancel a pending `g`; require a selected agent
+#### ZK-013 `d`: floating details window
+- **Behavior:** `d` MUST cancel a pending `g`; require a selected agent
   (`no agent is selected`) and a known plugin URL
   (`the plugin location is not known yet; try again`); close the details
   window this panel opened before, if any; then open this plugin floating in
@@ -1453,7 +1453,7 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
   `Zellij could not open the details window`. There is no explicit
   permission check.
 - **Source:** `zellij/src/panel.rs` (open_details_window)
-- **Verified by:** `E2E: zellij/e2e/nested.sh` ("D opens the floating details window"); notices `UNTESTED`
+- **Verified by:** `E2E: zellij/e2e/nested.sh` ("d opens the floating details window"); notices `UNTESTED`
 
 #### ZK-014 `r`: refresh
 - **Behavior:** `r` MUST cancel a pending `g` and run
@@ -1497,7 +1497,7 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
   `sessions are closed; S opens them`, or `no session is listed yet`.
   `Shift Tab` MUST give them to the Details section, which stays about the
   list they were in (ZR-022), and from Details back to that list; with
-  Details closed the notice is `details are closed; d opens them`. So the
+  Details closed the notice is `details are closed; D opens them`. So the
   details are never reached through the other list, which would change
   what they are about. Giving the keys to a section closes help. `S` MUST
   close the Sessions section to its title row, or open it again. A section
@@ -1522,8 +1522,8 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
   | `x` | on a team's session, ask `End session {label}?  y / n` on the status line; on the inner session, the notice `ending it would end the pair; quit it from inside` |
   | `h`, `Left` | give the keys back to Agents |
   | `Esc` | give the keys back to Agents, unless the status box or help is open or a search is in effect, which `Esc` closes first (ZK-007) |
-  | `p`, `s`, `w`, `D`, `n`, `t`, `T`, `Space` | the notice `that key is for an agent; Tab goes back to them`; nothing else |
-  | any other key | as in the Agents section: `v`, `/`, `?`, `d`, `i`, `r`, `u`, `Ctrl-d`/`Ctrl-u` and the rest |
+  | `p`, `s`, `w`, `d`, `n`, `t`, `T`, `Space` | the notice `that key is for an agent; Tab goes back to them`; nothing else |
+  | any other key | as in the Agents section: `v`, `/`, `?`, `D`, `i`, `r`, `u`, `Ctrl-d`/`Ctrl-u` and the rest |
 
   While the end confirmation is pending, `y` with no modifiers MUST raise
   the EndSession intent with the notice `ending {label}…`; any other key
@@ -1829,7 +1829,7 @@ padded list area):
 │  Waiting for approval to delete the  │
 │provider  claude · background         │
 │native    auth                        │  id and model do not fit
-│[?] keys  [d]etails  [D] window       │  muted, dim
+│[?] keys  [D]etails  [d] window       │  muted, dim
 ```
 
 Panel, 30 rows, `< 24h` opened and its agent selected:
@@ -1859,14 +1859,14 @@ Panel, 30 rows, `< 24h` opened and its agent selected:
 │                                      │
 │                                      │
 │                                      │
-│[?] keys  [d]etails  [D] window       │
+│[?] keys  [D]etails  [d] window       │
 ```
 
 With the section row itself selected, the details block reads
 `Quiet · < 24h` / `Conversations with no process.` /
 `Enter opens this section; Enter on` / `an agent resumes it; h closes.`
 
-The same panel with details hidden (`d`): the status line is the last one
+The same panel with details closed (`D`): the status line is the last one
 above the footer.
 
 ```text
@@ -1874,7 +1874,7 @@ above the footer.
 │ ▸ < 7d    1                          │
 │  … (blank to the status line) …      │
 │6 agents                             ●│
-│[?] keys  [d]etails  [D] window       │
+│[?] keys  [D]etails  [d] window       │
 ```
 
 A prompt or a notice takes the whole status line while it lasts:
@@ -1947,16 +1947,16 @@ as they were before the section scrolled:
 │team      auth · lead                 │
 │provider  claude · background         │
 │id        a0000011                    │
-│[?] keys  [d]etails  [D] window       │
+│[?] keys  [D]etails  [d] window       │
 ```
 
-With both closed (`S`, `d`) the list has every row but two:
+With both closed (`S`, `D`) the list has every row but two:
 
 ```text
 │4 agents                             ●│
 │▸ Sessions  2 ────────────────────────│
 │▸ Details ────────────────────────────│
-│[?] keys  [d]etails  [D] window       │
+│[?] keys  [D]etails  [d] window       │
 ```
 
 Grouped by team, with two teams whose agents are all Quiet:
@@ -1977,7 +1977,7 @@ Empty list, before the first snapshot (6 rows):
 │                                      │
 │                                      │
 │0 agents                             ●│  dot yellow: connecting
-│[?] keys  [d]etails  [D] window       │
+│[?] keys  [D]etails  [d] window       │
 ```
 
 Grouped by team (`v`), the `TEAMS` fixture of `zellij/src/view.rs`: team
@@ -2013,7 +2013,7 @@ Server offline with no list to keep (10 rows):
 │                                      │
 │                                      │
 │0 agents                             ●│  dot red: server offline
-│[?] keys  [d]etails  [D] window       │
+│[?] keys  [D]etails  [d] window       │
 ```
 
 ---
@@ -2044,7 +2044,7 @@ Implementation choices not recorded in
 | A settings problem only turns the theme switch off | the agent list must keep working | `zellij/src/app.rs` (Config::problems) |
 | Enter refuses when the agent is open in another Zellij session; `p` makes a second copy | opening it here is sometimes right and sometimes a fork, so the second copy is an explicit choice | `zellij/src/guest.rs` (guest_open_agent) |
 | Stop policy is checked in the panel before `noc stop` runs | a refusal needs no command and no confirmation | `zellij/src/panel.rs` (request_stop) |
-| One details window per panel, replaced on the next `D` | a second window would cover the first | `zellij/src/panel.rs` (open_details_window) |
+| One details window per panel, replaced on the next `d` | a second window would cover the first | `zellij/src/panel.rs` (open_details_window) |
 | Control characters are dropped from every rendered text | they would otherwise reach the terminal verbatim | `zellij/src/view.rs` (sanitize) |
 | Last output line printed without a newline | it would scroll the pane by one and hide the first row | `zellij/src/main.rs` (render) |
 
@@ -2074,7 +2074,7 @@ starts an isolated host/inner pair with the fake `noc`
 (`zellij/e2e/fake-noc`) and drives it with real key presses. Of this
 section it covers: the panel lists the registry's agents, `Enter` opens a
 Quiet section and then opens an agent in a new inner tab, `Enter` again
-focuses that tab instead of opening a copy, `D` opens the details window
+focuses that tab instead of opening a copy, `d` opens the details window
 and `q` closes it. Its other checks, its prerequisites and the isolated dev
 pair for manual checks are described in
 [08-zellij-host.md](08-zellij-host.md),

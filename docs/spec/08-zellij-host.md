@@ -53,7 +53,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Behavior:** One WASM build MUST serve four roles, chosen at load by the `role` setting after trimming: `relay` → relay, `details` → details window, `bar` → tab bar (ZT-012), anything else or absent → panel. A details instance MUST also read `agent_id` (trimmed; default empty).
 - **Source:** `zellij/src/main.rs` (`load`)
 - **Decision:** D-055
-- **Verified by:** `zellij/e2e/nested.sh` "host session has the sidebar and one guest pane", "D opens the floating details window", "inner session wears the away theme while the sidebar has the keyboard" (one check per role); no unit test
+- **Verified by:** `zellij/e2e/nested.sh` "host session has the sidebar and one guest pane", "d opens the floating details window", "inner session wears the away theme while the sidebar has the keyboard" (one check per role); no unit test
 
 ### ZH-002 One permission set for every role
 - **Behavior:** Every role MUST request exactly these six permissions at load: `ReadApplicationState`, `ChangeApplicationState`, `OpenTerminalsOrPlugins`, `Reconfigure`, `RunCommands`, `MessageAndLaunchOtherPlugins`. The plugin MUST NOT request `WriteToStdin`.
@@ -425,14 +425,14 @@ The panel does not read the inner session itself. The relay there (ZX-039) sends
 ## 9. Details window and panel title
 
 ### ZX-032 Opening the details window
-- **Behavior:** On the Details intent (`D`): with no agent selected the notice is `no agent is selected`; with the panel's own plugin URL not yet seen in a `PaneUpdate` the notice is `the plugin location is not known yet; try again`. Otherwise the panel MUST close the details window it opened before, if any, and call `open_plugin_pane_floating` at its own plugin URL with settings `role "details"`, `agent_id <id>`, `noc_bin <noc_bin>`, and `icons "nerd"` when Nerd icons are on, at x `10%`, y `10%`, width `80%`, height `80%`. If Zellij returns no plugin pane the notice is `Zellij could not open the details window`. The window was opened from the panel, so when it closes the keyboard MUST come back to the panel: once a `PaneUpdate` has listed the window's pane and a later one no longer does, the panel, unless it has the keyboard already, takes it as on a grab (ZX-012). Left to itself Zellij would give it to the guest pane.
+- **Behavior:** On the Details intent (`d`): with no agent selected the notice is `no agent is selected`; with the panel's own plugin URL not yet seen in a `PaneUpdate` the notice is `the plugin location is not known yet; try again`. Otherwise the panel MUST close the details window it opened before, if any, and call `open_plugin_pane_floating` at its own plugin URL with settings `role "details"`, `agent_id <id>`, `noc_bin <noc_bin>`, and `icons "nerd"` when Nerd icons are on, at x `10%`, y `10%`, width `80%`, height `80%`. If Zellij returns no plugin pane the notice is `Zellij could not open the details window`. The window was opened from the panel, so when it closes the keyboard MUST come back to the panel: once a `PaneUpdate` has listed the window's pane and a later one no longer does, the panel, unless it has the keyboard already, takes it as on a grab (ZX-012). Left to itself Zellij would give it to the guest pane.
 - **Source:** `zellij/src/panel.rs` (`open_details_window`)
-- **Verified by:** `zellij/e2e/nested.sh` "D opens the floating details window", "and the keyboard is back in the sidebar"
+- **Verified by:** `zellij/e2e/nested.sh` "d opens the floating details window", "and the keyboard is back in the sidebar"
 
 ### ZX-033 The details instance
 - **Behavior:** On grant the details window MUST run `<noc_bin> show --json <agent_id>` with context `zellij-noc=agent-details`; nothing runs when `agent_id` is empty or a read is in flight. After each result it arms a `2.0` s timer, and the timer starts the next read. On exit `0` with a valid agent it names its pane `noc · <title>` when the title changed and shows `connected`; invalid UTF-8 gives `noc returned non-UTF-8 output: <error>`; other failures give server-unavailable (ZH-011) or the compacted stderr. On denial its connection error is `permissions denied: agent details are unavailable`. `Esc`, `D`, `d` or `q`, with any modifiers, MUST close it; no other key does anything. Its content is specified in [07-zellij-panel.md](07-zellij-panel.md).
 - **Source:** `zellij/src/details.rs` (`update_details`, `refresh_details`, `on_details_result`, `is_close_key`)
-- **Verified by:** `zellij/src/details.rs` `the_window_closes_on_esc_d_capital_d_and_q_only`; `zellij/e2e/nested.sh` "D opens the floating details window" (title), "q closes it"
+- **Verified by:** `zellij/src/details.rs` `the_window_closes_on_esc_d_capital_d_and_q_only`; `zellij/e2e/nested.sh` "d opens the floating details window" (title), "q closes it"
 
 ### ZX-034 Panel pane title
 - **Behavior:** The panel's pane MUST have no title: its first row already says `Agents` ([07-zellij-panel.md](07-zellij-panel.md) ZR-033). The panel names its pane a single space, once, when permissions are granted (ZH-004); an empty name would make Zellij show the plugin's location.
@@ -637,7 +637,7 @@ teams in Zellij is in [11-teams.md](11-teams.md).
   | 16 | Enter on an agent that is already open focuses it instead of opening a copy | inner tab count unchanged |
   | 17 | the tab is renamed when the agent's name changes | after the fake registry reports the agent as `Renamed agent`, an inner tab has that name within 10 s |
   | 18 | a tab whose shell runs a command naming an agent is named after it | after a new inner tab's shell is given `cat - 5e55a2b0` (the second agent's native short id), an inner tab `Second agent` exists within 15 s; the tab is then closed |
-  | 19 | D opens the floating details window | a floating plugin pane titled with `E2E agent` exists in the host |
+  | 19 | d opens the floating details window | a floating plugin pane titled with `E2E agent` exists in the host |
   | 20 | q closes it | no visible floating plugin pane remains |
   | 21 | and the keyboard is back in the sidebar | host focus becomes the panel within 5 s |
   | 22 | / lists the agents that match what is typed | with the keyboard on the panel, after `/`, `second` and `Enter` the screen shows `1 match` within 8 s |
@@ -880,7 +880,7 @@ Neither the unit tests nor `nested.sh` cover:
   host layout of the release the user has. When it cannot (no network, or
   a plugin location that names no release), every setting that is set
   counts as the user's, so a changed default does not arrive.
-- `w` and `D` do not check that permissions were granted before acting, unlike
+- `w` and `d` do not check that permissions were granted before acting, unlike
   Enter, `p` and `s`.
 - The inner session is local and single: remote inner sessions and several
   inner sessions are out of scope.

@@ -1101,35 +1101,38 @@ impl ZellijNoc {
         Some(counts)
     }
 
-    /// `Tab` and `Shift Tab`: give the keys to the next open section, or
-    /// the one before: Agents, Sessions, Details, and round again. A closed
-    /// section is passed over.
-    pub fn toggle_focus(&mut self, forward: bool) {
+    /// `Tab` (`lists`): give the keys to the other list, Agents or Sessions.
+    /// `Shift Tab`: give them to the details of the list that has them, or
+    /// back to that list. So the details are reached without passing through
+    /// the other list, which would change what they are about.
+    pub fn toggle_focus(&mut self, lists: bool) {
         self.pending_g = false;
-        let order = [Focus::Agents, Focus::Sessions, Focus::Details];
-        let open = |section: Focus| match section {
-            Focus::Agents => true,
-            Focus::Sessions => self.sessions_shown(),
-            Focus::Details => self.show_details,
-        };
-        let at = order.iter().position(|s| *s == self.focus).unwrap_or(0);
-        let next = (1..order.len())
-            .map(|step| {
-                let step = if forward { step } else { order.len() - step };
-                order[(at + step) % order.len()]
-            })
-            .find(|section| open(*section));
-        match next {
-            Some(section) => {
-                if section != Focus::Details {
-                    self.source = section;
+        let target = if !lists {
+            match self.focus {
+                Focus::Details => self.source,
+                _ if self.show_details => Focus::Details,
+                _ => {
+                    self.set_notice("details are closed; d opens them");
+                    return;
                 }
-                self.focus = section;
-                self.show_help = false;
-                self.notice = None;
             }
-            None => self.set_notice("no other section is open; S and d open them"),
+        } else if self.list_focus() == Focus::Sessions {
+            Focus::Agents
+        } else if self.sessions_shown() {
+            Focus::Sessions
+        } else if self.show_sessions {
+            self.set_notice("no session is listed yet");
+            return;
+        } else {
+            self.set_notice("sessions are closed; S opens them");
+            return;
+        };
+        if target != Focus::Details {
+            self.source = target;
         }
+        self.focus = target;
+        self.show_help = false;
+        self.notice = None;
     }
 
     /// Give the keys to the agents, and make the details about them.

@@ -159,7 +159,7 @@ if screen | grep -q -F 'Allow? (y/n)'; then
 	exit 1
 fi
 
-SIDEBAR="P$(panes "$HOST" | jq -r 'map(select(.is_plugin and (.is_floating | not) and (.title | test("(^|[ ─])NOC$")))) | first | .id')"
+SIDEBAR="P$(panes "$HOST" | jq -r 'map(select(.is_plugin and (.is_floating | not) and (.is_suppressed | not) and ((.plugin_url // "") | test("zellij-noc")))) | first | .id')"
 GUEST="T$(panes "$HOST" | jq -r 'map(select((.is_plugin | not) and (.is_floating | not))) | first | .id')"
 
 # ---- 1. the pair ----
@@ -246,11 +246,10 @@ keys q
 check "q closes it" \
 	wait_for 5 sh -c "env -u ZELLIJ -u ZELLIJ_SESSION_NAME zellij --session '$HOST' action list-panes --all --json | jq -e 'any(.[]; .is_plugin and .is_floating and (.is_suppressed | not)) | not'"
 
+# It was opened from the sidebar, so the keyboard goes back there.
+check "and the keyboard is back in the sidebar" wait_for 5 host_focus_is "$SIDEBAR"
+
 # ---- 5. search ----
-# Closing the details window leaves the keyboard in the inner session.
-wait_for 5 host_focus_is "$GUEST"
-keys M-m
-wait_for 5 host_focus_is "$SIDEBAR"
 keys /
 sleep 0.3
 keys second

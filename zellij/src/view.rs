@@ -680,7 +680,8 @@ fn help_lines(theme: &Theme) -> Vec<Line> {
         "p / s       pane / stacked pane here",
         "w           shell in its worktree",
         "o           show its team's session",
-        "Tab         next section (Shift: back)",
+        "Tab         agents / sessions",
+        "Shift-Tab   into the details, and out",
         "S           close / open sessions",
         "d           close / open details",
         "D           details window",
@@ -1979,9 +1980,9 @@ mod tests {
                 "Enter shows it; x ends it.",
             ]
         );
-        // `Tab` again: the details have the keys, and are still about the
+        // `Shift Tab`: the details have the keys, and are still about the
         // session, whose row stays highlighted.
-        app.toggle_focus(true);
+        app.toggle_focus(false);
         assert_eq!(
             (app.focus, app.list_focus()),
             (Focus::Details, Focus::Sessions)
@@ -2075,39 +2076,37 @@ mod tests {
     fn renders_keyboard_help_on_request() {
         let mut app = app_with("[]");
         app.toggle_help();
-        let text = plain(&render(&mut app, &Theme::default(), 33, 38));
+        let text = plain(&render(&mut app, &Theme::default(), 34, 38));
         assert_eq!(text[0].trim_end(), "In the list");
         assert_eq!(text[1].trim_end(), "j / k       move selection");
         assert_eq!(text[5].trim_end(), "h           close a section or a team");
         assert_eq!(text[6].trim_end(), "v           group by team / status");
         assert_eq!(text[7].trim_end(), "p / s       pane / stacked pane here");
         assert_eq!(text[9].trim_end(), "o           show its team's session");
+        assert_eq!(text[10].trim_end(), "Tab         agents / sessions");
+        assert_eq!(text[11].trim_end(), "Shift-Tab   into the details, and out");
+        assert_eq!(text[12].trim_end(), "S           close / open sessions");
+        assert_eq!(text[15].trim_end(), "n           rename agent");
+        assert_eq!(text[16].trim_end(), "t / T       join / leave a team");
+        assert_eq!(text[17].trim_end(), "x           stop agent (asks y/n)");
+        assert_eq!(text[19].trim_end(), "/           search (also older:14d)");
+        assert_eq!(text[20].trim_end(), "u           check for a new release");
+        assert_eq!(text[21].trim_end(), "i           status and version");
+        assert_eq!(text[22].trim_end(), "? / Esc     close help");
+        assert_eq!(text[23], " ".repeat(38));
+        assert_eq!(text[24].trim_end(), "Anywhere");
+        assert_eq!(text[25].trim_end(), "Alt-m       jump to list and back");
+        assert_eq!(text[26].trim_end(), "Alt-o       hide / show this panel");
+        assert_eq!(text[27].trim_end(), "Alt-d       detach both sessions");
+        assert_eq!(text[28], " ".repeat(38));
         assert_eq!(
-            text[10].trim_end(),
-            "Tab         next section (Shift: back)"
-        );
-        assert_eq!(text[11].trim_end(), "S           close / open sessions");
-        assert_eq!(text[14].trim_end(), "n           rename agent");
-        assert_eq!(text[15].trim_end(), "t / T       join / leave a team");
-        assert_eq!(text[16].trim_end(), "x           stop agent (asks y/n)");
-        assert_eq!(text[18].trim_end(), "/           search (also older:14d)");
-        assert_eq!(text[19].trim_end(), "u           check for a new release");
-        assert_eq!(text[20].trim_end(), "i           status and version");
-        assert_eq!(text[21].trim_end(), "? / Esc     close help");
-        assert_eq!(text[22], " ".repeat(38));
-        assert_eq!(text[23].trim_end(), "Anywhere");
-        assert_eq!(text[24].trim_end(), "Alt-m       jump to list and back");
-        assert_eq!(text[25].trim_end(), "Alt-o       hide / show this panel");
-        assert_eq!(text[26].trim_end(), "Alt-d       detach both sessions");
-        assert_eq!(text[27], " ".repeat(38));
-        assert_eq!(
-            text[28].trim_end(),
+            text[29].trim_end(),
             format!("version     v{}", crate::update::CURRENT)
         );
         // The status line last, above the footer.
         assert_eq!(header(&text), "0 agents");
-        assert_eq!(status_at(&text), 31);
-        assert_eq!(text[32].trim_end(), FOOTER);
+        assert_eq!(status_at(&text), 32);
+        assert_eq!(text[33].trim_end(), FOOTER);
     }
 
     #[test]
@@ -2339,13 +2338,13 @@ mod tests {
         let text = plain(&render(&mut app, &Theme::default(), 30, 8));
         assert_eq!(text[28], "0 a\u{2026} \u{2191} \u{25cf}");
         app.show_help = true;
-        let text = plain(&render(&mut app, &Theme::default(), 33, 38));
+        let text = plain(&render(&mut app, &Theme::default(), 34, 38));
         assert_eq!(
-            text[29].trim_end(),
+            text[30].trim_end(),
             "\u{2191} v0.2.0    newer plugin release;"
         );
-        assert_eq!(text[30].trim_end(), "            set it in the plugin URL");
-        assert_eq!(text[32].trim_end(), FOOTER);
+        assert_eq!(text[31].trim_end(), "            set it in the plugin URL");
+        assert_eq!(text[33].trim_end(), FOOTER);
     }
 
     #[test]

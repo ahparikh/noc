@@ -110,6 +110,8 @@ pub struct State {
     pub followed_agent: Option<String>,
     pub last_cols: Option<usize>,
     pub details_window: Option<u32>,
+    /// Zellij has listed the details window among the panes.
+    pub details_window_seen: bool,
     pub pipe_buffer: String,
     pub selectable_set: Option<bool>,
     pub grab_until: f64,
@@ -149,6 +151,7 @@ impl Default for State {
             followed_agent: None,
             last_cols: None,
             details_window: None,
+            details_window_seen: false,
             pipe_buffer: String::new(),
             selectable_set: None,
             grab_until: 0.0,
@@ -391,6 +394,7 @@ impl State {
         if !self.permissions_granted {
             return false;
         }
+        self.follow_details_window();
         self.sync_panel_selectable();
         self.signal_keyboard_moves();
         if self.panel_has_keyboard() {

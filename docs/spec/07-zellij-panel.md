@@ -806,7 +806,8 @@ Public API fields that are not modelled are silently ignored, e.g.
   p / s       pane / stacked pane here
   w           shell in its worktree
   o           show its team's session
-  Tab         next section (Shift: back)
+  Tab         agents / sessions
+  Shift-Tab   into the details, and out
   S           close / open sessions
   d           close / open details
   D           details window
@@ -1298,7 +1299,8 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 | `s` | agent row | open the agent stacked in the inner session (ZK-011) |
 | `w` | agent row | shell in its workspace, in the inner session (ZK-012) |
 | `o` | agent row, team heading or its Quiet row | show that team's session (ZK-034) |
-| `Tab`, `Shift Tab` | — | give the keys to the next open section, or the one before (ZK-035) |
+| `Tab` | — | give the keys to the other list, Agents or Sessions (ZK-035) |
+| `Shift Tab` | — | give the keys to the Details section, or back to its list (ZK-035) |
 | `S` | — | close the Sessions section to its title, or open it (ZK-035) |
 | `D` | agent row | floating details window (ZK-013) |
 | `r` | poll transport | refresh now (ZK-014) |
@@ -1489,23 +1491,25 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 
 #### ZK-035 `Tab`, `Shift Tab` and `S`: the section that has the keys
 - **Behavior:** One section has the keys: Agents when the panel loads.
-  `Tab` MUST give them to the next section that is open, in the order
-  Agents, Sessions, Details and round again, and `Shift Tab` to the one
-  before; a closed section, and Sessions while no session is listed, is
-  passed over. Giving them to a section closes help. When no other section
-  is open the notice is `no other section is open; S and d open them`.
-  The details are about the list that last had the keys (ZR-022): giving
-  the keys to Details leaves that as it was. `S` MUST close the Sessions
-  section to its title row, or open it again. A section that closes or
-  has nothing left to list while it has the keys gives them to the list
-  the details were about, and the details go back to the agents when that
-  list was the one that closed. `Tab`, `Shift Tab` and `S` are handled
-  after the stop and end confirmations and before every other binding, so
-  they work in every section; while a rename, a team name or a search is
-  being typed they are text.
+  `Tab` MUST give them to the other list: to Sessions from Agents or from
+  the agents' details, to Agents from Sessions or from a session's details.
+  When Sessions cannot take them the notice is
+  `sessions are closed; S opens them`, or `no session is listed yet`.
+  `Shift Tab` MUST give them to the Details section, which stays about the
+  list they were in (ZR-022), and from Details back to that list; with
+  Details closed the notice is `details are closed; d opens them`. So the
+  details are never reached through the other list, which would change
+  what they are about. Giving the keys to a section closes help. `S` MUST
+  close the Sessions section to its title row, or open it again. A section
+  that closes or has nothing left to list while it has the keys gives them
+  to the list the details were about, and the details go back to the
+  agents when that list was the one that closed. `Tab`, `Shift Tab` and
+  `S` are handled after the stop and end confirmations and before every
+  other binding, so they work in every section; while a rename, a team
+  name or a search is being typed they are text.
 - **Source:** `zellij/src/panel.rs` (process_key); `zellij/src/app.rs` (toggle_focus, toggle_sessions, toggle_details, list_focus, set_sessions)
 - **Decision:** D-082
-- **Verified by:** `zellij/src/panel.rs` tab_gives_the_keys_to_the_next_open_section; `zellij/src/view.rs` the_section_with_the_keys_shows_its_selection_and_its_details
+- **Verified by:** `zellij/src/panel.rs` tab_moves_between_the_lists_and_shift_tab_into_the_details; `zellij/src/view.rs` the_section_with_the_keys_shows_its_selection_and_its_details
 
 #### ZK-036 Keys while the Sessions section has them
 - **Behavior:**

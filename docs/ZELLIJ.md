@@ -13,7 +13,7 @@ Exact behavior is specified in [spec/07-zellij-panel.md](spec/07-zellij-panel.md
 
 ```
 ┌ host session: noc-host ────────────────────────────────────────────┐
-│ ┌ NOC ──────────┐ ┌ guest pane ──────────────────────────────────┐ │
+│ ┌───────────────┐ ┌ guest pane ──────────────────────────────────┐ │
 │ │ Blocked  1    │ │ inner session: noc                           │ │
 │ │ Working  2    │ │   your tabs, panes, keys and theme,          │ │
 │ │ Review   2    │ │   exactly as you configured them             │ │
@@ -124,13 +124,14 @@ In the sidebar (after `Alt m`):
 | `j` / `k`, `gg` / `G`, `Ctrl d` / `Ctrl u` | Move |
 | `Enter` / `l` | Open the agent in its team's session (focus it if it is already open), or open a Quiet section; on a team heading, fold or open the team |
 | `o` | Show the session of the selected team, or of the selected agent's team, without opening anything |
-| `Tab` / `Shift Tab` | Give the keys to the next section that is open, or the one before: Agents, Sessions, Details |
+| `Tab` | Give the keys to the other list: Agents or Sessions |
+| `Shift Tab` | Give the keys to the Details section, to scroll it, and back to the list |
 | `S` | Close the Sessions section to its title, or open it again |
 | `h` | Close a Quiet section; when grouped by team, fold the team |
 | `v` | Group the list by team, or by status again |
 | `p` / `s` | Open the agent as a pane / a stacked pane in the current inner tab |
 | `w` | Open a shell in the agent's worktree |
-| `d` / `D` | Close the Details section to its title, or open it again / open the details window |
+| `d` / `D` | Close the Details section to its title, or open it again / open the details window (closing it returns you to the sidebar) |
 | `n` | Rename the agent |
 | `t` | Put the agent in a team: type a name (`Tab` completes to an existing team), `Enter` joins it, making the team if it is new |
 | `T` | Take the agent out of its team |
@@ -183,8 +184,9 @@ session you are looking at, and each row says what its team's agents need
 
 `S` and `d` close Sessions and Details to their title row and open them
 again; with both closed the list has the whole sidebar but two rows. `Tab`
-moves the keys to the next open section and `Shift Tab` to the one before;
-the section that has them has its title in the accent colour.
+moves the keys between Agents and Sessions, and `Shift Tab` into the
+details of the list you are in and back out; the section that has them has
+its title in the accent colour.
 
 - In **Sessions**, `j`/`k` move, `Enter` shows the session and returns the
   keyboard to it, and `x` ends a team's session after asking (`noc` itself

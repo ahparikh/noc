@@ -854,8 +854,9 @@ loop attaches again and the host stays.
 The sidebar is Agents, Sessions and Details, each under its title row.
 Sessions lists the running inner sessions. Sessions and Details close to
 their title row, so the list can have the sidebar to itself, and are never
-hidden. `Tab` moves the keys round the open sections; Details is about the
-list that last had them, and with the keys it scrolls, down and sideways.
+hidden. `Tab` moves the keys between the two lists and `Shift Tab` into
+Details and out; Details is about the list that last had the keys, and
+with them it scrolls, down and sideways.
 
 **Why:** with a session per team, "what do I have open" is a different
 question from "which agents need me", and the answer is short: a handful
@@ -875,7 +876,8 @@ rows before Details does, so on a short pane Details shrinks first, and
 under 14 rows Sessions is not drawn. The keys that act on an agent are
 refused while Sessions has the keys, since no agent is highlighted then;
 in Details they act on what the details are about, so `h` and `l`, which
-scroll there, do not fold or open. A team with a session but no listed
+scroll there, do not fold or open. Details is not on `Tab`'s round: reached
+through Sessions it would be about a session, never an agent. A team with a session but no listed
 agent shows as `no agents`; a team with agents but no session is not in
 the section.
 

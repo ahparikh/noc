@@ -17,7 +17,9 @@ use crate::{
 use std::collections::BTreeMap;
 use zellij_tile::prelude::*;
 
-pub const PANEL_TITLE: &str = "NOC";
+/// The panel's pane has no title of its own: its first row says `Agents`.
+/// A blank, because Zellij shows the plugin's location for an empty name.
+pub const PANEL_TITLE: &str = " ";
 
 // ---- keys -> intents (pure) ----
 
@@ -865,7 +867,10 @@ impl State {
             None,
         );
         match open_plugin_pane_floating(&url, config, coordinates, BTreeMap::new()) {
-            Some(PaneId::Plugin(id)) => self.details_window = Some(id),
+            Some(PaneId::Plugin(id)) => {
+                self.details_window = Some(id);
+                self.details_window_seen = false;
+            }
             _ => self
                 .app
                 .set_notice("Zellij could not open the details window"),
@@ -903,6 +908,11 @@ impl State {
             }
             return;
         }
+        self.grab_keyboard();
+    }
+
+    /// Bring the keyboard to the panel.
+    pub fn grab_keyboard(&mut self) {
         if let Some(guest) = self.guest_pane() {
             let fullscreen = self
                 .own_tab_position
@@ -916,6 +926,25 @@ impl State {
         self.sync_panel_selectable();
         if !self.host_action(&["move-focus", "left"]) {
             focus_plugin_pane(self.plugin_id, false, false);
+        }
+    }
+
+    /// The details window was opened from the panel, so when it closes the
+    /// keyboard comes back to the panel; Zellij would give it to the guest
+    /// pane. Closed means gone from the panes after having been among them.
+    pub fn follow_details_window(&mut self) {
+        let Some(id) = self.details_window else {
+            return;
+        };
+        let there = self.panes.iter().any(|p| p.is_plugin && p.id == id);
+        if there {
+            self.details_window_seen = true;
+        } else if self.details_window_seen {
+            self.details_window = None;
+            self.details_window_seen = false;
+            if !self.panel_has_keyboard() {
+                self.grab_keyboard();
+            }
         }
     }
 
@@ -1155,53 +1184,61 @@ mod tests {
     }
 
     #[test]
-    fn tab_gives_the_keys_to_the_next_open_section() {
+    fn tab_moves_between_the_lists_and_shift_tab_into_the_details() {
         let mut app = app();
         let tab = bare(BareKey::Tab);
-        let back = with(&[KeyModifier::Shift], BareKey::Tab);
-        // No session is listed yet: the agents, and their details.
+        let details = with(&[KeyModifier::Shift], BareKey::Tab);
+        // No session is listed yet: Tab has nowhere to go.
         let (redraw, intent) = process_key(&mut app, &tab);
         assert!(redraw && intent.is_none());
-        assert_eq!(app.focus, Focus::Details);
-        process_key(&mut app, &tab);
         assert_eq!(app.focus, Focus::Agents);
-        // `d` closes the details: there is nowhere to go.
+        assert_eq!(app.notice.as_deref(), Some("no session is listed yet"));
+        // Shift Tab: into the agent's details, and out again.
+        process_key(&mut app, &details);
+        assert_eq!((app.focus, app.source), (Focus::Details, Focus::Agents));
+        process_key(&mut app, &details);
+        assert_eq!(app.focus, Focus::Agents);
+        // `d` closes the details: nothing to go into.
         process_key(&mut app, &key('d'));
-        process_key(&mut app, &tab);
+        process_key(&mut app, &details);
         assert_eq!(app.focus, Focus::Agents);
         assert_eq!(
             app.notice.as_deref(),
-            Some("no other section is open; S and d open them")
+            Some("details are closed; d opens them")
         );
         process_key(&mut app, &key('d'));
-        // With sessions: Agents, Sessions, Details, and round; Shift Tab
-        // goes the other way.
+        // With sessions, Tab goes between the two lists and never through
+        // the details, which stay about the list the keys are in.
         let names = [
             "noc".to_string(),
             "noc--auth".to_string(),
             "noc--web".to_string(),
         ];
         app.set_sessions(&names, "noc--web");
-        for want in [Focus::Sessions, Focus::Details, Focus::Agents] {
+        for want in [Focus::Sessions, Focus::Agents, Focus::Sessions] {
             process_key(&mut app, &tab);
-            assert_eq!(app.focus, want);
+            assert_eq!((app.focus, app.source), (want, want));
         }
-        for want in [Focus::Details, Focus::Sessions, Focus::Agents] {
-            process_key(&mut app, &back);
-            assert_eq!(app.focus, want);
-        }
-        // A closed section is passed over, and gives the keys up.
-        process_key(&mut app, &key('S'));
+        // From a list's details, Tab goes to the other list.
+        process_key(&mut app, &details);
+        assert_eq!((app.focus, app.source), (Focus::Details, Focus::Sessions));
         process_key(&mut app, &tab);
-        assert_eq!(app.focus, Focus::Details);
+        assert_eq!((app.focus, app.source), (Focus::Agents, Focus::Agents));
+        // A closed section gives the keys up, and is not gone to.
+        process_key(&mut app, &details);
         process_key(&mut app, &key('d'));
         assert_eq!(app.focus, Focus::Agents);
         process_key(&mut app, &key('d'));
-        process_key(&mut app, &key('S'));
         process_key(&mut app, &tab);
         assert_eq!(app.focus, Focus::Sessions);
         process_key(&mut app, &key('S'));
         assert_eq!((app.focus, app.source), (Focus::Agents, Focus::Agents));
+        process_key(&mut app, &tab);
+        assert_eq!(app.focus, Focus::Agents);
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("sessions are closed; S opens them")
+        );
         process_key(&mut app, &key('S'));
     }
 
@@ -1282,7 +1319,7 @@ mod tests {
     #[test]
     fn the_details_section_scrolls_and_leaves_other_keys_to_its_list() {
         let mut app = app();
-        process_key(&mut app, &bare(BareKey::Tab));
+        process_key(&mut app, &with(&[KeyModifier::Shift], BareKey::Tab));
         assert_eq!((app.focus, app.source), (Focus::Details, Focus::Agents));
         // What there is to scroll is known from the last drawing.
         app.detail_max_scroll = 5;

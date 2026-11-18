@@ -496,10 +496,10 @@ teams in Zellij is in [11-teams.md](11-teams.md).
 - **Verified by:** `zellij/src/guest.rs` `an_agent_opens_where_it_is_open_and_otherwise_in_its_teams_session`; `zellij/e2e/nested.sh` "the agent has a tab in its team's session", "the agent that was already open there got no second tab"
 
 ### ZT-014 The running sessions, and ending one
-- **Behavior:** For the Sessions section ([07-zellij-panel.md](07-zellij-panel.md) ZR-038) the panel MUST read which inner sessions are running: the names in the live sessions of `get_session_list` that are inner sessions of the pair (ZT-001), with the session on show added when Zellij does not list it yet. It reads them on a tick when at least `1.0` s have passed since the last reading, and at once when a session is shown from the section or one was ended; when another session comes on show (ZT-002, ZT-003) it marks that one at once, adding it to the list if it is not there, and reads again on the next tick. The ShowSession intent (ZK-036) MUST show the named session (ZT-002), give the list keys back to the Agents section and, when the panel has the keyboard, hand it to the guest pane (`action focus-previous-pane`, ZX-016); for the session already on show only the keys and the keyboard move. The EndSession intent MUST run `zellij kill-session <name>` with context `zellij-noc=end-session` and `zellij-noc-title=<name>`, and nothing when permissions are not granted, or the name is the inner session's or not an inner session of the pair. On exit `0` the notice is `ended <label>` and what the panel kept of that session is dropped; otherwise it is `could not end <label>: <compacted stderr>`. Ending the session on show makes the guest pane show the inner session (ZT-005). The inner session is never ended by the panel.
+- **Behavior:** For the Sessions section ([07-zellij-panel.md](07-zellij-panel.md) ZR-038) the panel MUST read which inner sessions are running: the names in the live sessions of `get_session_list` that are inner sessions of the pair (ZT-001), with the session on show added when Zellij does not list it yet. It reads them on a tick when at least `1.0` s have passed since the last reading, and at once when a session is shown from the section or one was ended; when another session comes on show (ZT-002, ZT-003) it marks that one at once, adding it to the list if it is not there, and reads again on the next tick. The ShowSession intent (ZK-036) MUST show the named session (ZT-002), give the keys back to the Agents section and, when the panel has the keyboard, hand it to the guest pane (`action focus-previous-pane`, ZX-016); for the session already on show only the keys and the keyboard move. The EndSession intent MUST run `zellij kill-session <name>` with context `zellij-noc=end-session` and `zellij-noc-title=<name>`, and nothing when permissions are not granted, or the name is the inner session's or not an inner session of the pair. On exit `0` the notice is `ended <label>` and what the panel kept of that session is dropped; otherwise it is `could not end <label>: <compacted stderr>`. Ending the session on show makes the guest pane show the inner session (ZT-005). The inner session is never ended by the panel.
 - **Source:** `zellij/src/guest.rs` (`list_sessions`, `list_sessions_if_due`, `show_and_focus`, `end_session`, `on_end_session`, `adopt_session`); `zellij/src/main.rs` (`on_panel_tick`, `on_command_result`)
 - **Decision:** D-082
-- **Verified by:** `zellij/e2e/nested.sh` "the sidebar lists the running sessions, the one on show marked", "Enter on a session's row shows that session", "and hands it the keyboard", "x on a team session's row ends it, once confirmed", "and the section goes with the last team's session"; the refusals and the failed end UNTESTED
+- **Verified by:** `zellij/e2e/nested.sh` "the sidebar lists the running sessions, the one on show marked", "Enter on a session's row shows that session", "and hands it the keyboard", "x on a team session's row ends it, once confirmed", "and the section lists the inner session alone"; the refusals and the failed end UNTESTED
 
 ### ZT-013 The tab a team's session came with
 - **Behavior:** A session is created with the first tab of its layout. When the panel moves to a team's session to open an agent, and the first snapshot with a client shows the session untouched (exactly one pane, not started with a command, not exited, in a tab with a name Zellij assigned), the panel MUST remember that tab and, at the first later snapshot that shows another tab, run `action close-tab-by-id <id>` in the session, provided the tab still holds exactly that one such pane under a name Zellij assigned; otherwise it MUST leave the tab for good. So a team's session holds its agents' tabs and nothing else. The inner session's own first tab is never closed, nor is the tab of a session shown with `o`.
@@ -615,7 +615,7 @@ teams in Zellij is in [11-teams.md](11-teams.md).
 - **Verified by:** MANUAL: `make zellij-e2e` on a machine with no grant
 
 ### ZE-013 The checks
-- **Behavior:** The harness runs 53 checks in order, printing `ok    <name>` or `FAIL  <name>` for each:
+- **Behavior:** The harness runs 54 checks in order, printing `ok    <name>` or `FAIL  <name>` for each:
 
   | # | Check name | Asserts |
   |---|---|---|
@@ -654,24 +654,25 @@ teams in Zellij is in [11-teams.md](11-teams.md).
   | 33 | whose tab bar says so | screen row 1 says ` no-team ` |
   | 34 | the team's session keeps its tab | the session still has 1 tab |
   | 35 | the agent that was already open there got no second tab | the inner tab count is that of check 15 |
-  | 36 | o on a team heading shows the team's session | with the list grouped by team and its first row selected, after `o` the session has 1 client within 10 s |
-  | 37 | and gives it the keyboard | host focus becomes the guest pane |
-  | 38 | when the session on show ends, the guest pane shows the inner session | after `kill-session <session>`, the inner session has 1 client within 10 s |
-  | 39 | and the team's session is made again when its agent is opened | after `Second agent` is opened again, the session has 1 client within 10 s; the host session's client was not detached, or the keys would not have reached the panel |
-  | 40 | the sidebar lists the running sessions, the one on show marked | the screen shows `Sessions  2` and, within the two rows under it, `● auth` |
-  | 41 | Enter on a session's row shows that session | after `Tab`, `G` and `Enter` in the panel, the inner session has 1 client within 10 s |
-  | 42 | and hands it the keyboard | host focus becomes the guest pane |
-  | 43 | x on a team session's row ends it, once confirmed | after `Tab`, `gg`, `x` and `y`, the team's session is not running within 10 s |
-  | 44 | and the section goes with the last team's session | the screen no longer shows `Sessions  ` |
-  | 45 | detaching the inner session's client detaches the host too | after `Ctrl o`, `d` typed into the inner session, host client count is 0 within 8 s |
-  | 46 | and the guest pane attaches to the inner session again | the inner session has 1 client within 8 s; the pair is then attached again |
-  | 47 | Alt-d detaches the host client | host client count is 0 |
-  | 48 | both sessions keep running | both listed and not `EXITED` |
-  | 49 | the inner client stays attached in the guest pane | inner client count is 1 |
-  | 50 | starting again attaches to the running pair | host client count is 1 within 10 s |
-  | 51 | the sidebar keeps the keyboard after a detach and re-attach | `Alt m`, then `3` s later (longer than the grab window) host focus is still the panel |
-  | 52 | and the inner session wears the away theme | the label's colour equals the away reading of check 9 |
-  | 53 | ending the inner session ends the host session | after `kill-session <inner>`, the host is gone within 10 s (skipped with `--keep`) |
+  | 36 | a team with no agent at work is listed under Quiet teams | with the list grouped by team, the screen shows `▸ Quiet teams  1`: the team's one agent is Quiet |
+  | 37 | o on a team heading shows the team's session | with that row opened (`G`, `Enter`) and the team's heading under it selected (`j`), after `o` the session has 1 client within 10 s |
+  | 38 | and gives it the keyboard | host focus becomes the guest pane |
+  | 39 | when the session on show ends, the guest pane shows the inner session | after `kill-session <session>`, the inner session has 1 client within 10 s |
+  | 40 | and the team's session is made again when its agent is opened | after `Second agent` is opened again, the session has 1 client within 10 s; the host session's client was not detached, or the keys would not have reached the panel |
+  | 41 | the sidebar lists the running sessions, the one on show marked | the screen shows `Sessions  2` and, within the two rows under it, `● auth` |
+  | 42 | Enter on a session's row shows that session | after `Tab`, `G` and `Enter` in the panel, the inner session has 1 client within 10 s |
+  | 43 | and hands it the keyboard | host focus becomes the guest pane |
+  | 44 | x on a team session's row ends it, once confirmed | after `Tab`, `gg`, `x` and `y`, the team's session is not running within 10 s |
+  | 45 | and the section lists the inner session alone | the screen shows `Sessions  1` |
+  | 46 | detaching the inner session's client detaches the host too | after `Ctrl o`, `d` typed into the inner session, host client count is 0 within 8 s |
+  | 47 | and the guest pane attaches to the inner session again | the inner session has 1 client within 8 s; the pair is then attached again |
+  | 48 | Alt-d detaches the host client | host client count is 0 |
+  | 49 | both sessions keep running | both listed and not `EXITED` |
+  | 50 | the inner client stays attached in the guest pane | inner client count is 1 |
+  | 51 | starting again attaches to the running pair | host client count is 1 within 10 s |
+  | 52 | the sidebar keeps the keyboard after a detach and re-attach | `Alt m`, then `3` s later (longer than the grab window) host focus is still the panel |
+  | 53 | and the inner session wears the away theme | the label's colour equals the away reading of check 9 |
+  | 54 | ending the inner session ends the host session | after `kill-session <inner>`, the host is gone within 10 s (skipped with `--keep`) |
 
   It ends with `nested: all checks passed` and exit `0`, or `nested: <N> check(s) failed` and exit `1`.
 - **Source:** `zellij/e2e/nested.sh`

@@ -97,5 +97,6 @@ Requirement prefix: `ZT`.
 - **Whether a new tab can take both a layout and the agent's command** in Zellij 0.46 (ZT-008). If not, the tab is opened and the extra panes are added afterwards.
 - **A team across machines.** A session lives on one machine. Agents of the team that run elsewhere ([10-remote-nodes.md](10-remote-nodes.md)) would open as tabs over SSH, unless and until sessions can live on a remote host.
 - **Sessions without teams.** Whether the user can make a session by hand, or only by having a team.
-- **Sessions that are no longer needed.** A session keeps running after its team's last agent is gone, until it is ended from the Sessions section (`x`). Whether noc should end it, or offer to, and what becomes of a team whose agents are all Quiet.
+- **Sessions that are no longer needed.** A session keeps running after its team's last agent is gone, until it is ended from the Sessions section (`x`). Whether noc should end it, or offer to.
+- **A team that is finished.** A team whose agents are all Quiet rests behind the `Quiet teams` row ([07-zellij-panel.md](07-zellij-panel.md) ZG-020), and wakes whole when its name is used again. Whether a team needs an end that is recorded, so that an old name starts a new team.
 - **Many teams.** Whether folded groups need a limit or their own search.

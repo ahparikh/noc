@@ -2082,7 +2082,10 @@ mod tests {
         assert_eq!(text[6].trim_end(), "v           group by team / status");
         assert_eq!(text[7].trim_end(), "p / s       pane / stacked pane here");
         assert_eq!(text[9].trim_end(), "o           show its team's session");
-        assert_eq!(text[10].trim_end(), "Tab         next section (Shift: back)");
+        assert_eq!(
+            text[10].trim_end(),
+            "Tab         next section (Shift: back)"
+        );
         assert_eq!(text[11].trim_end(), "S           close / open sessions");
         assert_eq!(text[14].trim_end(), "n           rename agent");
         assert_eq!(text[15].trim_end(), "t / T       join / leave a team");

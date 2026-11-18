@@ -637,6 +637,7 @@ fn help_lines(theme: &Theme) -> Vec<Line> {
         "v           group by team / status",
         "p / s       pane / stacked pane here",
         "w           shell in its worktree",
+        "o           show its team's room",
         "d           toggle details",
         "D           details window",
         "n           rename agent",
@@ -1552,33 +1553,34 @@ mod tests {
     fn renders_keyboard_help_on_request() {
         let mut app = app_with("[]");
         app.toggle_help();
-        let text = plain(&render(&mut app, &Theme::default(), 30, 38));
+        let text = plain(&render(&mut app, &Theme::default(), 31, 38));
         assert_eq!(text[0].trim_end(), "In the list");
         assert_eq!(text[1].trim_end(), "j / k       move selection");
         assert_eq!(text[5].trim_end(), "h           close a section or a team");
         assert_eq!(text[6].trim_end(), "v           group by team / status");
         assert_eq!(text[7].trim_end(), "p / s       pane / stacked pane here");
-        assert_eq!(text[11].trim_end(), "n           rename agent");
-        assert_eq!(text[12].trim_end(), "t / T       join / leave a team");
-        assert_eq!(text[13].trim_end(), "x           stop agent (asks y/n)");
-        assert_eq!(text[15].trim_end(), "/           search (also older:14d)");
-        assert_eq!(text[16].trim_end(), "u           check for a new release");
-        assert_eq!(text[17].trim_end(), "i           status and version");
-        assert_eq!(text[18].trim_end(), "? / Esc     close help");
-        assert_eq!(text[19], " ".repeat(38));
-        assert_eq!(text[20].trim_end(), "Anywhere");
-        assert_eq!(text[21].trim_end(), "Alt-m       jump to list and back");
-        assert_eq!(text[22].trim_end(), "Alt-o       hide / show this panel");
-        assert_eq!(text[23].trim_end(), "Alt-d       detach both sessions");
-        assert_eq!(text[24], " ".repeat(38));
+        assert_eq!(text[9].trim_end(), "o           show its team's room");
+        assert_eq!(text[12].trim_end(), "n           rename agent");
+        assert_eq!(text[13].trim_end(), "t / T       join / leave a team");
+        assert_eq!(text[14].trim_end(), "x           stop agent (asks y/n)");
+        assert_eq!(text[16].trim_end(), "/           search (also older:14d)");
+        assert_eq!(text[17].trim_end(), "u           check for a new release");
+        assert_eq!(text[18].trim_end(), "i           status and version");
+        assert_eq!(text[19].trim_end(), "? / Esc     close help");
+        assert_eq!(text[20], " ".repeat(38));
+        assert_eq!(text[21].trim_end(), "Anywhere");
+        assert_eq!(text[22].trim_end(), "Alt-m       jump to list and back");
+        assert_eq!(text[23].trim_end(), "Alt-o       hide / show this panel");
+        assert_eq!(text[24].trim_end(), "Alt-d       detach both sessions");
+        assert_eq!(text[25], " ".repeat(38));
         assert_eq!(
-            text[25].trim_end(),
+            text[26].trim_end(),
             format!("version     v{}", crate::update::CURRENT)
         );
         // The status line last, above the footer.
         assert_eq!(header(&text), "0 agents");
-        assert_eq!(status_at(&text), 28);
-        assert_eq!(text[29].trim_end(), FOOTER);
+        assert_eq!(status_at(&text), 29);
+        assert_eq!(text[30].trim_end(), FOOTER);
     }
 
     #[test]
@@ -1817,13 +1819,13 @@ mod tests {
         let text = plain(&render(&mut app, &Theme::default(), 30, 8));
         assert_eq!(text[28], "0 a\u{2026} \u{2191} \u{25cf}");
         app.show_help = true;
-        let text = plain(&render(&mut app, &Theme::default(), 30, 38));
+        let text = plain(&render(&mut app, &Theme::default(), 31, 38));
         assert_eq!(
-            text[26].trim_end(),
+            text[27].trim_end(),
             "\u{2191} v0.2.0    newer plugin release;"
         );
-        assert_eq!(text[27].trim_end(), "            set it in the plugin URL");
-        assert_eq!(text[29].trim_end(), FOOTER);
+        assert_eq!(text[28].trim_end(), "            set it in the plugin URL");
+        assert_eq!(text[30].trim_end(), FOOTER);
     }
 
     #[test]

@@ -71,6 +71,32 @@ bar_colour() {
 		LC_ALL=C grep -o -E '48;2;[0-9]+;[0-9]+;[0-9]+' | sort | uniq -c | sort -rn | awk 'NR == 1 { print $2 }'
 }
 
+# The tab bar of the room on show starts with this label.
+bar_says() { tmux capture-pane -p -t "$TMUX_SESSION" | sed -n 1p | grep -q -- "╮ $1 "; }
+room_has_client() { [ "$(clients "$1")" = 1 ]; }
+room_tab_count() { z --session "$1" action list-tabs 2>/dev/null | tail -n +2 | grep -c . || true; }
+# open_match TEXT: search the sidebar for TEXT and open the first match.
+open_match() {
+	keys M-m
+	wait_for 5 host_focus_is "$SIDEBAR"
+	keys /
+	sleep 0.3
+	keys "$1"
+	keys Enter
+	wait_for 8 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q '1 match'"
+	keys g g
+	sleep 0.3
+	keys Enter
+	wait_for 5 host_focus_is "$GUEST"
+	# End the search, and leave the keyboard in the inner session.
+	keys M-m
+	wait_for 5 host_focus_is "$SIDEBAR"
+	keys Escape
+	sleep 0.5
+	keys M-m
+	wait_for 5 host_focus_is "$GUEST"
+}
+
 FAILED=0
 ok() { printf 'ok    %s\n' "$1"; }
 fail() {
@@ -144,10 +170,11 @@ check "the sidebar runs a registry watcher" \
 check "guest pane keeps exactly one client on the inner session" \
 	[ "$(clients "$INNER")" = 1 ]
 check "the keyboard starts in the inner session" host_focus_is "$GUEST"
-# noc-inner.kdl turns the session name and the sessions box off; config.kdl
-# leaves both on.
+# noc-inner.kdl takes the session name off the pane frames; config.kdl
+# leaves it on.
 check "inner session takes its options from noc-inner.kdl" \
-	sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | sed -n 1p | grep 'Zellij ' | grep -v -e '($INNER)' -e 'running' >/dev/null"
+	sh -c "! tmux capture-pane -p -t '$TMUX_SESSION' | grep -q -F '$INNER'"
+check "the inner session's tab bar says it holds the agents in no team" bar_says no-team
 
 # ---- 2. keyboard hand-off and the theme relay ----
 HOME_COLOUR="$(bar_colour)"
@@ -243,7 +270,80 @@ check "Alt-o hides the sidebar" wait_for 5 fullscreen true
 keys M-o
 check "Alt-o shows it again" wait_for 5 fullscreen false
 
-# ---- 7. detach, attach, end together ----
+# ---- 7. rooms: a team's agents open in the team's own inner session ----
+ROOM="$INNER--auth"
+TEAMS="$ROOT/target/e2e/agents.json"
+"$ROOT/e2e/fake-noc" ls | sed 's/"name":"Second agent"/"name":"Second agent","team":"auth"/' >"$TEAMS.tmp"
+mv "$TEAMS.tmp" "$TEAMS"
+sleep 1.5 # let the sidebar read the team
+open_match second
+check "Enter on a team's agent creates the team's room" wait_for 10 alive "$ROOM"
+check "the guest pane's client moves to that room" wait_for 10 room_has_client "$ROOM"
+check "the room's tab bar says the team" wait_for 5 bar_says auth
+check "the agent has a tab in its team's room" \
+	wait_for 10 sh -c "env -u ZELLIJ -u ZELLIJ_SESSION_NAME zellij --session '$ROOM' action list-tabs | grep -q 'Second agent'"
+room_is_all_agents() { [ "$(room_tab_count "$ROOM")" = 1 ]; }
+check "the tab the room was created with is closed" wait_for 10 room_is_all_agents
+check "the inner session keeps running, with no client" \
+	sh -c "$(declare -f z alive clients); alive '$INNER' && [ \"\$(clients '$INNER')\" = 0 ]"
+check "the keyboard is in the room" host_focus_is "$GUEST"
+
+open_match e2e
+check "an agent in no team opens in the inner session" wait_for 10 room_has_client "$INNER"
+check "whose tab bar says so" wait_for 5 bar_says no-team
+check "the team's room keeps its tab" [ "$(room_tab_count "$ROOM")" = 1 ]
+check "the agent that was already open there got no second tab" [ "$(inner_tab_count)" = "$TABS_OPEN" ]
+
+# `o` on a team's heading shows the team's room.
+keys M-m
+wait_for 5 host_focus_is "$SIDEBAR"
+keys v # group by team: the first heading is the team
+sleep 0.5
+keys g g
+sleep 0.3
+keys o
+check "o on a team heading shows the team's room" wait_for 10 room_has_client "$ROOM"
+check "and gives it the keyboard" wait_for 5 host_focus_is "$GUEST"
+keys M-m
+wait_for 5 host_focus_is "$SIDEBAR"
+keys v
+sleep 0.3
+keys M-m
+wait_for 5 host_focus_is "$GUEST"
+
+# The room on show ends: Zellij moves the client back, and the sidebar
+# follows it, which opening the agent again shows.
+z kill-session "$ROOM" >/dev/null 2>&1
+check "when the room on show ends, the guest pane shows the inner session" \
+	wait_for 10 room_has_client "$INNER"
+sleep 1
+open_match second
+check "and the team's room is made again when its agent is opened" wait_for 10 room_has_client "$ROOM"
+
+# Back to the inner session for the rest, without the team.
+open_match e2e
+wait_for 10 room_has_client "$INNER"
+z kill-session "$ROOM" >/dev/null 2>&1
+rm -f "$TEAMS"
+sleep 1.5
+
+# ---- 8. detach, attach, end together ----
+host_clients() { z --session "$HOST" action list-clients 2>/dev/null | tail -n +2 | grep -c . || true; }
+host_has_clients() { [ "$(host_clients)" = "$1" ]; }
+start_again() {
+	keys "env -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID NOC_DEV_NAME=$INNER '$ROOT/dev.sh' --fake start" Enter
+}
+# Detaching inside the inner session (its own Ctrl-o d) leaves both: the
+# sidebar detaches the host, and the guest pane attaches again.
+keys C-o
+sleep 0.5
+keys d
+check "detaching the inner session's client detaches the host too" wait_for 8 host_has_clients 0
+check "and the guest pane attaches to the inner session again" wait_for 8 room_has_client "$INNER"
+start_again
+wait_for 10 host_has_clients 1
+sleep 2
+
 keys M-d
 check "Alt-d detaches the host client" wait_for 5 sh -c "[ \"\$(env -u ZELLIJ -u ZELLIJ_SESSION_NAME zellij --session '$HOST' action list-clients | tail -n +2 | grep -c .)\" = 0 ]"
 check "both sessions keep running" sh -c "$(declare -f z alive); alive '$HOST' && alive '$INNER'"

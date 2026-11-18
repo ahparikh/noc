@@ -10,7 +10,8 @@
 # The dev pair instead uses this checkout's build of both, under different
 # session names, with its own Zellij config directory and its own noc state:
 #
-#   sessions   $NOC_DEV_NAME (inner, default "noc-dev") and $NOC_DEV_NAME-host
+#   sessions   $NOC_DEV_NAME (inner, default "noc-dev"), $NOC_DEV_NAME-host,
+#              and one $NOC_DEV_NAME--<team> per team whose room was opened
 #   plugin     zellij/target/wasm32-wasip1/release/zellij-noc.wasm
 #   noc        go/bin/noc through a wrapper that points it at a separate
 #              state and runtime directory (--fake: e2e/fake-noc instead)
@@ -124,20 +125,25 @@ local_plugin() {
 # host_layout <noc-host.kdl> <noc executable>: the host layout with the dev
 # session names, the inner session reading the dev config directory, and the
 # plugin loading this checkout's build, running the dev noc and naming the
-# dev inner session. The three settings are replaced where they are set and
-# added where they are not.
+# dev inner session, with its rooms made from the dev copy of the inner
+# layout. The four settings are replaced where they are set and added where
+# they are not.
 host_layout() {
 	sed \
 		-e "s|inner=noc; host=noc-host;|inner=$INNER; host=$HOST; export ZELLIJ_CONFIG_DIR='$OUT';|" \
 		-e '/^[[:space:]]*noc_bin[[:space:]]/d' \
 		-e '/^[[:space:]]*guest_session[[:space:]]/d' \
+		-e '/^[[:space:]]*room_layout[[:space:]]/d' \
 		-e '/^[[:space:]]*update_check[[:space:]]/d' \
 		"$1" | local_plugin |
-		awk -v noc="$2" -v inner="$INNER" -v check="$UPDATE_CHECK" '
+		awk -v noc="$2" -v inner="$INNER" -v check="$UPDATE_CHECK" -v layout="$OUT/layouts/noc-inner" '
 			{ print }
 			/^[ \t]*plugin[ \t]+location=.*zellij-noc\.wasm.*\{[ \t]*$/ {
 				printf "                noc_bin \"%s\"\n", noc
 				printf "                guest_session \"%s\"\n", inner
+				# A client that moves to a new room looks for its layout
+				# in the default config directory, not in this one.
+				printf "                room_layout \"%s\"\n", layout
 				printf "                update_check \"%s\"\n", check
 			}'
 }
@@ -219,9 +225,19 @@ cmd_start() {
 		zellij --config-dir "$OUT" attach --create "$HOST" options --default-layout "$HOST"
 }
 
+# rooms: the inner session and every team's session beside it, running or not.
+rooms() {
+	echo "$INNER"
+	{ z list-sessions --no-formatting --short 2>/dev/null || true; } |
+		awk -v p="$INNER--" 'index($1, p) == 1 && length($1) > length(p) { print $1 }'
+}
+
 cmd_stop() {
+	local room
 	z delete-session --force "$HOST" >/dev/null 2>&1 || true
-	z delete-session --force "$INNER" >/dev/null 2>&1 || true
+	for room in $(rooms); do
+		z delete-session --force "$room" >/dev/null 2>&1 || true
+	done
 	# The sidebar's registry watcher would otherwise last until the
 	# registry next changes, which the fake one never does.
 	pkill -f -- "zellij-noc-registry-watch=$HOST\$" 2>/dev/null || true
@@ -233,7 +249,7 @@ cmd_stop() {
 cmd_status() {
 	local name
 	[ ! -f "$OUT/mode" ] || echo "== configuration: $(cat "$OUT/mode")"
-	for name in "$HOST" "$INNER"; do
+	for name in "$HOST" $(rooms); do
 		if alive "$name"; then
 			echo "== $name"
 			z --session "$name" action list-clients 2>&1 || true

@@ -2,14 +2,22 @@
 // pair, and only then.
 //
 // Copy to ~/.config/zellij/layouts/noc-inner.kdl. The guest pane of
-// noc-host.kdl creates the inner session ("noc") with this layout. Sessions
-// you start any other way never read this file, so the options below do not
-// change them.
+// noc-host.kdl creates the inner session ("noc") with this layout, and the
+// sidebar creates each team's own session ("noc--<team>") with it the first
+// time something of that team is opened. Sessions you start any other way
+// never read this file, so the options below do not change them.
 
-// The first tab. This is Zellij's default layout; change it freely.
+// The first tab, and the frame of every tab opened later. This is Zellij's
+// default layout with noc's tab bar, which says which team the session
+// belongs to where Zellij's own says "Zellij" ("no-team" for the session of
+// the agents in no team). Change it freely; `plugin location="tab-bar"`
+// gives Zellij's own bar back. The location must be the one loaded in
+// layouts/noc-host.kdl.
 layout {
     pane size=1 borderless=true {
-        plugin location="tab-bar"
+        plugin location="https://github.com/ahparikh/noc/releases/download/v0.2.1/zellij-noc.wasm" {
+            role "bar"
+        }
     }
     pane
     pane size=1 borderless=true {

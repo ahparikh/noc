@@ -30,8 +30,9 @@ layout {
 // the session is created: to apply a change, end the pair (`zellij kill-session noc`) and
 // start it again.
 
-// The tab bar's "[ N running ]" box with the other sessions and the inbox.
-// The sidebar already lists what needs you.
+// The "[ N running ]" box of Zellij's own tab bar, with the other sessions
+// and the inbox, should you put that bar back. The sidebar already lists
+// what needs you.
 session_indicator false
 
 // Zellij's own tracking of what panes need: the markers on frames and tabs,
@@ -43,8 +44,8 @@ attention {
 
 ui {
     pane_frames {
-        // "Zellij (noc)" in the tab bar becomes "Zellij", and the session
-        // name leaves the focused pane's frame.
+        // The session name leaves the focused pane's frame: the tab bar
+        // already says which team's session this is.
         hide_session_name true
     }
 }

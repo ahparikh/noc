@@ -80,9 +80,10 @@ the code. Regenerate them with `cd go && go test ./... -list '^Test'` and
 | `zellij/src/panel.rs` | 5 | key dispatch, modifiers, stop confirmation, rename mode |
 | `zellij/src/view.rs` | 16 | rendering bounds, spinner, sections, help, Unicode width, empty and error states |
 | `zellij/src/panes.rs` | 13 | pane recognition, attach commands, tab names, focus, pipe decoding |
-| `zellij/src/guest.rs` | 8 | inner-session pane parsing and focus, relay theme names, keyboard signals |
+| `zellij/src/guest.rs` | 14 | inner-session pane parsing and focus, relay theme names, keyboard signals, rooms |
+| `zellij/src/bar.rs` | 3 | the tab bar: what fits, where the tabs are, what a tab says |
 | `zellij/src/details.rs` | 1 | closing keys of the details window |
-| `zellij/e2e/nested.sh` | 26 checks | the pair end to end (§5) |
+| `zellij/e2e/nested.sh` | 48 checks | the pair end to end (§5) |
 
 `go/cmd/noc` has no test; it is a few lines that call `cli.Run`.
 

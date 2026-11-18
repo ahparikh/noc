@@ -25,7 +25,9 @@ Exact behavior is specified in [spec/07-zellij-panel.md](spec/07-zellij-panel.md
 - The **host session** has one tab with two panes: the sidebar, and a guest
   pane that keeps a client of the inner session attached.
 - The **inner session** is your ordinary Zellij session. Agents open in it
-  as tabs and panes.
+  as tabs and panes. Each team has an inner session of its own beside it,
+  `noc--<team>`, and the guest pane shows one of them at a time (see
+  [Keys](#keys)).
 - The host sees every key first, but binds only three (below). Every other
   key goes to the inner session unchanged.
 
@@ -120,7 +122,8 @@ In the sidebar (after `Alt m`):
 | Key | Action |
 |---|---|
 | `j` / `k`, `gg` / `G`, `Ctrl d` / `Ctrl u` | Move |
-| `Enter` / `l` | Open the agent in the inner session (focus it if it is already open), or open a Quiet section; on a team heading, fold or open the team |
+| `Enter` / `l` | Open the agent in its team's session (focus it if it is already open), or open a Quiet section; on a team heading, fold or open the team |
+| `o` | Show the session of the selected team, or of the selected agent's team, without opening anything |
 | `h` | Close a Quiet section; when grouped by team, fold the team |
 | `v` | Group the list by team, or by status again |
 | `p` / `s` | Open the agent as a pane / a stacked pane in the current inner tab |
@@ -156,6 +159,19 @@ heading folds the team; a folded heading says what in it needs you
 team names it on its second line (`★` before the name for the lead). A
 search shows a flat list in either grouping.
 
+Each team has an inner session of its own, a room, named `noc--<team>`; the
+agents in no team share the inner session `noc`. The guest pane shows one
+room at a time. `Enter` on an agent shows its team's room and opens the
+agent there as a tab (or focuses it where it is already open), and the tab
+bar's first word says which team you are looking at: the team's name, or
+`no-team`. A room is created the first time it is needed, from
+`layouts/noc-inner.kdl`, and keeps running, with all of its tabs, while
+another room is on show. Moving between rooms does not detach anything.
+`p`, `s` and `w` act in the room on show. When a team's room ends (you
+closed its last tab, or ran `zellij kill-session noc--<team>`) the guest
+pane shows `noc` again; ending `noc` ends the host session, and any team
+rooms still running are found again at the next start.
+
 A tab that holds one agent is named after it and renamed when the agent's
 name changes. That applies to tabs the sidebar opened and to tabs still
 called `Tab #N`; a tab you named yourself keeps your name. An agent you
@@ -183,7 +199,8 @@ pair and start it again.
 | Setting | Default | Meaning |
 |---|---|---|
 | `noc_bin` | `noc` | The noc executable. A bare name is looked up on the `PATH` Zellij was started with. Use an absolute path if the sidebar reports that it cannot run noc. |
-| `guest_session` | `noc` | The inner session's name. Must match `inner=` in the layout. |
+| `guest_session` | `noc` | The inner session's name. Must match `inner=` in the layout. A team's session is this name, `--`, and the team's name. |
+| `room_layout` | `noc-inner` | The layout a team's session is created from: a name in your Zellij layout directory, or a path. |
 | `icons` | `unicode` | `nerd` to use Nerd Font provider icons. |
 | `poll_interval_ms` | `1000` | How often the sidebar reads `noc ls` on a timer. It also reads it whenever the registry reports a change, so this is the backup. Clamped to 250..60000. |
 | `home_theme`, `away_theme` | unset | Optional pair, see below. |
@@ -280,7 +297,7 @@ inner session alone. Sessions started any other way never read the file.
 As shipped it sets three:
 
 ```kdl
-session_indicator false            // no "[ N running ]" box in the tab bar
+session_indicator false            // no "[ N running ]" box, should you use Zellij's own tab bar
 
 attention {
     enabled false                  // no pane status markers, inbox or notifications
@@ -288,7 +305,7 @@ attention {
 
 ui {
     pane_frames {
-        hide_session_name true     // "Zellij (noc)" becomes "Zellij"
+        hide_session_name true     // no session name on the focused pane's frame
     }
 }
 ```
@@ -296,7 +313,11 @@ ui {
 Delete a line to get Zellij's normal behaviour back. The options are read
 when the inner session is created, so after a change end the pair
 (`zellij kill-session noc`) and start it again. The file's `layout` block is the inner session's first tab; it
-replaces `default_layout` for that session.
+replaces `default_layout` for that session. Its first pane is noc's tab bar,
+which is Zellij's with the team's name in place of the word "Zellij";
+`plugin location="tab-bar"` there gives Zellij's own back. Each team's
+session is created from this same file, so everything in it applies to
+them too.
 
 The host session's own options are at the bottom of `layouts/noc-host.kdl`.
 
@@ -349,17 +370,26 @@ bind "Alt t" { FocusPreviousPane; Write 27 116; }   // ESC t
 
 ## How it works
 
-- **One plugin, three roles.** The same file runs as the sidebar, as the
-  floating details window, and as a hidden relay in the inner session.
+- **One plugin, four roles.** The same file runs as the sidebar, as the
+  floating details window, as a hidden relay in each inner session, and as
+  each inner session's tab bar.
 - **The relay tells the sidebar what the inner session is doing.** A plugin
   can only see and act on its own session. The relay sees every change of
-  pane, tab and focus in the inner session as it happens and sends it to the
+  pane, tab and focus in its session as it happens and sends it to the
   sidebar, which starts the relay itself. It also switches the themes.
+- **The relay moves you between rooms.** To show another team's session the
+  sidebar asks the relay of the one on show to switch its client there.
+  Zellij does that inside the running client, so nothing detaches, and
+  creates the session when it is not running. Zellij tells the sidebar
+  which session is in the guest pane, so it knows when you have arrived
+  and where you are if you move yourself.
 - **The inner session is driven over the Zellij CLI.** The sidebar opens and
   focuses agents there with `zellij --session noc action …` and `zellij run`.
 - **The guest pane is a small shell loop**, written out in the layout. It
-  creates the inner session on first start, re-attaches when the client
-  detaches, and ends the host session when the inner session ends.
+  creates the inner session on first start, attaches to it again whenever
+  its client exits, and ends the host session when the inner session ends.
+  When the client exited because you detached, the sidebar detaches the
+  host too.
 - **The registry is read through the CLI only**: `noc ls --json --all`,
   `noc search --json` and `noc show --json`. Opening an agent runs `noc attach <id>`; rename and stop
   run `noc rename` and `noc stop`. The sidebar shows only what those

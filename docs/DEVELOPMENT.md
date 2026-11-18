@@ -32,7 +32,7 @@ CI runs the first five on every push and pull request
 |---|---|---|
 | `noc` binary | the release, installed with Homebrew (or `install.sh`) | `go/bin/noc` from this checkout |
 | Plugin | the release URL in `~/.config/zellij/layouts/noc-host.kdl` | `zellij/target/…/zellij-noc.wasm` |
-| Sessions | `noc`, `noc-host` | `noc-dev`, `noc-dev-host` |
+| Sessions | `noc`, `noc-host`, a `noc--<team>` per team | `noc-dev`, `noc-dev-host`, a `noc-dev--<team>` per team |
 | Zellij config | `~/.config/zellij/` | `zellij/target/dev/noc-dev/` |
 | noc state | the platform default | `~/.local/state/noc-dev`, `~/.cache/noc-dev` |
 
@@ -45,7 +45,7 @@ release.
 ```sh
 make dev              # build both, then start (or attach to) the dev pair
 make dev-installed    # the same, with your installed Zellij configuration
-make dev-stop         # end both dev sessions and the dev server
+make dev-stop         # end the dev sessions (teams' too) and the dev server
 zellij/dev.sh status
 ```
 
@@ -69,7 +69,8 @@ switch.
 `zellij/dev.sh` renders the chosen files into
 `zellij/target/dev/noc-dev/` with these substitutions: the plugin location
 becomes the local build, the session names become `noc-dev` and
-`noc-dev-host`, and `noc_bin` becomes a wrapper that runs `go/bin/noc` with
+`noc-dev-host`, `room_layout` names the rendered `noc-inner.kdl` by its
+path, and `noc_bin` becomes a wrapper that runs `go/bin/noc` with
 its own state and runtime directories. It then starts Zellij with
 `--config-dir` pointing there. Because `make dev` renders the shipped files,
 what you test is what users copy. It never writes to your own Zellij

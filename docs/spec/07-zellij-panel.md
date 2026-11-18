@@ -12,10 +12,11 @@ results of `noc stop`, `noc rename`, `noc team set` and `noc team clear`.
 
 The plugin has one deployment: the panel is a sidebar in an outer "host"
 Zellij session, beside a single guest pane that holds the user's own Zellij
-session attached nested (the "inner" session). One WASM build serves three
-roles chosen by the `role` configuration key: `panel` (the default),
-`details` (the floating details window) and `relay` (the theme relay inside
-the inner session). This section covers the `panel` and `details` roles.
+session attached nested (the "inner" session), or the room of one of the
+teams. One WASM build serves four roles chosen by the `role` configuration
+key: `panel` (the default), `details` (the floating details window), `relay`
+(inside each inner session) and `bar` (an inner session's tab bar). This
+section covers the `panel` and `details` roles.
 
 Plugin lifecycle, permissions, polling cadence, pipe decoding, keyboard
 ownership (`Alt-m`, `Alt-o`, `Alt-d`), the theme relay, reading and driving
@@ -780,6 +781,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   v           group by team / status
   p / s       pane / stacked pane here
   w           shell in its worktree
+  o           show its team's room
   d           toggle details
   D           details window
   n           rename agent
@@ -1225,6 +1227,7 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 | `p` | agent row | open the agent as a new pane in the inner session (ZK-010) |
 | `s` | agent row | open the agent stacked in the inner session (ZK-011) |
 | `w` | agent row | shell in its workspace, in the inner session (ZK-012) |
+| `o` | agent row, team heading or its Quiet row | show that team's room (ZK-034) |
 | `D` | agent row | floating details window (ZK-013) |
 | `r` | poll transport | refresh now (ZK-014) |
 | `x` | stoppable agent row | ask `Stop {title}?  y / n` (ZK-016) |
@@ -1579,6 +1582,15 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 - **Source:** `zellij/src/panel.rs` (request_leave_team, run_intent, team_clear_argv, team_result_notice, on_team_result)
 - **Decision:** D-071
 - **Verified by:** `zellij/src/panel.rs` capital_t_leaves_the_team_and_both_keys_need_an_agent, team_results_are_said_in_plain_words; running the command and the poll `UNTESTED`
+
+#### ZK-034 `o`: show a team's room
+- **Behavior:** `o` MUST raise the Room intent, whatever is selected. What
+  it does, and what it says when no team or agent is selected, is specified
+  in [08-zellij-host.md](08-zellij-host.md) ZT-004. `Enter` on a team
+  heading still folds and unfolds the group (ZK-009).
+- **Source:** `zellij/src/panel.rs` (process_key, run_intent)
+- **Decision:** D-072
+- **Verified by:** `zellij/e2e/nested.sh` "o on a team heading shows the team's room"; no unit test
 
 #### ZK-027 `u`: check for a new release
 - **Behavior:** `u` MUST ask at once whether a newer release exists

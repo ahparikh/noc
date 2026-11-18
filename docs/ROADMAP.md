@@ -130,10 +130,10 @@ Remote attach assumes background agents, which is what `noc spawn`
   background Claude agent today. Still to come: Codex, a host, an issue
   reference, an isolation preference, quotas, idempotency and cancellation.
   Spawning never becomes the only way to start a session.
-- **A Zellij view of a team.** Teams, their leads and the sidebar's team
-  grouping are built. What is left is a place to see one team's agents
-  together, such as a session per team with a tab per agent. A first
-  draft is in [spec/11-teams.md](spec/11-teams.md).
+- **A Zellij view of a team.** Teams, their leads, the sidebar's team
+  grouping and a session per team (a room) are built. What is left is the
+  shape of an agent's tab inside a room: its shell and other panes beside
+  it. A first draft is in [spec/11-teams.md](spec/11-teams.md).
 - **More of durable children:** `parent_id` records which agent spawned an
   agent. Still to come: a view of the tree, and links to external work
   items.

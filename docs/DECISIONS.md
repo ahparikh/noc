@@ -801,6 +801,69 @@ tenth of a second. `poll_interval_ms` now sets how long a lost event can
 last, so it can be raised without the list feeling slow. One more process
 (`noc watch`) runs for as long as the pair does.
 
+### D-072: one room per team, one room on show
+
+In Zellij each team has its own inner session, a room, named
+`<inner>--<team>`. The agents in no team use the inner session itself. The
+host session's guest pane shows one room at a time. The panel changes rooms
+by asking the relay of the room on show to switch its client's session,
+which Zellij does inside the running client and which creates the room when
+it is not running. Zellij tells the host which session is nested in the
+guest pane, and the panel takes the room on show from that.
+
+**Why:** each piece of work gets its own tabs and layout, and moving
+between pieces of work is one step instead of a search through tabs. The
+sidebar still lists every team, because what needs attention anywhere is
+its purpose. Switching the client in place was measured against the
+alternative, ending the client and attaching another from the guest pane's
+loop: the switch shows the new room about a tenth of a second after the
+key, with no detach, and the terminal never leaves Zellij's screen. A
+Zellij command run from outside cannot switch a client, so the request
+goes through the relay, which is in the session with it. Taking the room on
+show from what Zellij reports, instead of from what the panel last asked
+for, keeps the panel right when a room ends or the user changes session
+themselves.
+**Consequence:** "one inner session" (D-055) is now "one room on show".
+What the panel knows about a session is kept per room. A room is created
+from the inner layout, which for a client that changes session is looked up
+by name in the default configuration directory; a pair that keeps its
+configuration elsewhere, as the development pair does, names the file by
+its path (`room_layout`). A room that is being created cannot take a relay
+until it has a tab, so the first read of a new room waits a quarter of a
+second, which makes opening a team for the first time take about half a
+second. Rooms are never ended by noc.
+
+### D-080: the panel, not the guest pane's loop, detaches the host
+
+When the guest pane's client exits, its loop attaches a new one to the
+inner session and does nothing else. The panel detaches the host session's
+client if the session that client was in is still running.
+
+**Why:** one detach should leave both sessions (D-055), but a client also
+exits when the session it is in ends, and with rooms that is ordinary: the
+last tab of a team's room is closed. The loop sees only that its client
+returned. The panel knows which room was on show and can ask whether it is
+still running.
+**Consequence:** closing a team's last tab shows the inner session instead
+of detaching. A pair whose panel is not running (its permissions were
+refused) no longer detaches the host when the inner client detaches; the
+loop attaches again and the host stays.
+
+### D-081: a room's tab bar is noc's own
+
+The inner layout loads the plugin as the tab bar (`role "bar"`). It draws
+what Zellij's tab bar draws, with the room's team where that one says
+"Zellij".
+
+**Why:** with several inner sessions that look alike, the one thing the
+screen must say is which team this is. Zellij's bar can show the session's
+name beside "Zellij", but not instead of it, and the name of a room carries
+the inner session's name in front. The bar reads the team from its own
+session's name, so it needs no setting and no message from the panel.
+**Consequence:** the inner layout names the plugin's location a third
+time. Zellij's bar is one line away (`plugin location="tab-bar"`). What
+Zellij's bar gains in a new release, this one does not.
+
 ## Names, state, and grouping
 
 ### D-042: names are two-way and the most recent rename wins
@@ -1107,25 +1170,14 @@ background agent needs none.
 **Consequence:** a remote agent that lives in someone's terminal is not
 given a new home by attaching to it.
 
-### D-072: one room per team, one room on show *(planned)*
-
-In Zellij each team would have its own inner session, a room, and the host
-session's guest pane would show one room at a time. Agents in no team would
-use the default room, which is today's inner session. This is not designed
-in detail yet; see spec/11-teams.md.
-
-**Why:** each piece of work gets its own tabs and layout, and moving
-between pieces of work is one step instead of a search through tabs. The
-sidebar still lists every team, because what needs attention anywhere is
-its purpose.
-**Consequence:** this would replace "one inner session" (D-055) with "one
-room on show".
-
-### D-073: a tab is one agent, and its panes are ways into it *(planned)*
+### D-073: a tab is one agent, and its panes are ways into it *(planned in part)*
 
 An agent has one tab. The other panes in that tab, such as a shell in its
 worktree, belong to that agent. An agent's tab is found wherever it is
-open, it is never moved between rooms, and it outlives the agent.
+open, it is never moved between rooms, and it outlives the agent. Built:
+an agent is opened in the room where it is already open, and otherwise in
+its team's room (spec/08-zellij-host.md ZT-006). Not built: the panes that
+belong to an agent's tab (spec/11-teams.md).
 
 **Why:** a tab bar of agents is a readable picture of a team, and the shell
 beside an agent is the one you want when you look at it. Zellij cannot move

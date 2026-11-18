@@ -6,7 +6,7 @@
 #   make zellij-e2e             headless end-to-end test of the nested pair
 #   make dist VERSION=v1.2.3    release artifacts in dist/
 .PHONY: build test check fmt clean zellij zellij-check zellij-fmt zellij-test \
-	zellij-clean zellij-e2e zellij-install-config dev dev-installed dev-stop dist
+	zellij-clean zellij-e2e zellij-install-config dev dev-mine dev-installed dev-stop dist
 
 VERSION ?= dev
 DIST := $(CURDIR)/dist
@@ -41,9 +41,12 @@ zellij-e2e:
 # names, Zellij config directory and noc state. See docs/DEVELOPMENT.md.
 # The dev pair: this checkout's binary and plugin, isolated from daily use.
 #   dev             with this checkout's zellij/config/ files
+#   dev-mine        with your config.kdl and themes, and this checkout's layouts
 #   dev-installed   with your installed Zellij configuration
 dev: build zellij
 	zellij/dev.sh start
+dev-mine: build zellij
+	zellij/dev.sh --mine start
 dev-installed: build zellij
 	zellij/dev.sh --installed start
 dev-stop:

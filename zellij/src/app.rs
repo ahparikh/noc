@@ -194,9 +194,9 @@ pub struct Config {
     pub poll_interval_ms: f64,
     /// The inner session the panel opens, focuses and follows agents in.
     pub guest_session: String,
-    /// The layout a team's room is created from: a name in the layout
+    /// The layout a team's session is created from: a name in the layout
     /// directory of the guest pane's client, or a path.
-    pub room_layout: String,
+    pub team_layout: String,
     /// The inner session's normal theme, and the one it wears while the
     /// panel has the keyboard. Both or neither.
     pub home_theme: Option<String>,
@@ -222,7 +222,7 @@ impl Default for Config {
             pipe_name: "zellij-noc.registry".to_string(),
             poll_interval_ms: 1000.0,
             guest_session: DEFAULT_GUEST_SESSION.to_string(),
-            room_layout: crate::guest::INNER_LAYOUT.to_string(),
+            team_layout: crate::guest::INNER_LAYOUT.to_string(),
             home_theme: None,
             away_theme: None,
             away_key: DEFAULT_AWAY_KEY.to_string(),
@@ -308,8 +308,8 @@ impl Config {
         if let Some(v) = get("guest_session") {
             config.guest_session = v.to_string();
         }
-        if let Some(v) = get("room_layout") {
-            config.room_layout = v.to_string();
+        if let Some(v) = get("team_layout") {
+            config.team_layout = v.to_string();
         }
         config.home_theme = get("home_theme").map(str::to_string);
         config.away_theme = get("away_theme").map(str::to_string);

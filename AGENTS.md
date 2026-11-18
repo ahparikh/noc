@@ -45,7 +45,7 @@ document; do not add a second one.
 
 The plugin runs in a host session (`noc-host`) as a sidebar beside a single
 guest pane that holds the user's own session (`noc`), attached nested, or
-the session of one team (`noc--<team>`, a room); the sidebar moves the guest
+the session of one team (`noc--<team>`); the sidebar moves the guest
 pane between them. There is no per-tab sidebar and no generated configuration: everything is in two
 layout files the user copies once. `zellij/config/layouts/noc-host.kdl`
 starts the pair and holds the plugin with all of its settings, and
@@ -93,7 +93,8 @@ installed binary.
 To try a change, use the dev pair: this checkout's binary and plugin, under
 the session names `noc-dev` and `noc-dev-host`, with their own Zellij config
 directory and their own noc state. `make dev` runs it with this checkout's
-`zellij/config/` files; `make dev-installed` runs it with the user's
+`zellij/config/` files; `make dev-mine` adds the user's own `config.kdl`
+and themes around them; `make dev-installed` runs it with the user's
 installed Zellij configuration. Details are in
 `docs/DEVELOPMENT.md`.
 

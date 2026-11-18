@@ -44,32 +44,36 @@ release.
 
 ```sh
 make dev              # build both, then start (or attach to) the dev pair
+make dev-mine         # the same, with your config.kdl and themes around the new layouts
 make dev-installed    # the same, with your installed Zellij configuration
 make dev-stop         # end the dev sessions (teams' too) and the dev server
 zellij/dev.sh status
 ```
 
-The two start commands differ only in where the Zellij configuration comes
-from:
+The three start commands differ only in where the Zellij configuration
+comes from:
 
-| | `make dev` | `make dev-installed` |
-|---|---|---|
-| Tests | the new plugin with the new configuration files | the new plugin with the configuration you use every day |
-| `config.kdl` | a plain one, with nothing of yours | yours |
-| Layouts | `zellij/config/layouts/` | your installed `noc-host.kdl` and `noc-inner.kdl` |
-| Theme | the shipped `noc-blue` pair | yours |
-| Other files | none of yours | yours, linked |
+| | `make dev` | `make dev-mine` | `make dev-installed` |
+|---|---|---|---|
+| Tests | the new plugin with the new configuration files | the same, with your own keys and options | the new plugin with the configuration you use every day |
+| `config.kdl` | a plain one, with nothing of yours | yours | yours |
+| Layouts | `zellij/config/layouts/` | `zellij/config/layouts/` | your installed `noc-host.kdl` and `noc-inner.kdl` |
+| Theme | the shipped `noc-blue` pair | the pair the shipped layouts name, from your `themes/` | yours |
+| Other files | none of yours | yours, linked | yours, linked |
 
-Both replace the plugin location, `noc_bin` and the session names, and both
+`make dev-mine` is the one for a change to the layouts themselves: it is
+what your setup will be once the new files are installed.
+
+All three replace the plugin location, `noc_bin` and the session names, and both
 use the dev registry. `make dev-installed` needs noc's files in your Zellij
 configuration (`make zellij-install-config`) and stops with a message when
-they are not there. Only one of the two runs at a time: stop the pair to
+they are not there. Only one of the three runs at a time: stop the pair to
 switch.
 
 `zellij/dev.sh` renders the chosen files into
 `zellij/target/dev/noc-dev/` with these substitutions: the plugin location
 becomes the local build, the session names become `noc-dev` and
-`noc-dev-host`, `room_layout` names the rendered `noc-inner.kdl` by its
+`noc-dev-host`, `team_layout` names the rendered `noc-inner.kdl` by its
 path, and `noc_bin` becomes a wrapper that runs `go/bin/noc` with
 its own state and runtime directories. It then starts Zellij with
 `--config-dir` pointing there. Because `make dev` renders the shipped files,

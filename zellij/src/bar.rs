@@ -1,8 +1,8 @@
-//! The `bar` role: the tab bar of a room. It is Zellij's tab bar with one
+//! The `bar` role: the tab bar of a session. It is Zellij's tab bar with one
 //! difference: where that one says "Zellij", this one says which team the
-//! room belongs to.
+//! session belongs to.
 
-use crate::guest::room_label;
+use crate::guest::team_label;
 use crate::view::{styled_span, truncate, Style};
 use crate::State;
 use unicode_width::UnicodeWidthStr;
@@ -14,7 +14,6 @@ const ARROW: &str = "\u{e0b0}";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BarColors {
-    pub bar: PaletteColor,
     pub label: PaletteColor,
     pub tab_text: PaletteColor,
     pub tab: PaletteColor,
@@ -23,12 +22,12 @@ pub struct BarColors {
 }
 
 impl BarColors {
-    /// The colours Zellij's own tab bar takes from the theme; the label is
-    /// in the colour of the active tab.
+    /// The colours Zellij's own tab bar gives its tabs; the label is in the
+    /// colour of the active tab. The bar itself has no colour: it shows the
+    /// terminal's background.
     pub fn from_mode_info(info: &ModeInfo) -> BarColors {
         let colors = &info.style.colors;
         BarColors {
-            bar: colors.text_unselected.background,
             label: colors.ribbon_selected.background,
             tab_text: colors.ribbon_unselected.base,
             tab: colors.ribbon_unselected.background,
@@ -116,7 +115,7 @@ pub fn bar_pieces(label: &str, tabs: &[(String, bool)], cols: usize, arrows: boo
         kind: Kind::Label,
         tab: None,
     }];
-    let room = cols.saturating_sub(piece_width(label, Kind::Label, arrows));
+    let space = cols.saturating_sub(piece_width(label, Kind::Label, arrows));
     let width = |text: &str| piece_width(text, Kind::Tab, arrows);
     let before = |lo: usize| format!("\u{2190} +{lo}");
     let after = |hi: usize| format!("+{} \u{2192}", tabs.len() - 1 - hi);
@@ -136,15 +135,15 @@ pub fn bar_pieces(label: &str, tabs: &[(String, bool)], cols: usize, arrows: boo
     }
     let active = tabs.iter().position(|(_, active)| *active).unwrap_or(0);
     let (mut lo, mut hi) = (0, tabs.len() - 1);
-    if span(lo, hi) > room {
+    if span(lo, hi) > space {
         (lo, hi) = (active, active);
         loop {
             let mut grew = false;
-            if hi + 1 < tabs.len() && span(lo, hi + 1) <= room {
+            if hi + 1 < tabs.len() && span(lo, hi + 1) <= space {
                 hi += 1;
                 grew = true;
             }
-            if lo > 0 && span(lo - 1, hi) <= room {
+            if lo > 0 && span(lo - 1, hi) <= space {
                 lo -= 1;
                 grew = true;
             }
@@ -165,7 +164,7 @@ pub fn bar_pieces(label: &str, tabs: &[(String, bool)], cols: usize, arrows: boo
         let mut text = text.clone();
         if lo == hi {
             // Alone and still too wide: cut the name.
-            let spare = room.saturating_sub(span(lo, hi) - text.width());
+            let spare = space.saturating_sub(span(lo, hi) - text.width());
             text = truncate(&text, spare.max(1));
         }
         let kind = if *is_active { Kind::Active } else { Kind::Tab };
@@ -184,12 +183,13 @@ pub fn bar_line(
     cols: usize,
     arrows: bool,
 ) -> (String, Vec<(usize, usize, usize)>) {
-    let span = |text: &str, fg: PaletteColor, bg: PaletteColor, bold: bool| {
+    // No background where there is no tab: the bar shows the terminal's own.
+    let span = |text: &str, fg: PaletteColor, bg: Option<PaletteColor>, bold: bool| {
         styled_span(
             text,
             Style {
                 fg: Some(fg),
-                bg: Some(bg),
+                bg,
                 bold,
                 dim: false,
             },
@@ -205,20 +205,22 @@ pub fn bar_line(
         }
         let text = format!(" {} ", piece.text);
         match piece.kind {
-            Kind::Label => line.push_str(&span(&text, colors.label, colors.bar, true)),
+            Kind::Label => line.push_str(&span(&text, colors.label, None, true)),
             Kind::Tab | Kind::Active => {
                 let (fg, bg) = if piece.kind == Kind::Active {
                     (colors.active_text, colors.active)
                 } else {
                     (colors.tab_text, colors.tab)
                 };
+                // With arrow glyphs: a gap, the tab, its arrow. Without:
+                // the tab, a gap.
                 if arrows {
-                    line.push_str(&span(ARROW, colors.bar, bg, false));
-                    line.push_str(&span(&text, fg, bg, true));
-                    line.push_str(&span(ARROW, bg, colors.bar, false));
+                    line.push(' ');
+                    line.push_str(&span(&text, fg, Some(bg), true));
+                    line.push_str(&span(ARROW, bg, None, false));
                 } else {
-                    line.push_str(&span(&text, fg, bg, true));
-                    line.push_str(&span(" ", fg, colors.bar, false));
+                    line.push_str(&span(&text, fg, Some(bg), true));
+                    line.push(' ');
                 }
             }
         }
@@ -228,12 +230,7 @@ pub fn bar_line(
         at += width;
     }
     if at < cols {
-        line.push_str(&span(
-            &" ".repeat(cols - at),
-            colors.tab_text,
-            colors.bar,
-            false,
-        ));
+        line.push_str(&" ".repeat(cols - at));
     }
     (line, regions)
 }
@@ -293,7 +290,7 @@ impl State {
     }
 
     pub fn render_bar(&mut self, cols: usize) -> Vec<String> {
-        let label = room_label(self.bar.session.as_deref().unwrap_or_default());
+        let label = team_label(self.bar.session.as_deref().unwrap_or_default());
         let mut tabs = self.bar.tabs.clone();
         tabs.sort_by_key(|t| t.position);
         let texts: Vec<(String, bool)> = tabs
@@ -350,7 +347,7 @@ mod tests {
         assert_eq!(some[5].tab, Some(4));
         let first = bar_pieces("auth", &tabs(&names, 0), 30, true);
         assert_eq!(shown(&first), ["auth", "first-one", "+5 \u{2192}"]);
-        // Room for the active tab only, and not all of its name.
+        // Space for the active tab only, and not all of its name.
         let cut = bar_pieces("auth", &tabs(&["a-very-long-tab-name", "b"], 0), 24, true);
         assert_eq!(shown(&cut), ["auth", "a-ver\u{2026}", "+1 \u{2192}"]);
     }
@@ -379,10 +376,7 @@ mod tests {
         };
         assert_eq!(
             plain,
-            format!(
-                " auth {ARROW} lead {ARROW}{ARROW} w1 {ARROW}{}",
-                " ".repeat(10)
-            )
+            format!(" auth   lead {ARROW}  w1 {ARROW}{}", " ".repeat(10))
         );
         assert_eq!(plain.width(), 30);
         // " auth " is 6 columns; "lead" takes 8 with its arrows, "w1" 6.

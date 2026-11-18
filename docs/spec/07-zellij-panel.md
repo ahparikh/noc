@@ -12,7 +12,7 @@ results of `noc stop`, `noc rename`, `noc team set` and `noc team clear`.
 
 The plugin has one deployment: the panel is a sidebar in an outer "host"
 Zellij session, beside a single guest pane that holds the user's own Zellij
-session attached nested (the "inner" session), or the room of one of the
+session attached nested (the "inner" session), or the session of one of the
 teams. One WASM build serves four roles chosen by the `role` configuration
 key: `panel` (the default), `details` (the floating details window), `relay`
 (inside each inner session) and `bar` (an inner session's tab bar). This
@@ -117,10 +117,10 @@ The plugin depends on `zellij-tile` 0.46.0 and is used with Zellij 0.46.
 | `ended_at` | `Option<String>` | `None` | recency (2nd) |
 | `created_at` | `Option<String>` | `None` | recency (3rd) |
 | `first_seen_at` | `Option<String>` | `None` | recency (4th) |
-| `attention` | `Attention` | `{kind:"", detail:""}` | Blocked secondary line |
+| `attention` | `Attention` | `{kind:"", detail:""}` | not shown; it was on the second line (ZR-013) |
 | `workspace` | `Option<Workspace>` | `None` | repo/branch/worktree/cwd, `w` directory, attach cwd |
 | `frontend_bindings` | `Vec<FrontendBinding>` | `[]` | details `pane` line; pane resolution in the inner session |
-| `team` | `String` | `""` | team grouping, the team on the secondary line (ZM-025) |
+| `team` | `String` | `""` | team grouping, the team in the details (ZM-025) |
 | `lead` | `bool` | `false` | the lead's place and mark (ZM-025) |
 | `parent_id` | `String` | `""` | parsed, not displayed |
 
@@ -702,7 +702,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   `/ {query}`. At the right edge it MUST show the status dot `●` (ZR-003),
   preceded by `↑` and a space (attention colour, bold) when a newer release
   is recorded ([08-zellij-host.md](08-zellij-host.md) ZH-022). The dot and
-  the arrow are never dropped for lack of room: the count is cut with `…`
+  the arrow are never dropped for lack of session: the count is cut with `…`
   instead. Neither says anything in words; the status box does (ZR-034).
 - **Source:** `zellij/src/view.rs` (status_line, shown_agent_count, plural)
 - **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds, a_newer_release_is_marked_on_the_header_and_explained_in_help, search_results_are_a_flat_list_with_the_query_on_the_status_line, details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel
@@ -781,7 +781,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   v           group by team / status
   p / s       pane / stacked pane here
   w           shell in its worktree
-  o           show its team's room
+  o           show its team's session
   d           toggle details
   D           details window
   n           rename agent
@@ -850,8 +850,8 @@ Public API fields that are not modelled are silently ignored, e.g.
 - **Verified by:** `zellij/src/view.rs` details_take_the_bottom_third_and_ready_agents_show_their_age
 
 #### ZR-009 List scrolling keeps the selection centred
-- **Behavior:** The list's rendered lines (headings, agent primary and
-  secondary lines, section rows) MUST be windowed to `list_height` starting
+- **Behavior:** The list's rendered lines (headings, agent rows, section
+  rows) MUST be windowed to `list_height` starting
   at `min(selected_line - list_height/2 (saturating), len - list_height
   (saturating))`, where `selected_line` is the first rendered line flagged
   selected (an agent's primary line or a section row; 0 if none).
@@ -895,20 +895,13 @@ Public API fields that are not modelled are silently ignored, e.g.
 - **Decision:** D-048
 - **Verified by:** `zellij/src/view.rs` working_agents_spin_and_quiet_agents_fold_into_counted_sections; `zellij/src/view.rs` quiet_agents_rest_even_if_they_stopped_waiting_on_the_user
 
-#### ZR-013 Agent secondary line
-- **Behavior:** Each agent row's second line MUST be
-  `"   " + indent + icon + " " + age_right_aligned_to_3` then, if non-empty,
-  `"  " + team` (ZR-036), then, if non-empty,
-  `"  " + rest`, then for a Quiet agent whose `display_state` starts with
-  `needs_` the suffix `"  stopped waiting on you"`; trailing whitespace is
-  trimmed, then the line is truncated/padded to `cols`. `icon` is
-  `provider_icon(config.nerd_icons)`; `age` is
-  `age_label(recency(), generated_at)` (three spaces when unknown; `{:>3}`
-  pads but does not truncate, so `100d` takes four columns). `rest` is
-  `attention.detail.trim()` when the agent is Blocked and that is non-empty,
-  else `workspace_label()` (ZM-017). `indent` is the primary line's
-  (ZR-011).
-- **Source:** `zellij/src/view.rs` (secondary_text, agent_secondary_line, row_indent)
+#### ZR-013 An agent is one row
+- **Behavior:** An agent MUST take exactly one row of the list, its primary
+  line (ZR-011). Nothing is drawn under it: the provider, the age, the
+  team, the workspace and what a Blocked agent waits for are in the details
+  (ZR-024), and are to be brought back to the list only where they prove
+  useful there.
+- **Source:** `zellij/src/view.rs` (agent_list_lines)
 - **Decision:** D-048
 - **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds (`   ✳  2m  Bash: make clean`); `zellij/src/view.rs` quiet_agents_rest_even_if_they_stopped_waiting_on_the_user
 
@@ -931,7 +924,6 @@ Public API fields that are not modelled are silently ignored, e.g.
   | primary prefix (marker, indent, symbol) | group colour, bold | `selected_text` on `selected_background`, bold |
   | primary title | `text` (Quiet: grey group colour), not bold | `selected_text` on `selected_background`, bold |
   | primary padding | no style | `selected_background` |
-  | secondary line | `muted`, dim | `selected_text` on `selected_background`, not dim; padding on `selected_background` |
   | section row | grey group colour | `selected_text` on `selected_background`, bold; padding on `selected_background` |
   | group heading | group colour, bold (never selected) | — |
   | team heading: name and count | `accent`, bold | `selected_text` on `selected_background`, bold; padding on `selected_background` |
@@ -939,8 +931,8 @@ Public API fields that are not modelled are silently ignored, e.g.
 
   The selected agent's highlight MUST span both of its lines across the full
   width.
-- **Source:** `zellij/src/view.rs` (agent_primary_line, agent_secondary_line, section_line, agent_list_lines)
-- **Verified by:** `zellij/src/view.rs` selected_rows_highlight_both_lines_and_group_colours_are_fixed (background on both lines, heading colours); the remaining cells `UNTESTED`
+- **Source:** `zellij/src/view.rs` (agent_primary_line, section_line, agent_list_lines)
+- **Verified by:** `zellij/src/view.rs` the_selected_row_is_highlighted_and_group_colours_are_fixed (background on the selected row, heading colours); the remaining cells `UNTESTED`
 
 #### ZR-035 Team heading
 - **Behavior:** A `Team` row MUST be `{team}  {count}` (two spaces), with
@@ -955,22 +947,15 @@ Public API fields that are not modelled are silently ignored, e.g.
 - **Decision:** D-070, D-071
 - **Verified by:** `zellij/src/view.rs` team_grouping_shows_headings_the_lead_and_folded_counts
 
-#### ZR-036 The team on the secondary line
-- **Behavior:** The `team` part of an agent's secondary line (ZR-013) MUST
-  be:
-
-  | List | Agent | Text |
-  |---|---|---|
-  | grouped by team | the team's lead | `★ lead` |
-  | grouped by team | any other agent | empty |
-  | grouped by status, or search results | lead of a team | `★ ` + the team name cut to 12 columns |
-  | grouped by status, or search results | in a team, not its lead | the team name cut to 14 columns |
-  | any | in no team | empty |
-
-  Names are cut with `…` (ZR-020). The mark is `★` (U+2605), which no state uses (ZM-012).
-- **Source:** `zellij/src/view.rs` (team_label, secondary_text)
+#### ZR-036 The team in the details
+- **Behavior:** An agent in a team MUST have the line `team      {team}` in
+  its details (ZR-024), followed by ` · lead` when it leads the team. An
+  agent in no team has no such line. The list marks neither the team nor
+  the lead: grouped by team, the heading names the team and the lead comes
+  first (ZG-018).
+- **Source:** `zellij/src/view.rs` (agent_detail_lines)
 - **Decision:** D-071
-- **Verified by:** `zellij/src/view.rs` the_status_grouping_names_the_team_on_the_second_line, team_grouping_shows_headings_the_lead_and_folded_counts
+- **Verified by:** `zellij/src/view.rs` an_agent_is_one_row_and_its_details_name_the_team
 
 ### 3.5 Colour and text primitives
 
@@ -987,7 +972,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   `blocked`, `working`, `review` and `quiet`. An agent's state colour is its
   group's colour.
 - **Source:** `zellij/src/view.rs` (Theme::group)
-- **Verified by:** `zellij/src/view.rs` selected_rows_highlight_both_lines_and_group_colours_are_fixed
+- **Verified by:** `zellij/src/view.rs` the_selected_row_is_highlighted_and_group_colours_are_fixed
 
 #### ZR-018 The theme
 - **Behavior:** By default the theme MUST be the fixed colours of herdr's
@@ -1022,7 +1007,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   to it when that is set.
 - **Source:** `zellij/src/view.rs` (Theme::herdr, Theme::from_mode_info); `zellij/src/app.rs` (Config::from_map); callers `zellij/src/main.rs` (on_mode_update), `zellij/src/details.rs` (update_details), `zellij/src/panel.rs` (open_details_window)
 - **Decision:** D-063
-- **Verified by:** `zellij/src/view.rs` selected_rows_highlight_both_lines_and_group_colours_are_fixed (both themes' group and selection colours; no dim attribute with the built-in theme); `zellij/src/app.rs` parses_bounded_poll_configuration (the setting); the `ModeUpdate` switch UNTESTED
+- **Verified by:** `zellij/src/view.rs` the_selected_row_is_highlighted_and_group_colours_are_fixed (both themes' group and selection colours; no dim attribute with the built-in theme); `zellij/src/app.rs` parses_bounded_poll_configuration (the setting); the `ModeUpdate` switch UNTESTED
 
 #### ZR-019 SGR encoding
 - **Behavior:** A styled span MUST be `ESC[` + `;`-joined codes in the order
@@ -1031,7 +1016,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   `38;2;R;G;B`/`48;2;R;G;B` for `Rgb`. A span with no codes MUST be emitted
   as plain text. The agent primary line appends one extra `ESC[0m`.
 - **Source:** `zellij/src/view.rs` (styled_span, color_code, Line::render)
-- **Verified by:** `zellij/src/view.rs` selected_rows_highlight_both_lines_and_group_colours_are_fixed
+- **Verified by:** `zellij/src/view.rs` the_selected_row_is_highlighted_and_group_colours_are_fixed
 
 #### ZR-020 Truncation by display width
 - **Behavior:** `truncate(s, w)` MUST return `""` for `w == 0`; `s` if its
@@ -1088,22 +1073,27 @@ Public API fields that are not modelled are silently ignored, e.g.
   |---|---|---|
   | 1 | `{title}` | always; `text`, bold |
   | 2 | `{state_symbol}  {state_label} · {age} ago`, or `{state_symbol}  {state_label}` when age unknown | always; group colour. Uses `state_symbol()` (ZM-012), not the row's Quiet/spinner symbol, so a Quiet `needs_input` agent reads `?  needs input · 5h ago` and a working one `●  working` |
-  | 3 | `provider  {provider_detail_label}` | always |
-  | 4 | `native    {name}` | `user_name` and `name` both non-empty (untrimmed) and different; `name` printed as is |
-  | 5 | ids | ZR-025 |
-  | 6 | `model     {model} · {effort}` / `model     {model}` / `effort    {effort}` | ZR-026 |
-  | 7 | `repo      {repo} · {branch}` / `{repo}` / `{branch}` | workspace present; ZR-027 |
-  | 8 | `worktree  {worktree_name}` | workspace is a linked worktree with a name (ZM-016) |
-  | 9 | `cwd       {workspace.path}` (trimmed) | `path.trim()` non-empty |
-  | 10 | `ask` + up to P wrapped lines | ZR-028 |
-  | 11 | `latest` + up to P wrapped lines | ZR-028 |
-  | 12 | `pane      {session}/{pane_id} · observed`, or `pane      {pane_id} · observed` when session empty | `zellij_binding()` (ZM-018) exists; always says `observed` regardless of binding state |
+  | 3 | `repo      {repo} · {branch}` / `{repo}` / `{branch}` | workspace present; ZR-027 |
+  | 4 | `worktree  {worktree_name}` | workspace is a linked worktree with a name (ZM-016) |
+  | 5 | `cwd       {workspace.path}` (trimmed) | `path.trim()` non-empty |
+  | 6 | `team      {team}`, with ` · lead` for the lead | the agent is in a team (ZR-036) |
+  | 7 | `ask` + up to P wrapped lines | ZR-028 |
+  | 8 | `latest` + up to P wrapped lines | ZR-028 |
+  | 9 | `provider  {provider_detail_label}` | always |
+  | 10 | `native    {name}` | `user_name` and `name` both non-empty (untrimmed) and different; `name` printed as is |
+  | 11 | ids | ZR-025 |
+  | 12 | `model     {model} · {effort}` / `model     {model}` / `effort    {effort}` | ZR-026 |
+  | 13 | `pane      {session}/{pane_id} · observed`, or `pane      {pane_id} · observed` when session empty | `zellij_binding()` (ZM-018) exists; always says `observed` regardless of binding state |
+
+  Where the work is comes first, then what it is, then which program does
+  it: in the panel the block is cut at its height, and the last lines are
+  the first to go.
 
   Fields never shown: `host_id`, `activity_state`, `runtime_state` (except via
-  line 3), `attention.type`, `summary_source`, `last_seen_at`,
+  line 9), `attention.type`, `summary_source`, `last_seen_at`,
   `TextPreview.source`/`truncated`.
 - **Source:** `zellij/src/view.rs` (agent_detail_lines)
-- **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds (provider, native, repo, cwd, ask; no `runtime`); `zellij/src/view.rs` details_take_the_bottom_third_and_ready_agents_show_their_age (state line); `zellij/src/view.rs` details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel (latest, pane); `worktree` line `UNTESTED`
+- **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds (repo, cwd, ask, latest, provider, native, in that order; no `runtime`); `zellij/src/view.rs` details_take_the_bottom_third_and_ready_agents_show_their_age (state line); `zellij/src/view.rs` details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel (latest, pane); `worktree` line `UNTESTED`
 
 #### ZR-025 Identifier lines
 - **Behavior:** Inline (non-roomy): one line `id        {short_id}`, or
@@ -1146,7 +1136,7 @@ Public API fields that are not modelled are silently ignored, e.g.
 - **Behavior:** `render_details_window` MUST return nothing for zero size;
   with an agent loaded, the roomy agent detail lines (ZR-024, ZR-025) with
   P = `clamp(rows / 5, 2, 8)` and no rule or `Details` heading; then pad to
-  `rows - 1` and add `Esc / D  close` (muted, dim) if there is room; truncate
+  `rows - 1` and add `Esc / D  close` (muted, dim) if there is session; truncate
   to `rows`.
 - **Source:** `zellij/src/view.rs` (render_details_window, DETAILS_FOOTER)
 - **Verified by:** `zellij/src/view.rs` details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel
@@ -1227,7 +1217,7 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 | `p` | agent row | open the agent as a new pane in the inner session (ZK-010) |
 | `s` | agent row | open the agent stacked in the inner session (ZK-011) |
 | `w` | agent row | shell in its workspace, in the inner session (ZK-012) |
-| `o` | agent row, team heading or its Quiet row | show that team's room (ZK-034) |
+| `o` | agent row, team heading or its Quiet row | show that team's session (ZK-034) |
 | `D` | agent row | floating details window (ZK-013) |
 | `r` | poll transport | refresh now (ZK-014) |
 | `x` | stoppable agent row | ask `Stop {title}?  y / n` (ZK-016) |
@@ -1583,14 +1573,14 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 - **Decision:** D-071
 - **Verified by:** `zellij/src/panel.rs` capital_t_leaves_the_team_and_both_keys_need_an_agent, team_results_are_said_in_plain_words; running the command and the poll `UNTESTED`
 
-#### ZK-034 `o`: show a team's room
-- **Behavior:** `o` MUST raise the Room intent, whatever is selected. What
+#### ZK-034 `o`: show a team's session
+- **Behavior:** `o` MUST raise the TeamSession intent, whatever is selected. What
   it does, and what it says when no team or agent is selected, is specified
   in [08-zellij-host.md](08-zellij-host.md) ZT-004. `Enter` on a team
   heading still folds and unfolds the group (ZK-009).
 - **Source:** `zellij/src/panel.rs` (process_key, run_intent)
 - **Decision:** D-072
-- **Verified by:** `zellij/e2e/nested.sh` "o on a team heading shows the team's room"; no unit test
+- **Verified by:** `zellij/e2e/nested.sh` "o on a team heading shows the team's session"; no unit test
 
 #### ZK-027 `u`: check for a new release
 - **Behavior:** `u` MUST ask at once whether a newer release exists
@@ -1659,19 +1649,16 @@ Review Claude `Docs pass` (plain directory `docs`, 3 h); Quiet:
 `Old question` (ended `needs_input`, 5 h), `Yesterday` (Codex, idle, 30 h),
 `Monday` (3 d 4 h), `Ancient` (23 d, not shown).
 
-Panel, 40 rows, first row selected, sections closed (rows 14–25 are the
+Panel, 40 rows, first row selected, sections closed (rows 10–25 are the
 padded list area):
 
 ```text
 │Blocked  1                            │  red, bold
-│ ! Auth migration                     │  selected: both lines highlighted
-│   ✳  2m  Bash: make clean            │
+│ ! Auth migration                     │  selected: highlighted
 │Working  1                            │  yellow, bold
 │ ⠋ Cache refactor                     │  spinner animates every 0.25 s
-│   ⬡  0m  app · cache-fix             │
 │Review  1                             │  teal, bold
 │ ◆ Docs pass                          │
-│   ✳  3h  docs                        │
 │Quiet  3                              │  grey, bold
 │ ▸ < 24h   1                          │
 │ ▸ < 48h   1                          │
@@ -1683,14 +1670,14 @@ padded list area):
 │Details                               │  accent, bold
 │Auth migration                        │
 │!  needs approval · 2m ago            │  red
-│provider  claude · background         │
-│native    auth                        │
-│id        3cfff231                    │
-│model     opus · high                 │
 │repo      app · main                  │
 │cwd       /code/app/svc               │
 │ask                                   │  info, bold
 │  Migrate the auth service to the new │  1 preview line (detail height 12 < 16)
+│latest                                │
+│  Waiting for approval to delete the  │
+│provider  claude · background         │
+│native    auth                        │  id and model do not fit
 │[?] keys  [d]etails  [D] window       │  muted, dim
 ```
 
@@ -1699,17 +1686,13 @@ Panel, 30 rows, `< 24h` opened and its agent selected:
 ```text
 │Blocked  1                            │
 │ ! Auth migration                     │
-│   ✳  2m  Bash: make clean            │
 │Working  1                            │
 │ ⠋ Cache refactor                     │
-│   ⬡  0m  app · cache-fix             │
 │Review  1                             │
 │ ◆ Docs pass                          │
-│   ✳  3h  docs                        │
 │Quiet  3                              │
 │ ▾ < 24h   1                          │
 │   ◌ Old question                     │  selected
-│     ✳  5h  stopped waiting on you    │
 │ ▸ < 48h   1                          │
 │ ▸ < 7d    1                          │
 │                                      │
@@ -1773,11 +1756,6 @@ Floating details window, 70 × 24 (roomy):
 ```text
 │Auth migration                                                        │
 │!  needs approval · 2m ago                                            │
-│provider  claude · background                                         │
-│native    auth                                                        │
-│id        3cfff231                                                    │
-│session   3cfff231-aaaa-bbbb                                          │
-│model     opus · high                                                 │
 │repo      app · main                                                  │
 │cwd       /code/app/svc                                               │
 │ask                                                                   │
@@ -1785,6 +1763,11 @@ Floating details window, 70 × 24 (roomy):
 │  callers                                                             │
 │latest                                                                │
 │  Waiting for approval to delete the build directory.                 │
+│provider  claude · background                                         │
+│native    auth                                                        │
+│id        3cfff231                                                    │
+│session   3cfff231-aaaa-bbbb                                          │
+│model     opus · high                                                 │
 │pane      work/7 · observed                                           │
 │  … (blank to the last row) …                                         │
 │Esc / D  close                                                        │
@@ -1809,18 +1792,13 @@ The first heading is selected:
 ```text
 │a-very-long-team-name  1              │  selected; otherwise accent, bold
 │ ◆ Auth one                           │
-│   ✳  5m                              │
 │billing  4                            │  accent, bold
 │ ◆ Lead                               │  the lead first, whatever its state
-│   ✳  4m  ★ lead  app · main          │
 │ ? Blocked one                        │
-│   ⬡  3m                              │
 │ ⠋ Worker one                         │
-│   ✳  2m  app · main                  │
 │ ▸ Quiet   1                          │  the team's Quiet agents
 │no team  1                            │
 │ ⠋ Solo                               │
-│   ✳  1m                              │
 ```
 
 With `billing` folded, at 60 columns: `billing  4  1 blocked · 1 working ·
@@ -1860,7 +1838,7 @@ Implementation choices not recorded in
 | Group colours are palette indices 1/2/6/8, not theme slots | they stay the same four colours under every theme | `zellij/src/view.rs` (group_color) |
 | No selection glyph; a leading space keeps rows aligned | the row highlight marks the selection | `zellij/src/view.rs` (agent_primary_line) |
 | Section count sits right after the label | it reads the same at any pane width | `zellij/src/view.rs` (section_line) |
-| Secondary line leads with icon and fixed-width age | the short fields lead so a long label cannot push them out | `zellij/src/view.rs` (secondary_text) |
+| An agent is one row | a second line that names the provider, the age, the team and the folder repeats itself across rows and halves what fits | `zellij/src/view.rs` (agent_list_lines) |
 | Quiet agents show `○`/`◌` whatever state they stopped in | they have no process, so they read as at rest | `zellij/src/view.rs` (agent_symbol) |
 | Working agents' symbol spins | activity reads at a glance | `zellij/src/view.rs` (agent_symbol) |
 | A single 0.25 s panel tick; polling only when its interval is due | fast enough to animate without raising the poll rate | `zellij/src/main.rs` (on_panel_tick) |

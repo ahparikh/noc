@@ -25,8 +25,8 @@ pub enum Intent {
         stacked: bool,
     },
     Worktree,
-    /// Show the room of the selected team or agent.
-    Room,
+    /// Show the session of the selected team or agent.
+    TeamSession,
     Details,
     Refresh,
     /// The search query changed: read the list for the new one.
@@ -337,7 +337,7 @@ pub fn process_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> (bool, Option<
         BareKey::Char('p') => intent = Some(Intent::Pane { stacked: false }),
         BareKey::Char('s') => intent = Some(Intent::Pane { stacked: true }),
         BareKey::Char('w') => intent = Some(Intent::Worktree),
-        BareKey::Char('o') => intent = Some(Intent::Room),
+        BareKey::Char('o') => intent = Some(Intent::TeamSession),
         BareKey::Char('D') => intent = Some(Intent::Details),
         BareKey::Char('r') => intent = Some(Intent::Refresh),
         BareKey::Char('u') => intent = Some(Intent::CheckUpdate),
@@ -417,7 +417,7 @@ impl State {
             Intent::Open => self.open_selected_agent(),
             Intent::Pane { stacked } => self.open_agent_pane(stacked),
             Intent::Worktree => self.open_worktree_shell(),
-            Intent::Room => self.show_selected_room(),
+            Intent::TeamSession => self.show_selected_team(),
             Intent::Details => self.open_details_window(),
             Intent::Refresh | Intent::Search => self.refresh(),
             Intent::CheckUpdate => self.check_for_update_now(),
@@ -663,7 +663,7 @@ impl State {
         agent
     }
 
-    /// Another running Zellij session (not the host, not one of the rooms)
+    /// Another running Zellij session (not the host, not one of the sessions)
     /// that an agent is already bound to.
     pub fn other_running_session_for(&self, agent: &Agent) -> Option<String> {
         let list = get_session_list().ok()?;

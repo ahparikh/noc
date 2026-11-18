@@ -1,10 +1,10 @@
 //! `zellij-noc`: the Zellij frontend for noc.
 //!
 //! The plugin runs as a sidebar panel in an outer "host" session, beside one
-//! pane that holds the user's own Zellij sessions attached nested, one room
+//! pane that holds the user's own Zellij sessions attached nested, one session
 //! per team, one on show at a time. One WASM build serves four roles, chosen
 //! by the `role` configuration: the panel (default), a floating details
-//! window, a relay that runs inside each room, and each room's tab bar.
+//! window, a relay that runs inside each session, and each session's tab bar.
 
 mod app;
 mod bar;
@@ -173,9 +173,9 @@ impl ZellijPlugin for State {
             Some("bar") => Role::Bar,
             _ => Role::Panel,
         };
-        // Until a team's room is shown, the room on show is the inner
+        // Until a team's session is shown, the session on show is the inner
         // session itself.
-        self.guest.room = config.guest_session.clone();
+        self.guest.session = config.guest_session.clone();
         self.plugin_id = get_plugin_ids().plugin_id;
         if self.role == Role::Details {
             self.details.agent_id = configuration
@@ -282,14 +282,14 @@ impl State {
                 false
             }
             Event::PaneUpdate(manifest) => self.on_pane_update(&manifest),
-            Event::Timer(secs) if (secs - guest::ROOM_POLL_SECS).abs() < 0.001 => {
-                self.on_room_poll()
+            Event::Timer(secs) if (secs - guest::SWITCH_POLL_SECS).abs() < 0.001 => {
+                self.on_switch_poll()
             }
             Event::Timer(_) => self.on_panel_tick(),
             // The session attached in the guest pane said something, as it
             // does when a client arrives in it.
             Event::NestedSessionModeUpdate { .. } => {
-                self.permissions_granted && self.read_shown_room()
+                self.permissions_granted && self.read_shown_session()
             }
             Event::Visible(true) => {
                 self.refresh();
@@ -395,14 +395,14 @@ impl State {
         if self.panel_has_keyboard() {
             self.followed_agent = None;
         }
-        self.follow_shown_room()
+        self.follow_shown_session()
     }
 
     fn on_panel_tick(&mut self) -> bool {
         self.tick_armed = true;
         set_timeout(PANEL_TICK_SECONDS);
         self.sync_panel_selectable();
-        let mut redraw = self.permissions_granted && self.read_shown_room();
+        let mut redraw = self.permissions_granted && self.read_shown_session();
         redraw |= self.watch_guest();
         self.watch_registry();
         let now = now_secs();

@@ -65,16 +65,18 @@ host_focus_kind() { case "$(host_focus)" in "$1"*) return 0 ;; *) return 1 ;; es
 inner_tab_count() { z --session "$INNER" action list-tabs 2>/dev/null | tail -n +2 | grep -c . || true; }
 inner_has_tab() { z --session "$INNER" action list-tabs 2>/dev/null | grep -q "$1"; }
 
-# The most common background colour of the inner session's tab bar (row 1).
+# The colour of the label that starts the inner session's tab bar (row 1,
+# after the sidebar's frame). The bar has no background of its own, and the
+# label is in the theme's colour for the active tab.
 bar_colour() {
-	tmux capture-pane -p -e -t "$TMUX_SESSION" | sed -n 1p |
-		LC_ALL=C grep -o -E '48;2;[0-9]+;[0-9]+;[0-9]+' | sort | uniq -c | sort -rn | awk 'NR == 1 { print $2 }'
+	tmux capture-pane -p -e -t "$TMUX_SESSION" | sed -n 1p | sed 's/.*╮//' |
+		LC_ALL=C grep -o -E '38;2;[0-9]+;[0-9]+;[0-9]+' | head -n 1
 }
 
-# The tab bar of the room on show starts with this label.
+# The tab bar of the session on show starts with this label.
 bar_says() { tmux capture-pane -p -t "$TMUX_SESSION" | sed -n 1p | grep -q -- "╮ $1 "; }
-room_has_client() { [ "$(clients "$1")" = 1 ]; }
-room_tab_count() { z --session "$1" action list-tabs 2>/dev/null | tail -n +2 | grep -c . || true; }
+session_has_client() { [ "$(clients "$1")" = 1 ]; }
+session_tab_count() { z --session "$1" action list-tabs 2>/dev/null | tail -n +2 | grep -c . || true; }
 # open_match TEXT: search the sidebar for TEXT and open the first match.
 open_match() {
 	keys M-m
@@ -270,31 +272,31 @@ check "Alt-o hides the sidebar" wait_for 5 fullscreen true
 keys M-o
 check "Alt-o shows it again" wait_for 5 fullscreen false
 
-# ---- 7. rooms: a team's agents open in the team's own inner session ----
-ROOM="$INNER--auth"
+# ---- 7. sessions: a team's agents open in the team's own inner session ----
+TEAM_SESSION="$INNER--auth"
 TEAMS="$ROOT/target/e2e/agents.json"
 "$ROOT/e2e/fake-noc" ls | sed 's/"name":"Second agent"/"name":"Second agent","team":"auth"/' >"$TEAMS.tmp"
 mv "$TEAMS.tmp" "$TEAMS"
 sleep 1.5 # let the sidebar read the team
 open_match second
-check "Enter on a team's agent creates the team's room" wait_for 10 alive "$ROOM"
-check "the guest pane's client moves to that room" wait_for 10 room_has_client "$ROOM"
-check "the room's tab bar says the team" wait_for 5 bar_says auth
-check "the agent has a tab in its team's room" \
-	wait_for 10 sh -c "env -u ZELLIJ -u ZELLIJ_SESSION_NAME zellij --session '$ROOM' action list-tabs | grep -q 'Second agent'"
-room_is_all_agents() { [ "$(room_tab_count "$ROOM")" = 1 ]; }
-check "the tab the room was created with is closed" wait_for 10 room_is_all_agents
+check "Enter on a team's agent creates the team's session" wait_for 10 alive "$TEAM_SESSION"
+check "the guest pane's client moves to that session" wait_for 10 session_has_client "$TEAM_SESSION"
+check "the session's tab bar says the team" wait_for 5 bar_says auth
+check "the agent has a tab in its team's session" \
+	wait_for 10 sh -c "env -u ZELLIJ -u ZELLIJ_SESSION_NAME zellij --session '$TEAM_SESSION' action list-tabs | grep -q 'Second agent'"
+session_is_all_agents() { [ "$(session_tab_count "$TEAM_SESSION")" = 1 ]; }
+check "the tab the session was created with is closed" wait_for 10 session_is_all_agents
 check "the inner session keeps running, with no client" \
 	sh -c "$(declare -f z alive clients); alive '$INNER' && [ \"\$(clients '$INNER')\" = 0 ]"
-check "the keyboard is in the room" host_focus_is "$GUEST"
+check "the keyboard is in the session" host_focus_is "$GUEST"
 
 open_match e2e
-check "an agent in no team opens in the inner session" wait_for 10 room_has_client "$INNER"
+check "an agent in no team opens in the inner session" wait_for 10 session_has_client "$INNER"
 check "whose tab bar says so" wait_for 5 bar_says no-team
-check "the team's room keeps its tab" [ "$(room_tab_count "$ROOM")" = 1 ]
+check "the team's session keeps its tab" [ "$(session_tab_count "$TEAM_SESSION")" = 1 ]
 check "the agent that was already open there got no second tab" [ "$(inner_tab_count)" = "$TABS_OPEN" ]
 
-# `o` on a team's heading shows the team's room.
+# `o` on a team's heading shows the team's session.
 keys M-m
 wait_for 5 host_focus_is "$SIDEBAR"
 keys v # group by team: the first heading is the team
@@ -302,7 +304,7 @@ sleep 0.5
 keys g g
 sleep 0.3
 keys o
-check "o on a team heading shows the team's room" wait_for 10 room_has_client "$ROOM"
+check "o on a team heading shows the team's session" wait_for 10 session_has_client "$TEAM_SESSION"
 check "and gives it the keyboard" wait_for 5 host_focus_is "$GUEST"
 keys M-m
 wait_for 5 host_focus_is "$SIDEBAR"
@@ -311,19 +313,19 @@ sleep 0.3
 keys M-m
 wait_for 5 host_focus_is "$GUEST"
 
-# The room on show ends: Zellij moves the client back, and the sidebar
+# The session on show ends: Zellij moves the client back, and the sidebar
 # follows it, which opening the agent again shows.
-z kill-session "$ROOM" >/dev/null 2>&1
-check "when the room on show ends, the guest pane shows the inner session" \
-	wait_for 10 room_has_client "$INNER"
+z kill-session "$TEAM_SESSION" >/dev/null 2>&1
+check "when the session on show ends, the guest pane shows the inner session" \
+	wait_for 10 session_has_client "$INNER"
 sleep 1
 open_match second
-check "and the team's room is made again when its agent is opened" wait_for 10 room_has_client "$ROOM"
+check "and the team's session is made again when its agent is opened" wait_for 10 session_has_client "$TEAM_SESSION"
 
 # Back to the inner session for the rest, without the team.
 open_match e2e
-wait_for 10 room_has_client "$INNER"
-z kill-session "$ROOM" >/dev/null 2>&1
+wait_for 10 session_has_client "$INNER"
+z kill-session "$TEAM_SESSION" >/dev/null 2>&1
 rm -f "$TEAMS"
 sleep 1.5
 
@@ -339,7 +341,7 @@ keys C-o
 sleep 0.5
 keys d
 check "detaching the inner session's client detaches the host too" wait_for 8 host_has_clients 0
-check "and the guest pane attaches to the inner session again" wait_for 8 room_has_client "$INNER"
+check "and the guest pane attaches to the inner session again" wait_for 8 session_has_client "$INNER"
 start_again
 wait_for 10 host_has_clients 1
 sleep 2

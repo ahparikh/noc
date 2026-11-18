@@ -152,25 +152,25 @@ ends it. The same search is `noc search` in a shell.
 
 `v` groups the list by team (`noc team`, `noc spawn --team`): one group per
 team, by name, then the agents in no team under `no team`. In a group the
-team's lead comes first, marked `★ lead`, then the other agents in the
+team's lead comes first, then the other agents in the
 usual order, with the Quiet ones behind one `Quiet` row. `Enter` on a
 heading folds the team; a folded heading says what in it needs you
-(`billing  4  1 blocked · 2 working`). Grouped by status, an agent in a
-team names it on its second line (`★` before the name for the lead). A
-search shows a flat list in either grouping.
+(`billing  4  1 blocked · 2 working`). An agent is one row of the list; its
+folder, team, request and provider are in the details (`d`). A search shows
+a flat list in either grouping.
 
-Each team has an inner session of its own, a room, named `noc--<team>`; the
+Each team has an inner session of its own, named `noc--<team>`; the
 agents in no team share the inner session `noc`. The guest pane shows one
-room at a time. `Enter` on an agent shows its team's room and opens the
+session at a time. `Enter` on an agent shows its team's session and opens the
 agent there as a tab (or focuses it where it is already open), and the tab
 bar's first word says which team you are looking at: the team's name, or
-`no-team`. A room is created the first time it is needed, from
+`no-team`. A session is created the first time it is needed, from
 `layouts/noc-inner.kdl`, and keeps running, with all of its tabs, while
-another room is on show. Moving between rooms does not detach anything.
-`p`, `s` and `w` act in the room on show. When a team's room ends (you
+another session is on show. Moving between sessions does not detach anything.
+`p`, `s` and `w` act in the session on show. When a team's session ends (you
 closed its last tab, or ran `zellij kill-session noc--<team>`) the guest
 pane shows `noc` again; ending `noc` ends the host session, and any team
-rooms still running are found again at the next start.
+sessions still running are found again at the next start.
 
 A tab that holds one agent is named after it and renamed when the agent's
 name changes. That applies to tabs the sidebar opened and to tabs still
@@ -200,7 +200,7 @@ pair and start it again.
 |---|---|---|
 | `noc_bin` | `noc` | The noc executable. A bare name is looked up on the `PATH` Zellij was started with. Use an absolute path if the sidebar reports that it cannot run noc. |
 | `guest_session` | `noc` | The inner session's name. Must match `inner=` in the layout. A team's session is this name, `--`, and the team's name. |
-| `room_layout` | `noc-inner` | The layout a team's session is created from: a name in your Zellij layout directory, or a path. |
+| `team_layout` | `noc-inner` | The layout a team's session is created from: a name in your Zellij layout directory, or a path. |
 | `icons` | `unicode` | `nerd` to use Nerd Font provider icons. |
 | `poll_interval_ms` | `1000` | How often the sidebar reads `noc ls` on a timer. It also reads it whenever the registry reports a change, so this is the backup. Clamped to 250..60000. |
 | `home_theme`, `away_theme` | unset | Optional pair, see below. |
@@ -377,7 +377,7 @@ bind "Alt t" { FocusPreviousPane; Write 27 116; }   // ESC t
   can only see and act on its own session. The relay sees every change of
   pane, tab and focus in its session as it happens and sends it to the
   sidebar, which starts the relay itself. It also switches the themes.
-- **The relay moves you between rooms.** To show another team's session the
+- **The relay moves you between sessions.** To show another team's session the
   sidebar asks the relay of the one on show to switch its client there.
   Zellij does that inside the running client, so nothing detaches, and
   creates the session when it is not running. Zellij tells the sidebar

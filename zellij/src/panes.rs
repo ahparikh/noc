@@ -328,7 +328,7 @@ pub fn agent_in_pane<'a>(
 }
 
 /// A validated binding naming another running session (not this one, not a
-/// room of the nested inner session).
+/// session of the nested inner session).
 pub fn other_running_session(
     agent: &Agent,
     current: Option<&str>,
@@ -339,7 +339,7 @@ pub fn other_running_session(
         let session = b.session.as_str();
         (!session.is_empty()
             && Some(session) != current
-            && !guest.is_some_and(|guest| crate::guest::is_room(guest, session))
+            && !guest.is_some_and(|guest| crate::guest::is_inner_session(guest, session))
             && live_sessions.iter().any(|s| s == session))
         .then(|| session.to_string())
     })

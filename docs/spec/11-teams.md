@@ -93,9 +93,9 @@ Requirement prefix: `ZT`.
 
 - **Whether a session per team is the right view.** It is built to be tried. The alternatives are a tab group per team inside the one inner session, or a view that is not a session.
 - **Which session a detach comes back to.** Attaching again shows the inner session, not the team's session that was on show.
-- **Whether the sidebar should say which session is on show**, and whether moving to a session by hand (Zellij's session manager) should select its team.
+- **Whether moving to a session by hand** (Zellij's session manager) should select its team.
 - **Whether a new tab can take both a layout and the agent's command** in Zellij 0.46 (ZT-008). If not, the tab is opened and the extra panes are added afterwards.
 - **A team across machines.** A session lives on one machine. Agents of the team that run elsewhere ([10-remote-nodes.md](10-remote-nodes.md)) would open as tabs over SSH, unless and until sessions can live on a remote host.
 - **Sessions without teams.** Whether the user can make a session by hand, or only by having a team.
-- **Sessions that are no longer needed.** A session keeps running after its team's last agent is gone. Whether noc should end it, or offer to.
+- **Sessions that are no longer needed.** A session keeps running after its team's last agent is gone, until it is ended from the Sessions section (`x`). Whether noc should end it, or offer to, and what becomes of a team whose agents are all Quiet.
 - **Many teams.** Whether folded groups need a limit or their own search.

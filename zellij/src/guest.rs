@@ -30,6 +30,9 @@ pub const CTX_WATCH: &str = "guest-watch";
 pub const CTX_RELAY_PUSH: &str = "relay-push";
 pub const CTX_OPEN: &str = "guest-open";
 pub const CTX_SWITCH: &str = "guest-switch";
+pub const CTX_END: &str = "end-session";
+/// How often the panel reads which inner sessions are running.
+pub const SESSIONS_READ_SECS: f64 = 1.0;
 /// How long a move to another session may take before the panel stops waiting
 /// for it.
 pub const SWITCH_SECS: f64 = 5.0;
@@ -80,6 +83,8 @@ pub struct GuestState {
     /// A move to `session` was asked for and its relay has not answered yet.
     pub switching: bool,
     pub switched_at: Option<f64>,
+    /// When the running sessions were last read for the Sessions section.
+    pub sessions_read: Option<f64>,
     /// The agent to open once the session on show has been read.
     pub pending_open: Option<String>,
     /// Zellij has said that the client is in `session` since the move began.
@@ -887,6 +892,14 @@ impl State {
         self.guest.spare_tab = None;
         self.app.guest_problem = None;
         self.followed_agent = None;
+        // The Sessions section marks the new one at once, and is read anew
+        // on the next tick: the session may have just been created.
+        let mut names: Vec<String> = self.app.sessions.iter().map(|s| s.name.clone()).collect();
+        if !names.contains(&self.guest.session) {
+            names.push(self.guest.session.clone());
+        }
+        self.app.set_sessions(&names, &self.guest.session);
+        self.guest.sessions_read = None;
     }
 
     /// Show another session in the guest pane: ask the relay of the session on
@@ -939,12 +952,83 @@ impl State {
             return;
         };
         let session = team_session(&self.config.guest_session, &team);
-        if self.show_session(&session)
-            && self.panel_has_keyboard()
-            && !self.host_action(&["focus-previous-pane"])
-        {
-            focus_previous_pane();
+        self.show_and_focus(&session);
+    }
+
+    /// Show a session and give it the keyboard.
+    pub fn show_and_focus(&mut self, session: &str) {
+        if self.show_session(session) {
+            self.app.focus = crate::app::Focus::Agents;
+            self.list_sessions();
+            if self.panel_has_keyboard() && !self.host_action(&["focus-previous-pane"]) {
+                focus_previous_pane();
+            }
         }
+    }
+
+    /// Read which inner sessions are running, for the Sessions section:
+    /// the pair's own among the sessions Zellij lists, and always the one
+    /// on show, which Zellij may not list yet. Returns whether they changed.
+    pub fn list_sessions(&mut self) -> bool {
+        self.guest.sessions_read = Some(now_secs());
+        let mut names: Vec<String> = get_session_list()
+            .map(|list| {
+                list.live_sessions
+                    .iter()
+                    .map(|s| s.name.clone())
+                    .filter(|name| is_inner_session(&self.config.guest_session, name))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !names.contains(&self.guest.session) {
+            names.push(self.guest.session.clone());
+        }
+        self.app.set_sessions(&names, &self.guest.session)
+    }
+
+    /// On a tick: read the running sessions when that is due.
+    pub fn list_sessions_if_due(&mut self) -> bool {
+        let due = self
+            .guest
+            .sessions_read
+            .is_none_or(|t| now_secs() - t >= SESSIONS_READ_SECS);
+        due && self.permissions_granted && self.list_sessions()
+    }
+
+    /// `x` in the Sessions section, confirmed: end a team's session.
+    pub fn end_session(&mut self, name: &str) {
+        if !self.permissions_granted
+            || name == self.config.guest_session
+            || !is_inner_session(&self.config.guest_session, name)
+        {
+            return;
+        }
+        let mut context = ctx(CTX_END);
+        context.insert(crate::KEY_TITLE.to_string(), name.to_string());
+        run_command(&["zellij", "kill-session", name], context);
+    }
+
+    pub fn on_end_session(
+        &mut self,
+        exit: Option<i32>,
+        stderr: &[u8],
+        context: &BTreeMap<String, String>,
+    ) -> bool {
+        let name = context
+            .get(crate::KEY_TITLE)
+            .map(String::as_str)
+            .unwrap_or_default();
+        let label = self.app.session_label(name).to_string();
+        if exit == Some(0) {
+            self.app.set_notice(format!("ended {label}"));
+            self.guest.sessions.remove(name);
+        } else {
+            let detail = compact_error(&String::from_utf8_lossy(stderr));
+            self.app
+                .set_notice(format!("could not end {label}: {detail}"));
+        }
+        self.list_sessions();
+        true
     }
 
     /// The relay sent a snapshot.

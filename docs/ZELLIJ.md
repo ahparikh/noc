@@ -124,6 +124,8 @@ In the sidebar (after `Alt m`):
 | `j` / `k`, `gg` / `G`, `Ctrl d` / `Ctrl u` | Move |
 | `Enter` / `l` | Open the agent in its team's session (focus it if it is already open), or open a Quiet section; on a team heading, fold or open the team |
 | `o` | Show the session of the selected team, or of the selected agent's team, without opening anything |
+| `Tab` | Give the list keys to the Sessions section, or back to the agents |
+| `S` | Hide the Sessions section, or show it again |
 | `h` | Close a Quiet section; when grouped by team, fold the team |
 | `v` | Group the list by team, or by status again |
 | `p` / `s` | Open the agent as a pane / a stacked pane in the current inner tab |
@@ -171,6 +173,18 @@ another session is on show. Moving between sessions does not detach anything.
 closed its last tab, or ran `zellij kill-session noc--<team>`) the guest
 pane shows `noc` again; ending `noc` ends the host session, and any team
 sessions still running are found again at the next start.
+
+The sidebar has three sections, each under its title. **Agents** is the
+list. **Details** is about the selected row. **Sessions** appears once a
+team's session is running and lists every inner session that is: `●` marks
+the one you are looking at, and each row says what its team's agents need
+(`auth  1 blocked · 2 working`, or `quiet`). `Tab` moves the list keys to
+Sessions and back; the section that has them has its title in the accent
+colour and its selected row highlighted. In Sessions, `j`/`k` move,
+`Enter` shows the session and returns the keyboard to it, and `x` ends a
+team's session after asking (`noc` itself is not ended from here). `Esc`
+or `h` goes back to the agents. Details then describes the selected
+session.
 
 A tab that holds one agent is named after it and renamed when the agent's
 name changes. That applies to tabs the sidebar opened and to tabs still

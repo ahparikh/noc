@@ -751,17 +751,24 @@ Public API fields that are not modelled are silently ignored, e.g.
 - **Source:** `zellij/src/view.rs` (render, FOOTER)
 - **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds, very_small_panes_keep_the_status_line
 
-#### ZR-033 Layout: the list on top, the status line beneath it
-- **Behavior:** From the top the panel MUST show: the body (the agent list,
-  or the help view, or the empty state), cut or padded with empty lines to
-  fill the rows the rest leaves; the status line (ZR-002); the inline
-  details block when it is shown (ZR-008); and the footer (ZR-004). So the
-  status line is directly above the details, and directly above the footer
-  when details are hidden or do not fit. The pane's own title names the
-  panel, so nothing is drawn above the list. The row the status line is
-  drawn on is recorded for clicks (ZK-028).
+#### ZR-033 Layout: three titled sections
+- **Behavior:** The panel has three sections, each under its title: Agents,
+  Details and Sessions. From the top it MUST show: the title `Agents`; the
+  body (the agent list, or the empty state), cut or padded with empty lines
+  to fill the rows the rest leaves; the status line (ZR-002); the Details
+  section when it is shown (ZR-008); the Sessions section when it is shown
+  (ZR-038); and the footer (ZR-004). Details and Sessions each start with a
+  rule of `─` × `cols` (accent, dim) and then their title. So the status
+  line is directly under the list, and directly above the footer when
+  neither section below it is shown. A title is bold: in the accent colour
+  for `Details` and for the list section that has the keys (ZK-035), muted
+  for the other list section. The `Agents` title is left out when the body
+  has fewer than 3 rows, and in the help view, which takes the whole body
+  and has no title. The row the status line is drawn on is recorded for
+  clicks (ZK-028).
 - **Source:** `zellij/src/view.rs` (render)
-- **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds (status between list and details), renders_keyboard_help_on_request (status above the footer)
+- **Source:** `zellij/src/view.rs` (render, section_heading)
+- **Verified by:** `zellij/src/view.rs` the_panel_is_three_titled_sections, the_section_with_the_keys_shows_its_selection_and_its_details, renders_colored_grouped_master_detail_panel_within_bounds (status between list and details), renders_keyboard_help_on_request (status above the footer; no title). The other tests of `view.rs` draw the panel one row taller and leave the `Agents` title out, so their rows count from the first row of the list
 
 ### 3.2 Help, empty and error states
 
@@ -782,6 +789,8 @@ Public API fields that are not modelled are silently ignored, e.g.
   p / s       pane / stacked pane here
   w           shell in its worktree
   o           show its team's session
+  Tab         agents / sessions
+  S           hide / show sessions
   d           toggle details
   D           details window
   n           rename agent
@@ -837,15 +846,17 @@ Public API fields that are not modelled are silently ignored, e.g.
 
 ### 3.3 List and details layout
 
-#### ZR-008 Master/detail split
-- **Behavior:** With `available = rows - 2` (the status line and the
-  footer): `detail_height = available / 3` if
-  `show_details && available >= 12`, else 0;
-  `list_height = available - detail_height`. The list occupies the
-  first `list_height` lines, padded with empty lines; then comes the status
-  line; then the details block, exactly `detail_height` lines; then the
-  footer. The split is fixed so neither the status line nor the details
-  jump as the selection moves.
+#### ZR-008 How the rows are shared
+- **Behavior:** With `available = rows - 3` (the `Agents` title, the status
+  line and the footer): the Sessions section takes its rows first, when it
+  is shown and `available >= 14` (ZR-038), else none; of the `shared` rows
+  left, `detail_height = shared / 3` if `show_details && shared >= 12`,
+  else 0; `list_height = shared - detail_height`. The list occupies the
+  first `list_height` lines under its title, padded with empty lines; then
+  comes the status line; then the Details section, exactly `detail_height`
+  lines; then the Sessions section; then the footer. The split does not
+  depend on the selection, so neither the status line nor the sections
+  jump as it moves.
 - **Source:** `zellij/src/view.rs` (render)
 - **Verified by:** `zellij/src/view.rs` details_take_the_bottom_third_and_ready_agents_show_their_age
 
@@ -1041,24 +1052,25 @@ Public API fields that are not modelled are silently ignored, e.g.
 
 #### ZR-022 Inline details block (agent selected)
 - **Behavior:** When `detail_height > 0` and an agent row is selected, the
-  block MUST be: a rule of `─` × `cols` (accent, dim); `Details` (accent,
-  bold); then the agent detail lines (ZR-024) with preview lines per field =
+  block MUST be: a rule of `─` × `cols` (accent, dim); the title `Details`
+  (accent, bold); then the agent detail lines (ZR-024) with preview lines per field =
   2 if `detail_height >= 16` else 1, and short identifiers (non-roomy);
   truncated to `detail_height` lines. With nothing selected the block is the
-  rule alone.
+  rule and the title. While the Sessions section has the keys the block is
+  the selected session's (ZR-039).
 - **Source:** `zellij/src/view.rs` (inline_detail_lines)
 - **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds; `zellij/src/view.rs` details_take_the_bottom_third_and_ready_agents_show_their_age
 
 #### ZR-023 Inline details block (section selected)
 - **Behavior:** When a section row is selected the block MUST be: the `─`
-  rule; `Quiet · {label}` (accent, bold); then, muted and dim,
+  rule; the title `Details`; `Quiet · {label}` (accent, bold); then, muted and dim,
   `Conversations with no process.`, `Enter opens this section; Enter on`,
   `an agent resumes it; h closes.` — the same text whether the section is
   open or closed. When a team heading is selected the block MUST be: the
-  rule; `Team · {team}` (`No team` for the agents in no team; accent,
+  rule; the title; `Team · {team}` (`No team` for the agents in no team; accent,
   bold); then, muted and dim, `{count} agent{s}.`,
   `Enter folds or opens this team;`, `v groups by status.`. When a team's
-  Quiet row is selected: the rule; `Quiet · {team}` (`Quiet · no team`);
+  Quiet row is selected: the rule; the title; `Quiet · {team}` (`Quiet · no team`);
   then `Conversations with no process.`, `Enter opens this row; Enter on`,
   `an agent resumes it; h closes.`.
 - **Source:** `zellij/src/view.rs` (inline_detail_lines)
@@ -1129,6 +1141,42 @@ Public API fields that are not modelled are silently ignored, e.g.
   lines are dropped silently (no ellipsis line).
 - **Source:** `zellij/src/view.rs` (agent_detail_lines, append_preview)
 - **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds; `zellij/src/view.rs` details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel
+
+#### ZR-038 The Sessions section
+- **Behavior:** The section lists the running inner sessions
+  ([08-zellij-host.md](08-zellij-host.md) ZT-014): the teams' sessions by
+  name, then the inner session itself. It MUST be shown when it is not
+  hidden (`S`, ZK-035), at least one team's session is running (the inner
+  session alone needs no list), the list is not empty, help is off and
+  `available >= 14` (ZR-008). It is: the rule; the title
+  `Sessions  {number of sessions}`; and one row a session, at most 5,
+  starting at `min(selected - 2 (saturating), sessions - 5 (saturating))`
+  so the selected one stays in view. A row is ` ● ` for the session on show
+  (the dot in the `ok` colour) or three spaces; the session's label, which
+  is its team or `no-team`, cut to 16 columns (ZR-020) and padded to the
+  widest label shown; then two spaces and what the team's agents need: the
+  counts of ZR-035 (`1 blocked · 2 working`), `quiet` when it has agents
+  and none is Blocked, Working or in Review, `no agents` when no listed
+  agent is in that team. While the list holds search results, which are not
+  every agent, nothing follows the label. The label is in the `text`
+  colour and the rest muted; the selected row is highlighted like a list
+  row (ZR-015), but only while the section has the keys. Likewise the
+  selected agent's row is highlighted only while Agents has the keys.
+- **Source:** `zellij/src/view.rs` (session_lines, session_summary, agent_list_lines); `zellij/src/app.rs` (set_sessions, sessions_shown, session_label, session_counts)
+- **Decision:** D-082
+- **Verified by:** `zellij/src/view.rs` the_panel_is_three_titled_sections, the_section_with_the_keys_shows_its_selection_and_its_details; `zellij/e2e/nested.sh` "the sidebar lists the running sessions, the one on show marked", "and the section goes with the last team's session"
+
+#### ZR-039 A session's details
+- **Behavior:** While the Sessions section has the keys, the Details
+  section MUST be: the rule; the title; `Session · {label}` (`text`, bold);
+  `zellij    {the session's name}`; `state     on show` or
+  `state     running, out of sight`; unless the list holds search results,
+  `agents    {N}`, the number of listed agents in that team, and under it,
+  indented two spaces, the counts of what they need when there are any;
+  and `Enter shows it; x ends it.`, or `Enter shows it.` for the inner
+  session. All but the first line are muted.
+- **Source:** `zellij/src/view.rs` (session_detail_lines, inline_detail_lines)
+- **Verified by:** `zellij/src/view.rs` the_section_with_the_keys_shows_its_selection_and_its_details
 
 ### 3.7 Floating details window (`details.rs`, `view.rs`)
 
@@ -1218,13 +1266,15 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 | `s` | agent row | open the agent stacked in the inner session (ZK-011) |
 | `w` | agent row | shell in its workspace, in the inner session (ZK-012) |
 | `o` | agent row, team heading or its Quiet row | show that team's session (ZK-034) |
+| `Tab` | — | give the list keys to the Sessions section, or back to Agents (ZK-035) |
+| `S` | — | hide the Sessions section, or show it again (ZK-035) |
 | `D` | agent row | floating details window (ZK-013) |
 | `r` | poll transport | refresh now (ZK-014) |
 | `x` | stoppable agent row | ask `Stop {title}?  y / n` (ZK-016) |
 | `n` | agent row | start inline rename (ZK-020) |
 | `t` | agent row | open the team prompt (ZK-030) |
 | `T` | agent row in a team | take the agent out of its team (ZK-033) |
-| `q`, `Right`, `Tab`, anything else | — | no effect except cancelling a pending `g`; redraw |
+| `q`, `Right`, anything else | — | no effect except cancelling a pending `g`; redraw |
 
 ### 4.2 Dispatch rules
 
@@ -1248,7 +1298,7 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 
 #### ZK-003 Unbound keys
 - **Behavior:** An unmodified key with no binding (including `q`,
-  `Right`, `Tab`, `Backspace`, digits) MUST only cancel a pending `g` and
+  `Right`, `Backspace`, digits) MUST only cancel a pending `g` and
   request a redraw.
 - **Source:** `zellij/src/panel.rs` (process_key)
 - **Verified by:** `zellij/src/panel.rs` navigation_and_intent_keys
@@ -1402,6 +1452,47 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 - **Source:** `zellij/src/panel.rs` (process_key); `zellij/src/app.rs` (toggle_group_by)
 - **Decision:** D-070
 - **Verified by:** `zellij/src/panel.rs` v_switches_the_grouping_and_enter_folds_a_team; `zellij/src/app.rs` switching_the_grouping_keeps_the_selected_agent
+
+#### ZK-035 `Tab` and `S`: the section that has the keys
+- **Behavior:** One of the two list sections has the list keys: Agents when
+  the panel loads. `Tab` MUST give them to the Sessions section when that
+  is shown (ZR-038), closing help, and back to Agents when Sessions has
+  them. When Sessions is not shown it MUST set the notice
+  `no team session is running`, or `sessions are hidden; S shows them`
+  when the section is hidden. `S` MUST hide the section, or show it again,
+  with the notice `sessions hidden` or `sessions shown`. Whenever the
+  section stops being shown (hidden, or the last team's session ended)
+  the keys go back to Agents. Both keys are handled after the stop and end
+  confirmations and before every other binding, so they work in either
+  section; while a rename, a team name or a search is being typed they are
+  text.
+- **Source:** `zellij/src/panel.rs` (process_key); `zellij/src/app.rs` (toggle_focus, toggle_sessions, set_sessions)
+- **Decision:** D-082
+- **Verified by:** `zellij/src/panel.rs` tab_gives_the_keys_to_the_sessions_and_back
+
+#### ZK-036 Keys while the Sessions section has them
+- **Behavior:**
+
+  | Key | Action |
+  |---|---|
+  | `j`, `Down` / `k`, `Up` | select the next / previous session; the notice is cleared |
+  | `gg` / `G` | the first / the last session |
+  | `Enter`, `l`, `o` | raise the ShowSession intent for the selected session: it is shown and given the keyboard, and Agents has the keys again ([08-zellij-host.md](08-zellij-host.md) ZT-014) |
+  | `x` | on a team's session, ask `End session {label}?  y / n` on the status line; on the inner session, the notice `ending it would end the pair; quit it from inside` |
+  | `h`, `Left` | give the keys back to Agents |
+  | `Esc` | give the keys back to Agents, unless the status box or help is open or a search is in effect, which `Esc` closes first (ZK-007) |
+  | `p`, `s`, `w`, `D`, `n`, `t`, `T`, `Space` | the notice `that key is for an agent; Tab goes back to them`; nothing else |
+  | any other key | as in the Agents section: `v`, `/`, `?`, `d`, `i`, `r`, `u`, `Ctrl-d`/`Ctrl-u` and the rest |
+
+  While the end confirmation is pending, `y` with no modifiers MUST raise
+  the EndSession intent with the notice `ending {label}…`; any other key
+  that passes the modifier filter (ZK-002) cancels with `end cancelled`.
+  The selection stays on its session when the list of sessions changes
+  while the section has the keys; while it does not, the selection is the
+  session on show, so `Tab` starts there.
+- **Source:** `zellij/src/panel.rs` (process_key, handle_session_key); `zellij/src/app.rs` (move_session, set_sessions); `zellij/src/view.rs` (status_line)
+- **Decision:** D-082
+- **Verified by:** `zellij/src/panel.rs` tab_gives_the_keys_to_the_sessions_and_back; `zellij/e2e/nested.sh` "Enter on a session's row shows that session", "x on a team session's row ends it, once confirmed"
 
 ### 4.5 Stop (`x`)
 
@@ -1771,6 +1862,35 @@ Floating details window, 70 × 24 (roomy):
 │pane      work/7 · observed                                           │
 │  … (blank to the last row) …                                         │
 │Esc / D  close                                                        │
+```
+
+The three sections, with two teams' sessions running and the Sessions
+section holding the keys (`Tab`); the mockups above leave the `Agents`
+title row out:
+
+```text
+│Agents                                │  muted: the keys are elsewhere
+│Working  4                            │
+│ ⠏ Auth lead                          │  no row highlighted
+│ ⠏ E2E agent                          │
+│ ⠏ Auth worker                        │
+│ ⠏ Billing fix                        │
+│  … (blank to the status line) …      │
+│4 agents                             ●│
+│──────────────────────────────────────│
+│Details                               │  accent, bold
+│Session · billing                     │
+│zellij    noc--billing                │
+│state     on show                     │
+│agents    1                           │
+│  1 working                           │
+│Enter shows it; x ends it.            │
+│──────────────────────────────────────│
+│Sessions  3                           │  accent, bold: it has the keys
+│   auth     2 working                 │
+│ ● billing  1 working                 │  selected; ● the session on show
+│   no-team  1 working                 │
+│[?] keys  [d]etails  [D] window       │
 ```
 
 Empty list, before the first snapshot (6 rows):

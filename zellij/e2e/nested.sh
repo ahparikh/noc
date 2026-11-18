@@ -322,6 +322,36 @@ sleep 1
 open_match second
 check "and the team's session is made again when its agent is opened" wait_for 10 session_has_client "$TEAM_SESSION"
 
+# The Sessions section lists what is running, moves between them and ends
+# a team's.
+check "the sidebar lists the running sessions, the one on show marked" \
+	wait_for 5 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -A 2 'Sessions  2' | grep -q '● auth'"
+keys M-m
+wait_for 5 host_focus_is "$SIDEBAR"
+keys Tab
+sleep 0.3
+keys G # the last row: the inner session
+sleep 0.3
+keys Enter
+check "Enter on a session's row shows that session" wait_for 10 session_has_client "$INNER"
+check "and hands it the keyboard" wait_for 5 host_focus_is "$GUEST"
+sleep 1.5 # let the section mark the inner session
+keys M-m
+wait_for 5 host_focus_is "$SIDEBAR"
+keys Tab
+sleep 0.3
+keys g g # the first row: the team's session
+sleep 0.3
+keys x
+sleep 0.3
+keys y
+session_gone() { ! alive "$TEAM_SESSION"; }
+check "x on a team session's row ends it, once confirmed" wait_for 10 session_gone
+check "and the section goes with the last team's session" \
+	wait_for 5 sh -c "! tmux capture-pane -p -t '$TMUX_SESSION' | grep -q 'Sessions  '"
+keys M-m
+wait_for 5 host_focus_is "$GUEST"
+
 # Back to the inner session for the rest, without the team.
 open_match e2e
 wait_for 10 session_has_client "$INNER"

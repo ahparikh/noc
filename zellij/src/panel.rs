@@ -1,7 +1,9 @@
 //! Key handling and intents, polling, stop/rename, opening agents, and
 //! keyboard ownership between the panel and the inner session.
 
-use crate::app::{is_team_char, is_team_name, PendingStop, Transport, ZellijNoc, TEAM_NAME_MAX};
+use crate::app::{
+    is_team_char, is_team_name, Focus, PendingStop, Transport, ZellijNoc, TEAM_NAME_MAX,
+};
 use crate::guest::keyboard_signal;
 use crate::model::{parse_snapshot, Agent, AgentGroup};
 use crate::panes::{
@@ -27,6 +29,14 @@ pub enum Intent {
     Worktree,
     /// Show the session of the selected team or agent.
     TeamSession,
+    /// Show the session selected in the Sessions section.
+    ShowSession {
+        name: String,
+    },
+    /// End a team's session.
+    EndSession {
+        name: String,
+    },
     Details,
     Refresh,
     /// The search query changed: read the list for the new one.
@@ -248,6 +258,49 @@ fn handle_search_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> Option<Inten
     Some(Intent::Search)
 }
 
+/// Keys while the Sessions section has them. `None` leaves the key to the
+/// panel's own keys (help, search, grouping and the like); the keys that act
+/// on an agent are refused, since no agent is selected.
+fn handle_session_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> Option<Option<Intent>> {
+    match key.bare_key {
+        BareKey::Char('j') | BareKey::Down => app.move_session(1),
+        BareKey::Char('k') | BareKey::Up => app.move_session(-1),
+        BareKey::Char('g') => {
+            if std::mem::take(&mut app.pending_g) {
+                app.session_index = 0;
+            } else {
+                app.pending_g = true;
+            }
+            return Some(None);
+        }
+        BareKey::Char('G') => app.move_session(isize::MAX),
+        BareKey::Enter | BareKey::Char('l') | BareKey::Char('o') => {
+            app.pending_g = false;
+            let name = app.selected_session()?.name.clone();
+            return Some(Some(Intent::ShowSession { name }));
+        }
+        BareKey::Char('x') => {
+            app.pending_g = false;
+            let name = app.selected_session()?.name.clone();
+            if name == app.config.guest_session {
+                app.set_notice("ending it would end the pair; quit it from inside");
+            } else {
+                app.pending_end = Some(name);
+            }
+        }
+        BareKey::Char('h') | BareKey::Left => app.toggle_focus(),
+        BareKey::Esc if !app.show_info && !app.show_help && app.search.is_none() => {
+            app.toggle_focus()
+        }
+        BareKey::Char('p' | 's' | 'w' | 'D' | 'n' | 't' | 'T' | ' ') => {
+            app.pending_g = false;
+            app.set_notice("that key is for an agent; Tab goes back to them");
+        }
+        _ => return None,
+    }
+    Some(None)
+}
+
 /// Apply one key to the panel state. Returns whether to redraw and the
 /// intent (if any) the host must act on.
 pub fn process_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> (bool, Option<Intent>) {
@@ -290,6 +343,30 @@ pub fn process_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> (bool, Option<
         }
         app.set_notice("stop cancelled");
         return (true, None);
+    }
+    if let Some(name) = app.pending_end.take() {
+        if key.bare_key == BareKey::Char('y') && modifiers.is_empty() {
+            app.set_notice(format!("ending {}\u{2026}", app.session_label(&name)));
+            return (true, Some(Intent::EndSession { name }));
+        }
+        app.set_notice("end cancelled");
+        return (true, None);
+    }
+    match key.bare_key {
+        BareKey::Tab => {
+            app.toggle_focus();
+            return (true, None);
+        }
+        BareKey::Char('S') => {
+            app.toggle_sessions();
+            return (true, None);
+        }
+        _ => {}
+    }
+    if app.focus == Focus::Sessions {
+        if let Some(handled) = handle_session_key(app, key) {
+            return (true, handled);
+        }
     }
     let was_pending_g = app.pending_g;
     if key.bare_key != BareKey::Char('g') {
@@ -418,6 +495,8 @@ impl State {
             Intent::Pane { stacked } => self.open_agent_pane(stacked),
             Intent::Worktree => self.open_worktree_shell(),
             Intent::TeamSession => self.show_selected_team(),
+            Intent::ShowSession { name } => self.show_and_focus(&name),
+            Intent::EndSession { name } => self.end_session(&name),
             Intent::Details => self.open_details_window(),
             Intent::Refresh | Intent::Search => self.refresh(),
             Intent::CheckUpdate => self.check_for_update_now(),
@@ -1037,6 +1116,97 @@ mod tests {
         );
         assert_eq!(app.notice.as_deref(), Some("stopping Stoppable\u{2026}"));
         assert!(app.pending_stop.is_none());
+    }
+
+    #[test]
+    fn tab_gives_the_keys_to_the_sessions_and_back() {
+        let mut app = app();
+        let tab = bare(BareKey::Tab);
+        // Nothing to go to while no team's session is running.
+        app.set_sessions(&["noc".to_string()], "noc");
+        let (redraw, intent) = process_key(&mut app, &tab);
+        assert!(redraw && intent.is_none());
+        assert_eq!(app.focus, Focus::Agents);
+        assert_eq!(app.notice.as_deref(), Some("no team session is running"));
+        let names = [
+            "noc".to_string(),
+            "noc--auth".to_string(),
+            "noc--web".to_string(),
+        ];
+        app.set_sessions(&names, "noc--web");
+        process_key(&mut app, &tab);
+        assert_eq!(app.focus, Focus::Sessions);
+        assert_eq!(app.selected_session().unwrap().name, "noc--web");
+        // j, k, gg and G move among the sessions, not the agents.
+        let agent = app.selected_index;
+        process_key(&mut app, &key('k'));
+        assert_eq!(app.selected_session().unwrap().name, "noc--auth");
+        process_key(&mut app, &key('G'));
+        assert_eq!(app.selected_session().unwrap().name, "noc");
+        process_key(&mut app, &key('g'));
+        process_key(&mut app, &key('g'));
+        assert_eq!(app.selected_session().unwrap().name, "noc--auth");
+        assert_eq!(app.selected_index, agent);
+        // Enter, l and o show the selected session.
+        for k in [bare(BareKey::Enter), key('l'), key('o')] {
+            let (_, intent) = process_key(&mut app, &k);
+            assert_eq!(
+                intent,
+                Some(Intent::ShowSession {
+                    name: "noc--auth".to_string()
+                })
+            );
+        }
+        // x asks, and only y ends it.
+        let (_, intent) = process_key(&mut app, &key('x'));
+        assert!(intent.is_none());
+        assert_eq!(app.pending_end.as_deref(), Some("noc--auth"));
+        let (_, intent) = process_key(&mut app, &key('n'));
+        assert!(intent.is_none() && app.pending_end.is_none());
+        assert_eq!(app.notice.as_deref(), Some("end cancelled"));
+        process_key(&mut app, &key('x'));
+        let (_, intent) = process_key(&mut app, &key('y'));
+        assert_eq!(
+            intent,
+            Some(Intent::EndSession {
+                name: "noc--auth".to_string()
+            })
+        );
+        // The inner session is not ended from here.
+        process_key(&mut app, &key('G'));
+        let (_, intent) = process_key(&mut app, &key('x'));
+        assert!(intent.is_none() && app.pending_end.is_none());
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("ending it would end the pair; quit it from inside")
+        );
+        // An agent's keys are refused; the panel's own still work.
+        for c in ['p', 's', 'w', 'D', 'n', 't', 'T'] {
+            let (_, intent) = process_key(&mut app, &key(c));
+            assert!(intent.is_none(), "{c}");
+            assert!(app.pending_rename.is_none() && app.pending_team.is_none());
+        }
+        let (_, intent) = process_key(&mut app, &key('r'));
+        assert_eq!(intent, Some(Intent::Refresh));
+        process_key(&mut app, &key('v'));
+        assert_eq!(app.group_by, crate::app::GroupBy::Team);
+        // Tab, h and Esc go back to the agents.
+        for back in [tab.clone(), key('h'), bare(BareKey::Esc)] {
+            app.focus = Focus::Sessions;
+            process_key(&mut app, &back);
+            assert_eq!(app.focus, Focus::Agents);
+        }
+        // S hides the section, and takes the keys back with it.
+        process_key(&mut app, &tab);
+        process_key(&mut app, &key('S'));
+        assert!(!app.sessions_shown());
+        assert_eq!(app.focus, Focus::Agents);
+        process_key(&mut app, &tab);
+        assert_eq!(app.focus, Focus::Agents);
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("sessions are hidden; S shows them")
+        );
     }
 
     #[test]

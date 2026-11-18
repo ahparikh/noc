@@ -849,6 +849,28 @@ of detaching. A pair whose panel is not running (its permissions were
 refused) no longer detaches the host when the inner client detaches; the
 loop attaches again and the host stays.
 
+### D-082: the sidebar is three titled sections, and one of two has the keys
+
+The sidebar is Agents, Details and Sessions, each under its title. Sessions
+lists the running inner sessions and appears when a team's session is
+running. `Tab` moves the list keys between Agents and Sessions; Details
+follows whichever has them.
+
+**Why:** with a session per team, "what do I have open" is a different
+question from "which agents need me", and the answer is short: a handful
+of sessions. A list of its own answers it in either grouping, where the
+team grouping answers it only by listing every team. Two lists need
+titles to be told apart, and one of them must own `j`, `k` and `Enter`;
+a visible owner (its title in the accent colour, its row highlighted)
+is cheaper to learn than separate keys for each list. Ending a session
+lives there because that is where a session is a thing one can point at.
+**Consequence:** the list has one row fewer, for the `Agents` title.
+Sessions takes its rows before Details does, so on a short pane Details
+shrinks first, and under 14 rows Sessions is not drawn. The keys that act
+on an agent are refused while Sessions has the keys, since no agent is
+highlighted then. A team with a session but no listed agent shows as
+`no agents`; a team with agents but no session is not in the section.
+
 ### D-081: a session's tab bar is noc's own
 
 The inner layout loads the plugin as the tab bar (`role "bar"`). It draws

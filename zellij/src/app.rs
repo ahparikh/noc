@@ -103,6 +103,37 @@ impl Transport {
     }
 }
 
+/// The section of the panel that takes the list keys.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Focus {
+    #[default]
+    Agents,
+    Sessions,
+}
+
+/// A running inner session, as a row of the Sessions section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionRow {
+    /// The Zellij session's name.
+    pub name: String,
+    /// The guest pane shows it.
+    pub on_show: bool,
+}
+
+/// What a session's row says of its agents: how many are Blocked, Working
+/// and in Review.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SessionCounts {
+    pub blocked: usize,
+    pub working: usize,
+    pub review: usize,
+    /// Every agent of the session's team, the Quiet ones too.
+    pub agents: usize,
+}
+
+/// The most session rows the section shows at once.
+pub const SESSION_ROWS: usize = 5;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Connection {
     Connecting,
@@ -403,6 +434,15 @@ pub struct ZellijNoc {
     pub pending_stop: Option<PendingStop>,
     pub pending_rename: Option<PendingRename>,
     pub pending_team: Option<PendingTeam>,
+    /// The session the user was asked whether to end.
+    pub pending_end: Option<String>,
+    /// The running inner sessions: the teams' by team name, then the inner
+    /// session itself.
+    pub sessions: Vec<SessionRow>,
+    pub session_index: usize,
+    pub focus: Focus,
+    /// The Sessions section is not hidden (`S`).
+    pub show_sessions: bool,
     pub search: Option<Search>,
     /// The list holds search results: every match is a row, Quiet agents
     /// are not folded into sections, and none is too old to show.
@@ -451,6 +491,11 @@ impl ZellijNoc {
             pending_stop: None,
             pending_rename: None,
             pending_team: None,
+            pending_end: None,
+            sessions: Vec::new(),
+            session_index: 0,
+            focus: Focus::Agents,
+            show_sessions: true,
             search: None,
             flat: false,
             show_details: true,
@@ -877,6 +922,136 @@ impl ZellijNoc {
         self.selected_index = self.items.len().saturating_sub(1);
         self.pending_g = false;
         self.notice = None;
+    }
+
+    // ---- sessions ----
+
+    /// The running inner sessions, as Zellij lists them, and the one on
+    /// show. Team sessions come first, by team name, then the inner session
+    /// itself. The selection stays on the session it was on while the
+    /// section has the keys, and otherwise sits on the session on show.
+    pub fn set_sessions(&mut self, names: &[String], on_show: &str) -> bool {
+        let inner = self.config.guest_session.clone();
+        let mut names: Vec<&String> = names.iter().collect();
+        names.sort_by(|a, b| (**a == inner, a.as_str()).cmp(&(**b == inner, b.as_str())));
+        names.dedup();
+        let rows: Vec<SessionRow> = names
+            .into_iter()
+            .map(|name| SessionRow {
+                name: name.clone(),
+                on_show: name == on_show,
+            })
+            .collect();
+        let selected = self.selected_session().map(|row| row.name.clone());
+        let changed = rows != self.sessions;
+        self.sessions = rows;
+        let keep = (self.focus == Focus::Sessions)
+            .then_some(selected)
+            .flatten()
+            .and_then(|name| self.sessions.iter().position(|row| row.name == name));
+        let on_show = self.sessions.iter().position(|row| row.on_show);
+        let index = keep.or(on_show).unwrap_or(0);
+        let moved = index != self.session_index;
+        self.session_index = index;
+        if !self.sessions_shown() {
+            self.focus = Focus::Agents;
+        }
+        changed || moved
+    }
+
+    /// Whether the Sessions section is drawn: it is not hidden, and a team's
+    /// session is running. The inner session alone needs no list.
+    pub fn sessions_shown(&self) -> bool {
+        self.show_sessions
+            && self
+                .sessions
+                .iter()
+                .any(|row| row.name != self.config.guest_session)
+    }
+
+    pub fn selected_session(&self) -> Option<&SessionRow> {
+        self.sessions.get(self.session_index)
+    }
+
+    /// The session row that has the keys, if the Sessions section does.
+    pub fn focused_session(&self) -> Option<&SessionRow> {
+        (self.focus == Focus::Sessions)
+            .then(|| self.selected_session())
+            .flatten()
+    }
+
+    /// The team a session belongs to; empty for the inner session.
+    pub fn session_team<'a>(&self, name: &'a str) -> &'a str {
+        if name == self.config.guest_session {
+            ""
+        } else {
+            crate::guest::team_label(name)
+        }
+    }
+
+    /// What a session is called: its team, or `no-team`.
+    pub fn session_label<'a>(&self, name: &'a str) -> &'a str {
+        match self.session_team(name) {
+            "" => crate::guest::NO_TEAM,
+            team => team,
+        }
+    }
+
+    /// The agents of a session's team, counted by what they need. `None`
+    /// while the list holds search results, which are not every agent.
+    pub fn session_counts(&self, name: &str) -> Option<SessionCounts> {
+        if self.flat {
+            return None;
+        }
+        let team = self.session_team(name);
+        let mut counts = SessionCounts::default();
+        for agent in self.agents.iter().filter(|a| a.team_name() == team) {
+            counts.agents += 1;
+            match agent.group() {
+                AgentGroup::Blocked => counts.blocked += 1,
+                AgentGroup::Working => counts.working += 1,
+                AgentGroup::Review => counts.review += 1,
+                AgentGroup::Quiet => {}
+            }
+        }
+        Some(counts)
+    }
+
+    /// `Tab`: give the list keys to the other section.
+    pub fn toggle_focus(&mut self) {
+        self.pending_g = false;
+        if self.focus == Focus::Sessions {
+            self.focus = Focus::Agents;
+            self.notice = None;
+        } else if self.sessions_shown() {
+            self.focus = Focus::Sessions;
+            self.show_help = false;
+            self.notice = None;
+        } else if self.show_sessions {
+            self.set_notice("no team session is running");
+        } else {
+            self.set_notice("sessions are hidden; S shows them");
+        }
+    }
+
+    /// `S`: hide the Sessions section, or show it again.
+    pub fn toggle_sessions(&mut self) {
+        self.show_sessions = !self.show_sessions;
+        if !self.sessions_shown() {
+            self.focus = Focus::Agents;
+        }
+        self.set_notice(if self.show_sessions {
+            "sessions shown"
+        } else {
+            "sessions hidden"
+        });
+    }
+
+    pub fn move_session(&mut self, delta: isize) {
+        let last = self.sessions.len().saturating_sub(1);
+        self.session_index = self.session_index.saturating_add_signed(delta).min(last);
+        self.notice = None;
+        self.pending_g = false;
     }
 
     // ---- toggles and prompts ----

@@ -190,6 +190,8 @@ struct Line {
     spans: Vec<Span>,
     fill: Style,
     trailing_reset: bool,
+    /// The columns left out at the start: the line is scrolled sideways.
+    shift: usize,
 }
 
 /// Control characters would reach the terminal verbatim; drop them.
@@ -223,7 +225,40 @@ impl Line {
         self.spans.iter().map(|s| s.text.width()).sum()
     }
 
+    /// The line without its first `shift` columns.
+    fn shifted(&self) -> Line {
+        let mut skip = self.shift;
+        let mut spans = Vec::new();
+        for span in &self.spans {
+            let mut text = String::new();
+            for ch in span.text.chars() {
+                let w = ch.width().unwrap_or(0);
+                if skip >= w && w > 0 {
+                    skip -= w;
+                } else if skip > 0 && w > 0 {
+                    // Half of a wide character: a blank in its place.
+                    skip = 0;
+                    text.push(' ');
+                } else {
+                    text.push(ch);
+                }
+            }
+            spans.push(Span {
+                text,
+                style: span.style,
+            });
+        }
+        Line {
+            spans,
+            shift: 0,
+            ..self.clone()
+        }
+    }
+
     fn fitted(&self, cols: usize) -> Vec<Span> {
+        if self.shift > 0 {
+            return self.shifted().fitted(cols);
+        }
         let total = self.width();
         let mut out: Vec<Span> = Vec::new();
         let mut used = 0usize;
@@ -385,7 +420,7 @@ fn shown_agent_count(app: &ZellijNoc) -> usize {
                 !app.by_team() && (app.flat || app.agents[*i].group() != AgentGroup::Quiet),
             ),
             ListItem::Section { count, .. } | ListItem::Team { count, .. } => *count,
-            ListItem::TeamQuiet { .. } => 0,
+            ListItem::TeamQuiet { .. } | ListItem::QuietTeams { .. } => 0,
         })
         .sum()
 }
@@ -393,9 +428,10 @@ fn shown_agent_count(app: &ZellijNoc) -> usize {
 fn item_group(app: &ZellijNoc, item: &ListItem) -> AgentGroup {
     match item {
         ListItem::Agent(i) => app.agents[*i].group(),
-        ListItem::Section { .. } | ListItem::Team { .. } | ListItem::TeamQuiet { .. } => {
-            AgentGroup::Quiet
-        }
+        ListItem::Section { .. }
+        | ListItem::Team { .. }
+        | ListItem::TeamQuiet { .. }
+        | ListItem::QuietTeams { .. } => AgentGroup::Quiet,
     }
 }
 
@@ -413,7 +449,7 @@ fn group_count(app: &ZellijNoc, group: AgentGroup) -> usize {
                     0
                 }
             }
-            ListItem::Team { .. } | ListItem::TeamQuiet { .. } => 0,
+            ListItem::Team { .. } | ListItem::TeamQuiet { .. } | ListItem::QuietTeams { .. } => 0,
         })
         .sum()
 }
@@ -644,9 +680,9 @@ fn help_lines(theme: &Theme) -> Vec<Line> {
         "p / s       pane / stacked pane here",
         "w           shell in its worktree",
         "o           show its team's session",
-        "Tab         agents / sessions",
-        "S           hide / show sessions",
-        "d           toggle details",
+        "Tab         next section (Shift: back)",
+        "S           close / open sessions",
+        "d           close / open details",
         "D           details window",
         "n           rename agent",
         "t / T       join / leave a team",
@@ -735,6 +771,11 @@ fn row_indent(app: &ZellijNoc, agent: &Agent) -> &'static str {
     }
 }
 
+/// The columns of an agent row's age (`100d` is the widest), and the fewest
+/// columns a title keeps beside it.
+const AGE_WIDTH: usize = 4;
+const AGE_MIN_TITLE: usize = 8;
+
 fn agent_primary_line(
     app: &ZellijNoc,
     theme: &Theme,
@@ -745,11 +786,26 @@ fn agent_primary_line(
     let group = agent.group();
     let indent = row_indent(app, agent);
     let prefix = format!(" {indent}{} ", agent_symbol(app, agent));
-    let title = truncate(&agent.title(), cols.saturating_sub(prefix.width()));
+    // The age sits in a column of its own at the right edge, so it is in
+    // the same place on every row whatever the title. A pane too narrow to
+    // leave the title a few columns has no age.
+    let room = cols.saturating_sub(prefix.width());
+    let age = age_label(agent.recency(), &app.generated_at);
+    let age = if age.is_empty() || room < AGE_WIDTH + 1 + AGE_MIN_TITLE {
+        String::new()
+    } else {
+        format!(" {age:>AGE_WIDTH$}")
+    };
+    let title_width = room - age.width().min(room);
+    let mut title = truncate(&agent.title(), title_width);
+    if !age.is_empty() {
+        title = pad(&title, title_width);
+    }
     let mut line = if selected {
-        let style = Style::selected(theme).bold();
-        Line::plain(&prefix, style)
-            .with(&title, style)
+        let style = Style::selected(theme);
+        Line::plain(&prefix, style.bold())
+            .with(&title, style.bold())
+            .with(&age, style)
             .filled(Style::fill(theme))
     } else {
         let title_color = if group == AgentGroup::Quiet {
@@ -759,10 +815,25 @@ fn agent_primary_line(
         };
         Line::plain(&prefix, Style::fg(theme.group(group)).bold())
             .with(&title, Style::fg(title_color))
+            .with(&age, theme.muted_style())
     };
     line.trailing_reset = true;
     line
 }
+
+/// The row that holds the teams with no agent at work: `Quiet teams  N`,
+/// at the left edge like a team heading, in the Quiet colour.
+fn quiet_teams_line(theme: &Theme, count: usize, expanded: bool, selected: bool) -> Line {
+    let arrow = if expanded { "\u{25be}" } else { "\u{25b8}" };
+    let text = format!("{arrow} {QUIET_TEAMS}  {count}");
+    if selected {
+        Line::plain(&text, Style::selected(theme).bold()).filled(Style::fill(theme))
+    } else {
+        Line::plain(&text, Style::fg(theme.group(AgentGroup::Quiet)).bold())
+    }
+}
+
+pub const QUIET_TEAMS: &str = "Quiet teams";
 
 fn section_line(theme: &Theme, label: &str, count: usize, expanded: bool, selected: bool) -> Line {
     let arrow = if expanded { "\u{25be}" } else { "\u{25b8}" };
@@ -827,7 +898,7 @@ fn agent_list_lines(app: &ZellijNoc, theme: &Theme, cols: usize) -> (Vec<Line>, 
             selected_line = Some(lines.len());
         }
         // Highlighted only while the agents have the keys.
-        let selected = selected && app.focus == Focus::Agents;
+        let selected = selected && app.list_focus() == Focus::Agents;
         match item {
             ListItem::Agent(i) => {
                 let agent = &app.agents[*i];
@@ -874,6 +945,9 @@ fn agent_list_lines(app: &ZellijNoc, theme: &Theme, cols: usize) -> (Vec<Line>, 
                 *expanded,
                 selected,
             )),
+            ListItem::QuietTeams { count, expanded } => {
+                lines.push(quiet_teams_line(theme, *count, *expanded, selected))
+            }
         }
     }
     (lines, selected_line.unwrap_or(0))
@@ -1018,15 +1092,31 @@ pub const AGENTS_TITLE: &str = "Agents";
 pub const DETAILS_TITLE: &str = "Details";
 pub const SESSIONS_TITLE: &str = "Sessions";
 
-/// A section's title. The section that has the list keys is in the accent
-/// colour; the other list's title is muted. Details never has the keys, and
-/// is drawn as the section that follows the selection.
-fn section_heading(theme: &Theme, text: &str, focused: bool) -> Line {
-    if focused {
-        Line::plain(text, Style::fg(theme.accent).bold())
+/// A section's title row: the title, then a rule to the edge of the pane. A
+/// section that closes has an arrow before it, down while it is open. The
+/// section that has the keys is in the accent colour, the others muted.
+fn section_heading(
+    theme: &Theme,
+    open: Option<bool>,
+    text: &str,
+    focused: bool,
+    cols: usize,
+) -> Line {
+    let arrow = match open {
+        Some(true) => "\u{25be} ",
+        Some(false) => "\u{25b8} ",
+        None => "",
+    };
+    let title = truncate(&format!("{arrow}{text}"), cols);
+    let style = if focused {
+        Style::fg(theme.accent).bold()
     } else {
-        Line::plain(text, theme.muted_style().bold())
-    }
+        theme.muted_style().bold()
+    };
+    let rest = cols.saturating_sub(title.width() + 1);
+    let mut rule = Style::fg(theme.accent);
+    rule.dim = theme.dim;
+    Line::plain(&title, style).with(&format!(" {}", "\u{2500}".repeat(rest)), rule)
 }
 
 /// What a session row says after the session's name: what its agents need,
@@ -1049,15 +1139,17 @@ const SESSION_LABEL_WIDTH: usize = 16;
 /// a row for each running inner session, the one on show marked `●`. At most
 /// `SESSION_ROWS` rows, around the selected one.
 fn session_lines(app: &ZellijNoc, theme: &Theme, cols: usize) -> Vec<Line> {
-    let focused = app.focus == Focus::Sessions;
-    let mut lines = vec![
-        rule(theme, cols),
-        section_heading(
-            theme,
-            &format!("{SESSIONS_TITLE}  {}", app.sessions.len()),
-            focused,
-        ),
-    ];
+    let focused = app.list_focus() == Focus::Sessions;
+    let mut lines = vec![section_heading(
+        theme,
+        Some(app.show_sessions),
+        &format!("{SESSIONS_TITLE}  {}", app.sessions.len()),
+        app.focus == Focus::Sessions,
+        cols,
+    )];
+    if !app.show_sessions {
+        return lines;
+    }
     let width = app
         .sessions
         .iter()
@@ -1133,30 +1225,34 @@ fn session_detail_lines(app: &ZellijNoc, theme: &Theme, name: &str, on_show: boo
     lines
 }
 
-fn rule(theme: &Theme, cols: usize) -> Line {
-    let mut style = Style::fg(theme.accent);
-    style.dim = theme.dim;
-    Line::plain(&"\u{2500}".repeat(cols), style)
+/// The most wrapped lines of an agent's request or latest message in the
+/// Details section, which scrolls.
+const DETAIL_PREVIEW_LINES: usize = 12;
+
+/// What the Details section is about, to tell when it changes: the
+/// session, or the agent, or the row of the list.
+fn detail_subject(app: &ZellijNoc) -> String {
+    if let Some(row) = app.focused_session() {
+        return format!("session {}", row.name);
+    }
+    match app.selected_agent() {
+        Some(agent) => format!("agent {}", agent.id),
+        None => format!("row {}", app.selected_index),
+    }
 }
 
-fn inline_detail_lines(
-    app: &ZellijNoc,
-    theme: &Theme,
-    cols: usize,
-    detail_height: usize,
-) -> Vec<Line> {
-    let mut lines = vec![
-        rule(theme, cols),
-        section_heading(theme, DETAILS_TITLE, true),
-    ];
+/// Everything the Details section has to say, under its title. The section
+/// shows as many of these lines as it has rows, from where it is scrolled.
+fn inline_detail_lines(app: &ZellijNoc, theme: &Theme, cols: usize) -> Vec<Line> {
+    let mut lines = Vec::new();
     if let Some(row) = app.focused_session() {
         lines.extend(session_detail_lines(app, theme, &row.name, row.on_show));
-        lines.truncate(detail_height);
         return lines;
     }
+    let detail_height = DETAIL_PREVIEW_LINES;
     match app.selected_item() {
         Some(ListItem::Agent(i)) => {
-            let preview = if detail_height >= 16 { 2 } else { 1 };
+            let preview = detail_height;
             lines.extend(agent_detail_lines(
                 &app.agents[i],
                 theme,
@@ -1195,6 +1291,17 @@ fn inline_detail_lines(
                 lines.push(Line::plain(text, muted));
             }
         }
+        Some(ListItem::QuietTeams { count, .. }) => {
+            lines.push(Line::plain(QUIET_TEAMS, Style::fg(theme.accent).bold()));
+            let muted = theme.muted_style();
+            for text in [
+                format!("{count} team{} with no agent at work.", plural(count)).as_str(),
+                "Enter opens this row; a team",
+                "leaves it when an agent wakes.",
+            ] {
+                lines.push(Line::plain(text, muted));
+            }
+        }
         Some(ListItem::TeamQuiet { team, .. }) => {
             lines.push(Line::plain(
                 &format!("Quiet \u{b7} {}", app.team_title(team)),
@@ -1211,7 +1318,61 @@ fn inline_detail_lines(
         }
         None => {}
     }
-    lines.truncate(detail_height);
+    lines
+}
+
+/// The Details section in `height` rows: its title row, and while it is
+/// open the details from where they are scrolled, down and sideways. How
+/// far they can be scrolled is kept for the keys, and a new subject starts
+/// at the top.
+fn detail_section(app: &mut ZellijNoc, theme: &Theme, cols: usize, height: usize) -> Vec<Line> {
+    let focused = app.focus == Focus::Details;
+    if !app.show_details || height < 2 {
+        return vec![section_heading(
+            theme,
+            Some(false),
+            DETAILS_TITLE,
+            focused,
+            cols,
+        )];
+    }
+    let subject = detail_subject(app);
+    if subject != app.detail_of {
+        app.detail_of = subject;
+        app.detail_scroll = 0;
+        app.detail_shift = 0;
+    }
+    let content = inline_detail_lines(app, theme, cols);
+    let rows = height - 1;
+    app.detail_rows = rows;
+    app.detail_max_scroll = content.len().saturating_sub(rows);
+    app.detail_scroll = app.detail_scroll.min(app.detail_max_scroll);
+    let widest = content.iter().map(Line::width).max().unwrap_or(0);
+    app.detail_max_shift = widest.saturating_sub(cols);
+    app.detail_shift = app.detail_shift.min(app.detail_max_shift);
+    // The title says which lines are in view when they are not all.
+    let title = if app.detail_max_scroll > 0 {
+        format!(
+            "{DETAILS_TITLE}  {}-{}/{}",
+            app.detail_scroll + 1,
+            app.detail_scroll + rows,
+            content.len()
+        )
+    } else {
+        DETAILS_TITLE.to_string()
+    };
+    let mut lines = vec![section_heading(theme, Some(true), &title, focused, cols)];
+    lines.extend(
+        content
+            .into_iter()
+            .skip(app.detail_scroll)
+            .take(rows)
+            .map(|mut line| {
+                line.shift = app.detail_shift;
+                line
+            }),
+    );
+    lines.resize(height, Line::empty());
     lines
 }
 
@@ -1239,18 +1400,19 @@ pub fn render(app: &mut ZellijNoc, theme: &Theme, rows: usize, cols: usize) -> V
     } else if app.items.is_empty() {
         (empty_state_lines(app, theme), Vec::new())
     } else {
-        // Below the list: the details, then the sessions. The sessions take
-        // their rows first, being few and of a known number.
-        let sessions = if app.sessions_shown() && inner_rows >= 14 {
+        // Below the list: the sessions, then the details. The sessions take
+        // their rows first, being few and of a known number; closed, each
+        // section is its title row.
+        let sessions = if !app.sessions.is_empty() && inner_rows >= 14 {
             session_lines(app, theme, cols)
         } else {
             Vec::new()
         };
         let shared = inner_rows - sessions.len();
-        let detail_height = if app.show_details && shared >= 12 {
-            shared / 3
-        } else {
-            0
+        let detail_height = match (shared >= 12, app.show_details) {
+            (true, true) => shared / 3,
+            (true, false) => 1,
+            (false, _) => 0,
         };
         let list_height = shared - detail_height;
         let (list, selected_line) = agent_list_lines(app, theme, cols);
@@ -1258,18 +1420,16 @@ pub fn render(app: &mut ZellijNoc, theme: &Theme, rows: usize, cols: usize) -> V
             .saturating_sub(list_height / 2)
             .min(list.len().saturating_sub(list_height));
         let window: Vec<Line> = list.into_iter().skip(start).take(list_height).collect();
-        let mut details = Vec::new();
+        let mut below = sessions;
         if detail_height > 0 {
-            details = inline_detail_lines(app, theme, cols, detail_height);
-            details.resize(detail_height, Line::empty());
+            below.extend(detail_section(app, theme, cols, detail_height));
         }
-        details.extend(sessions);
-        (window, details)
+        (window, below)
     };
     if titled {
         body.insert(
             0,
-            section_heading(theme, AGENTS_TITLE, app.focus == Focus::Agents),
+            section_heading(theme, None, AGENTS_TITLE, app.focus == Focus::Agents, cols),
         );
     }
     body.resize(body_rows - details.len(), Line::empty());
@@ -1352,7 +1512,7 @@ mod tests {
         let mut lines = panel(app, theme, rows + 1, cols);
         if lines
             .first()
-            .is_some_and(|l| strip(l).trim_end() == AGENTS_TITLE)
+            .is_some_and(|l| strip(l).starts_with(AGENTS_TITLE))
         {
             lines.remove(0);
             app.last_render_rows = rows;
@@ -1371,13 +1531,12 @@ mod tests {
         lines.iter().map(|l| strip(l)).collect()
     }
 
-    /// Where the status line is: above the details when those are shown,
-    /// and above the footer.
+    /// Where the status line is: above the title of the first section under
+    /// the list when one is drawn, and above the footer.
     fn status_at(text: &[String]) -> usize {
-        let rule = text.iter().position(|l| {
-            let l = l.trim();
-            !l.is_empty() && l.chars().all(|c| c == '\u{2500}')
-        });
+        let rule = text
+            .iter()
+            .position(|l| l.starts_with('\u{25be}') || l.starts_with('\u{25b8}'));
         match rule {
             Some(rule) => rule - 1,
             None if text.last().is_some_and(|l| l.trim_end() == FOOTER) => text.len() - 2,
@@ -1397,6 +1556,21 @@ mod tests {
             .trim_end()
             .trim_end_matches('\u{2191}')
             .trim_end()
+    }
+
+    /// A row of the list without the age at its right edge.
+    fn row(line: &str) -> &str {
+        let line = line.trim_end();
+        match line.rsplit_once(' ') {
+            Some((rest, age))
+                if age.len() >= 2
+                    && age.ends_with(['s', 'm', 'h', 'd'])
+                    && age[..age.len() - 1].chars().all(|c| c.is_ascii_digit()) =>
+            {
+                rest.trim_end()
+            }
+            _ => line,
+        }
     }
 
     /// The lines inside the status box, opened for the occasion.
@@ -1450,8 +1624,15 @@ mod tests {
             " \u{25b8} < 7d    1",
         ];
         for (i, want) in expect.iter().enumerate() {
-            assert_eq!(text[i].trim_end(), *want, "line {i}");
+            assert_eq!(row(&text[i]), *want, "line {i}");
         }
+        // The age is a column at the right edge, whatever the title.
+        assert_eq!(text[1], format!(" ! Auth migration{}2m", " ".repeat(19)));
+        assert_eq!(
+            text[3],
+            format!(" \u{280b} Cache refactor{}0m", " ".repeat(19))
+        );
+        assert_eq!(text[5], format!(" \u{25c6} Docs pass{}3h", " ".repeat(24)));
         let rest = text[10..26].iter().all(|l| l.trim().is_empty());
         assert!(rest, "list area is padded");
         // The status line sits between the list and the details: the count
@@ -1459,18 +1640,18 @@ mod tests {
         assert_eq!(text[26], format!("6 agents{}\u{25cf}", " ".repeat(29)));
         let details = &text[27..];
         let wanted = [
-            "\u{2500}".repeat(38),
-            "Details".to_string(),
+            format!("\u{25be} Details  1-11/15 {}", "\u{2500}".repeat(19)),
             "Auth migration".to_string(),
             "!  needs approval \u{b7} 2m ago".to_string(),
             "repo      app \u{b7} main".to_string(),
             "cwd       /code/app/svc".to_string(),
             "ask".to_string(),
             "  Migrate the auth service to the new".to_string(),
+            "  token format and update all callers".to_string(),
             "latest".to_string(),
             "  Waiting for approval to delete the".to_string(),
+            "  build directory.".to_string(),
             "provider  claude \u{b7} background".to_string(),
-            "native    auth".to_string(),
             FOOTER.to_string(),
         ];
         let got: Vec<&str> = details.iter().map(|l| l.trim_end()).collect();
@@ -1488,10 +1669,12 @@ mod tests {
         assert_eq!(text.len(), 30);
         // available = 28, detail height 9: the list takes 19 lines and the
         // status line follows, so the rule sits on line 20.
-        assert_eq!(text[20].trim_end(), "\u{2500}".repeat(38));
-        assert_eq!(text[21].trim_end(), "Details");
-        assert_eq!(text[22].trim_end(), "Docs pass");
-        assert_eq!(text[23].trim_end(), "\u{25c6}  review \u{b7} 3h ago");
+        assert_eq!(
+            text[20],
+            format!("\u{25be} Details {}", "\u{2500}".repeat(28))
+        );
+        assert_eq!(text[21].trim_end(), "Docs pass");
+        assert_eq!(text[22].trim_end(), "\u{25c6}  review \u{b7} 3h ago");
         assert_eq!(text[29].trim_end(), FOOTER);
         let review = text
             .iter()
@@ -1536,7 +1719,7 @@ mod tests {
         let text = plain(&render(&mut app, &Theme::default(), 40, 38));
         assert_eq!(text[6].trim_end(), "Quiet  3");
         assert_eq!(text[7].trim_end(), " \u{25be} < 24h   1");
-        assert_eq!(text[8].trim_end(), "   \u{25cc} Old question");
+        assert_eq!(row(&text[8]), "   \u{25cc} Old question");
         assert_eq!(header(&text), "6 agents");
     }
 
@@ -1555,7 +1738,7 @@ mod tests {
         app.notice = None;
         let raw = render(&mut app, &Theme::default(), 40, 38);
         let text = plain(&raw);
-        let rows: Vec<&str> = text.iter().take(10).map(|l| l.trim_end()).collect();
+        let rows: Vec<&str> = text.iter().take(10).map(|l| row(l)).collect();
         assert_eq!(
             rows,
             [
@@ -1606,7 +1789,7 @@ mod tests {
         assert!(app.select_agent("q1"));
         let text = plain(&render(&mut app, &Theme::default(), 40, 38));
         assert_eq!(text[6].trim_end(), " \u{25be} Quiet   1");
-        assert_eq!(text[7].trim_end(), "   \u{25cb} Quiet one");
+        assert_eq!(row(&text[7]), "   \u{25cb} Quiet one");
         assert_eq!(attention_counts(0, 0, 0), "");
         assert_eq!(attention_counts(2, 0, 1), "2 blocked \u{b7} 1 review");
     }
@@ -1617,14 +1800,11 @@ mod tests {
         let text = plain(&render(&mut app, &Theme::default(), 40, 38));
         // One row an agent: the next row is the next agent, or a heading.
         let after = |title: &str| -> String {
-            let at = text
-                .iter()
-                .position(|l| l.trim_end().ends_with(title))
-                .unwrap();
+            let at = text.iter().position(|l| row(l).ends_with(title)).unwrap();
             text[at + 1].trim_end().to_string()
         };
-        assert_eq!(after("Blocked one"), "Working  2");
-        assert_eq!(after("Solo"), " \u{280b} Worker one");
+        assert_eq!(row(&after("Blocked one")), "Working  2");
+        assert_eq!(row(&after("Solo")), " \u{280b} Worker one");
         let mut details = |id: &str| -> Vec<String> {
             assert!(app.select_agent(id));
             plain(&render(&mut app, &Theme::default(), 40, 38))
@@ -1648,9 +1828,9 @@ mod tests {
         assert!(app.select_agent("q"));
         let text = plain(&render(&mut app, &Theme::default(), 30, 38));
         let pending = text.iter().position(|l| l.contains("Pending")).unwrap();
-        assert_eq!(text[pending].trim_end(), "   \u{25cc} Pending");
+        assert_eq!(row(&text[pending]), "   \u{25cc} Pending");
         let idle = text.iter().position(|l| l.contains("Idle")).unwrap();
-        assert_eq!(text[idle].trim_end(), "   \u{25cb} Idle");
+        assert_eq!(row(&text[idle]), "   \u{25cb} Idle");
         // Details use the state symbol, not the resting one.
         assert!(text
             .iter()
@@ -1668,14 +1848,8 @@ mod tests {
     #[test]
     fn the_panel_is_three_titled_sections() {
         let mut app = app_with(TEAMS);
-        // No team's session is running: Agents and Details.
-        sessions(&mut app, &["noc"], "noc");
-        let text = plain(&panel(&mut app, &Theme::default(), 40, 38));
-        assert_eq!(text[0].trim_end(), "Agents");
-        assert_eq!(text[1].trim_end(), "Blocked  1");
-        assert!(text.iter().any(|l| l.trim_end() == "Details"));
-        assert!(!text.iter().any(|l| l.starts_with("Sessions")));
-        // With one: Agents, the status line, Details, Sessions, the footer.
+        let rule = |title: &str| format!("{title} {}", "\u{2500}".repeat(37 - title.width()));
+        // Agents, the status line, Sessions, Details, the footer.
         sessions(
             &mut app,
             &["noc", "noc--billing", "noc--auth"],
@@ -1683,15 +1857,14 @@ mod tests {
         );
         let text = plain(&panel(&mut app, &Theme::default(), 40, 38));
         assert_eq!(text.len(), 40);
-        let at = |title: &str| text.iter().position(|l| l.trim_end() == title).unwrap();
-        let (details, list) = (at("Details"), at("Sessions  3"));
-        assert_eq!(at("Agents"), 0);
-        assert!(text[details - 2].starts_with("6 agents"), "the status line");
-        assert!(details < list);
-        // A rule above each section below the first.
-        let rule = "\u{2500}".repeat(38);
-        assert_eq!(text[details - 1], rule);
-        assert_eq!(text[list - 1], rule);
+        assert!(text.iter().all(|l| l.width() == 38), "{text:?}");
+        let at =
+            |text: &[String], title: &str| text.iter().position(|l| l.contains(title)).unwrap();
+        assert_eq!(text[0], rule("Agents"));
+        assert_eq!(text[1].trim_end(), "Blocked  1");
+        let (list, details) = (at(&text, "Sessions"), at(&text, "Details"));
+        assert!(text[list - 1].starts_with("6 agents"), "the status line");
+        assert_eq!(text[list], rule("\u{25be} Sessions  3"));
         // The teams' sessions by name, then the inner session; the one on
         // show is marked, and each says what its team's agents need.
         assert_eq!(text[list + 1].trim_end(), "   auth     no agents");
@@ -1700,29 +1873,48 @@ mod tests {
             " \u{25cf} billing  1 blocked \u{b7} 1 working \u{b7} 1\u{2026}"
         );
         assert_eq!(text[list + 3].trim_end(), "   no-team  1 working");
-        assert_eq!(text[list + 4].trim_end(), FOOTER);
+        assert_eq!(details, list + 4);
+        assert_eq!(text[details], rule("\u{25be} Details"));
+        assert_eq!(text[details + 1].trim_end(), "Blocked one");
+        assert_eq!(text[39].trim_end(), FOOTER);
         // The selection waits on the session on show.
         assert_eq!(app.selected_session().unwrap().name, "noc--billing");
-        // `S` hides the section, and a short pane has no room for it.
+        // Closed, a section is its title row, and the list has its rows.
         app.toggle_sessions();
         let text = plain(&panel(&mut app, &Theme::default(), 40, 38));
-        assert!(!text.iter().any(|l| l.starts_with("Sessions")));
+        let list = at(&text, "Sessions");
+        assert_eq!(text[list], rule("\u{25b8} Sessions  3"));
+        assert_eq!(text[list + 1], rule("\u{25be} Details"));
+        app.toggle_details();
+        let text = plain(&panel(&mut app, &Theme::default(), 40, 38));
+        assert_eq!(
+            text[36].trim_end(),
+            "6 agents                             \u{25cf}"
+        );
+        assert_eq!(text[37], rule("\u{25b8} Sessions  3"));
+        assert_eq!(text[38], rule("\u{25b8} Details"));
+        assert_eq!(text[39].trim_end(), FOOTER);
         app.toggle_sessions();
+        app.toggle_details();
+        // The inner session alone is a session too.
+        sessions(&mut app, &["noc"], "noc");
+        let text = plain(&panel(&mut app, &Theme::default(), 40, 38));
+        let list = at(&text, "Sessions");
+        assert_eq!(text[list], rule("\u{25be} Sessions  1"));
+        assert_eq!(text[list + 1].trim_end(), " \u{25cf} no-team  1 working");
+        // A short pane has no room for the section.
         let text = plain(&panel(&mut app, &Theme::default(), 14, 38));
-        assert!(!text.iter().any(|l| l.starts_with("Sessions")));
+        assert!(!text.iter().any(|l| l.contains("Sessions")));
         // More sessions than rows: the selected one stays in view.
         let many: Vec<String> = (0..9).map(|i| format!("noc--t{i}")).collect();
         let names: Vec<&str> = many.iter().map(String::as_str).collect();
         sessions(&mut app, &names, "noc--t7");
         let text = plain(&panel(&mut app, &Theme::default(), 40, 38));
-        let list = text
-            .iter()
-            .position(|l| l.starts_with("Sessions  9"))
-            .unwrap();
+        let list = at(&text, "Sessions  9");
         let shown: Vec<&str> = text[list + 1..list + 6].iter().map(|l| l.trim()).collect();
         assert_eq!(shown[0], "t4  no agents");
         assert_eq!(shown[3], "\u{25cf} t7  no agents");
-        assert_eq!(text[list + 6].trim_end(), FOOTER);
+        assert!(text[list + 6].contains("Details"));
     }
 
     #[test]
@@ -1731,27 +1923,30 @@ mod tests {
         sessions(&mut app, &["noc", "noc--billing"], "noc");
         let theme = Theme::default();
         let highlight = "48;2;49;50;68";
+        let accent = color_code(theme.accent, false);
+        // A title is in the accent colour while its section has the keys.
+        let titled = |raw: &[String], title: &str| {
+            let at = plain(raw).iter().position(|l| l.contains(title)).unwrap();
+            raw[at].starts_with(&format!("\u{1b}[1;{accent}m"))
+        };
         let raw = panel(&mut app, &theme, 40, 38);
         let text = plain(&raw);
-        let list = text.iter().position(|l| l.starts_with("Sessions")).unwrap();
-        // The agents have the keys: their title is in the accent colour,
-        // their selected row is highlighted, no session row is.
-        let accent = color_code(theme.accent, false);
-        assert!(raw[0].contains(&accent));
-        assert!(!raw[list].contains(&accent));
+        let list = text.iter().position(|l| l.contains("Sessions")).unwrap();
+        let details = text.iter().position(|l| l.contains("Details")).unwrap();
+        // The agents have the keys: their selected row is highlighted, no
+        // session row is, and the details are the agent's.
+        assert!(titled(&raw, "Agents") && !titled(&raw, "Sessions") && !titled(&raw, "Details"));
         assert!(raw[2].contains(highlight));
         assert!(!raw[list + 1..].iter().any(|l| l.contains(highlight)));
-        // `Tab`: the sessions have them.
-        app.toggle_focus();
+        assert_eq!(text[details + 1].trim_end(), "Blocked one");
+        // `Tab`: the sessions have them, and the details are the session's.
+        app.toggle_focus(true);
         assert_eq!(app.focus, Focus::Sessions);
         let raw = panel(&mut app, &theme, 40, 38);
         let text = plain(&raw);
-        assert!(!raw[0].contains(&accent));
-        assert!(raw[list].contains(&accent));
+        assert!(!titled(&raw, "Agents") && titled(&raw, "Sessions"));
         assert!(!raw[2].contains(highlight));
         assert!(raw[list + 2].contains(highlight), "the session on show");
-        // The details are the selected session's.
-        let details = text.iter().position(|l| l.trim_end() == "Details").unwrap();
         let got: Vec<&str> = text[details + 1..details + 7]
             .iter()
             .map(|l| l.trim_end())
@@ -1784,21 +1979,96 @@ mod tests {
                 "Enter shows it; x ends it.",
             ]
         );
-        // Asking to end it takes the status line.
+        // `Tab` again: the details have the keys, and are still about the
+        // session, whose row stays highlighted.
+        app.toggle_focus(true);
+        assert_eq!(
+            (app.focus, app.list_focus()),
+            (Focus::Details, Focus::Sessions)
+        );
+        let raw = panel(&mut app, &theme, 40, 38);
+        assert!(titled(&raw, "Details") && !titled(&raw, "Sessions"));
+        assert!(raw[list + 1].contains(highlight));
+        assert_eq!(
+            plain(&raw)[details + 1].trim_end(),
+            "Session \u{b7} billing"
+        );
+        // And round to the agents.
+        app.toggle_focus(true);
+        assert_eq!(
+            (app.focus, app.list_focus()),
+            (Focus::Agents, Focus::Agents)
+        );
+        app.toggle_focus(false);
+        assert_eq!(
+            (app.focus, app.list_focus()),
+            (Focus::Details, Focus::Agents)
+        );
+        app.focus_agents();
+        // Asking to end a session takes the status line.
         app.pending_end = Some("noc--billing".to_string());
         let text = plain(&panel(&mut app, &theme, 40, 38));
         assert!(text
             .iter()
             .any(|l| l.trim_end() == "End session billing?  y / n"));
         app.pending_end = None;
-        // The last team's session ends: the agents have the keys again.
-        sessions(&mut app, &["noc"], "noc");
-        assert_eq!(app.focus, Focus::Agents);
         // A search holds some agents only, so the rows say nothing of them.
-        sessions(&mut app, &["noc", "noc--billing"], "noc");
         app.flat = true;
         let text = plain(&panel(&mut app, &theme, 40, 38));
         assert_eq!(text[list + 1].trim_end(), "   billing");
+    }
+
+    #[test]
+    fn the_details_scroll_down_and_sideways() {
+        let mut app = app_with(DEMO);
+        let theme = Theme::default();
+        let details = |app: &mut ZellijNoc, cols: usize| -> Vec<String> {
+            let text = plain(&panel(app, &theme, 41, cols));
+            let at = text.iter().position(|l| l.contains("Details")).unwrap();
+            text[at..text.len() - 1]
+                .iter()
+                .map(|l| l.trim_end().to_string())
+                .collect()
+        };
+        // Fifteen lines in eleven rows: the title says which are in view.
+        let shown = details(&mut app, 38);
+        assert_eq!(shown.len(), 12);
+        assert!(shown[0].starts_with("\u{25be} Details  1-11/15 \u{2500}"));
+        assert_eq!(shown[1], "Auth migration");
+        assert_eq!((app.detail_max_scroll, app.detail_rows), (4, 11));
+        app.scroll_details(2);
+        let shown = details(&mut app, 38);
+        assert!(shown[0].starts_with("\u{25be} Details  3-13/15 "));
+        assert_eq!(shown[1], "repo      app \u{b7} main");
+        // No further than the last line.
+        app.scroll_details(isize::MAX);
+        let shown = details(&mut app, 38);
+        assert!(shown[0].starts_with("\u{25be} Details  5-15/15 "));
+        assert_eq!(shown[11], "pane      work/7 \u{b7} observed");
+        app.scroll_details(isize::MIN);
+        assert_eq!(app.detail_scroll, 0);
+        // Sideways, in a pane narrower than its longest line, as far as
+        // that line's end and no further.
+        let narrow = details(&mut app, 24);
+        let cwd = narrow.iter().position(|l| l.starts_with("cwd")).unwrap();
+        assert_eq!(narrow[cwd], "cwd       /code/app/svc");
+        assert!(app.detail_max_shift > 0);
+        app.shift_details(4);
+        let shifted = details(&mut app, 24);
+        assert_eq!(shifted[cwd], "      /code/app/svc");
+        assert_eq!(shifted[1], " migration");
+        assert!(
+            shifted[0].starts_with("\u{25be} Details"),
+            "the title stays"
+        );
+        app.shift_details(isize::MAX);
+        assert_eq!(app.detail_shift, app.detail_max_shift);
+        // Another agent: its details start at the top again.
+        app.scroll_details(3);
+        app.move_selection(1);
+        let shown = details(&mut app, 38);
+        assert_eq!((app.detail_scroll, app.detail_shift), (0, 0));
+        assert_eq!(shown[1], "Cache refactor");
     }
 
     #[test]
@@ -1812,8 +2082,8 @@ mod tests {
         assert_eq!(text[6].trim_end(), "v           group by team / status");
         assert_eq!(text[7].trim_end(), "p / s       pane / stacked pane here");
         assert_eq!(text[9].trim_end(), "o           show its team's session");
-        assert_eq!(text[10].trim_end(), "Tab         agents / sessions");
-        assert_eq!(text[11].trim_end(), "S           hide / show sessions");
+        assert_eq!(text[10].trim_end(), "Tab         next section (Shift: back)");
+        assert_eq!(text[11].trim_end(), "S           close / open sessions");
         assert_eq!(text[14].trim_end(), "n           rename agent");
         assert_eq!(text[15].trim_end(), "t / T       join / leave a team");
         assert_eq!(text[16].trim_end(), "x           stop agent (asks y/n)");
@@ -2252,12 +2522,12 @@ mod tests {
         // Two rows: one list line, windowed to the selected row, and the status.
         let two = plain(&render(&mut app, &theme, 2, 38));
         assert_eq!(two.len(), 2);
-        assert_eq!(two[0].trim_end(), " ! Auth migration");
+        assert_eq!(row(&two[0]), " ! Auth migration");
         assert!(two[1].starts_with("6 agents"));
-        // From three rows the footer has session too.
+        // From three rows the footer has room too.
         let three = plain(&render(&mut app, &theme, 3, 38));
         assert_eq!(three.len(), 3);
-        assert_eq!(three[0].trim_end(), " ! Auth migration");
+        assert_eq!(row(&three[0]), " ! Auth migration");
         assert!(three[1].starts_with("6 agents"));
         assert_eq!(three[2].trim_end(), FOOTER);
         assert_eq!(app.last_render_rows, 3);

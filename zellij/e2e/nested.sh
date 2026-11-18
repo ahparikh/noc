@@ -299,9 +299,16 @@ check "the agent that was already open there got no second tab" [ "$(inner_tab_c
 # `o` on a team's heading shows the team's session.
 keys M-m
 wait_for 5 host_focus_is "$SIDEBAR"
-keys v # group by team: the first heading is the team
+keys v # group by team
 sleep 0.5
-keys g g
+# The team's only agent is Quiet, so the team rests behind the last row.
+check "a team with no agent at work is listed under Quiet teams" \
+	sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q '▸ Quiet teams  1'"
+keys G
+sleep 0.3
+keys Enter # open the row
+sleep 0.5
+keys j # the team's heading
 sleep 0.3
 keys o
 check "o on a team heading shows the team's session" wait_for 10 session_has_client "$TEAM_SESSION"
@@ -347,8 +354,8 @@ sleep 0.3
 keys y
 session_gone() { ! alive "$TEAM_SESSION"; }
 check "x on a team session's row ends it, once confirmed" wait_for 10 session_gone
-check "and the section goes with the last team's session" \
-	wait_for 5 sh -c "! tmux capture-pane -p -t '$TMUX_SESSION' | grep -q 'Sessions  '"
+check "and the section lists the inner session alone" \
+	wait_for 5 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q 'Sessions  1'"
 keys M-m
 wait_for 5 host_focus_is "$GUEST"
 

@@ -2,7 +2,8 @@
 //! keyboard ownership between the panel and the inner session.
 
 use crate::app::{
-    is_team_char, is_team_name, Focus, PendingStop, Transport, ZellijNoc, TEAM_NAME_MAX,
+    is_team_char, is_team_name, Focus, PendingStop, Transport, ZellijNoc, DETAIL_SHIFT,
+    TEAM_NAME_MAX,
 };
 use crate::guest::keyboard_signal;
 use crate::model::{parse_snapshot, Agent, AgentGroup};
@@ -288,9 +289,9 @@ fn handle_session_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> Option<Opti
                 app.pending_end = Some(name);
             }
         }
-        BareKey::Char('h') | BareKey::Left => app.toggle_focus(),
+        BareKey::Char('h') | BareKey::Left => app.focus_agents(),
         BareKey::Esc if !app.show_info && !app.show_help && app.search.is_none() => {
-            app.toggle_focus()
+            app.focus_agents()
         }
         BareKey::Char('p' | 's' | 'w' | 'D' | 'n' | 't' | 'T' | ' ') => {
             app.pending_g = false;
@@ -299,6 +300,31 @@ fn handle_session_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> Option<Opti
         _ => return None,
     }
     Some(None)
+}
+
+/// Keys while the Details section has them: they move what it shows, down
+/// and sideways. Whether a key was one of them; any other goes to the list
+/// the details are about.
+fn handle_details_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> bool {
+    match key.bare_key {
+        BareKey::Char('j') | BareKey::Down => app.scroll_details(1),
+        BareKey::Char('k') | BareKey::Up => app.scroll_details(-1),
+        BareKey::Char('l') | BareKey::Right => app.shift_details(DETAIL_SHIFT as isize),
+        BareKey::Char('h') | BareKey::Left => app.shift_details(-(DETAIL_SHIFT as isize)),
+        BareKey::Char('g') => {
+            if std::mem::take(&mut app.pending_g) {
+                app.scroll_details(isize::MIN);
+            } else {
+                app.pending_g = true;
+            }
+        }
+        BareKey::Char('G') => app.scroll_details(isize::MAX),
+        BareKey::Esc if !app.show_info && !app.show_help && app.search.is_none() => {
+            app.focus = app.source;
+        }
+        _ => return false,
+    }
+    true
 }
 
 /// Apply one key to the panel state. Returns whether to redraw and the
@@ -316,6 +342,12 @@ pub fn process_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> (bool, Option<
     let modifiers = &key.key_modifiers;
     if modifiers.contains(&KeyModifier::Ctrl) {
         return match key.bare_key {
+            BareKey::Char('d') | BareKey::Char('u') if app.focus == Focus::Details => {
+                let half = (app.detail_rows / 2).max(1) as isize;
+                let down = key.bare_key == BareKey::Char('d');
+                app.scroll_details(if down { half } else { -half });
+                (true, None)
+            }
             BareKey::Char('d') => {
                 app.move_half_page(true);
                 (true, None)
@@ -354,7 +386,7 @@ pub fn process_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> (bool, Option<
     }
     match key.bare_key {
         BareKey::Tab => {
-            app.toggle_focus();
+            app.toggle_focus(modifiers.is_empty());
             return (true, None);
         }
         BareKey::Char('S') => {
@@ -363,7 +395,11 @@ pub fn process_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> (bool, Option<
         }
         _ => {}
     }
-    if app.focus == Focus::Sessions {
+    if app.focus == Focus::Details && handle_details_key(app, key) {
+        return (true, None);
+    }
+    // Any other key in Details is for the list the details are about.
+    if app.list_focus() == Focus::Sessions {
         if let Some(handled) = handle_session_key(app, key) {
             return (true, handled);
         }
@@ -1119,22 +1155,66 @@ mod tests {
     }
 
     #[test]
-    fn tab_gives_the_keys_to_the_sessions_and_back() {
+    fn tab_gives_the_keys_to_the_next_open_section() {
         let mut app = app();
         let tab = bare(BareKey::Tab);
-        // Nothing to go to while no team's session is running.
-        app.set_sessions(&["noc".to_string()], "noc");
+        let back = with(&[KeyModifier::Shift], BareKey::Tab);
+        // No session is listed yet: the agents, and their details.
         let (redraw, intent) = process_key(&mut app, &tab);
         assert!(redraw && intent.is_none());
+        assert_eq!(app.focus, Focus::Details);
+        process_key(&mut app, &tab);
         assert_eq!(app.focus, Focus::Agents);
-        assert_eq!(app.notice.as_deref(), Some("no team session is running"));
+        // `d` closes the details: there is nowhere to go.
+        process_key(&mut app, &key('d'));
+        process_key(&mut app, &tab);
+        assert_eq!(app.focus, Focus::Agents);
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("no other section is open; S and d open them")
+        );
+        process_key(&mut app, &key('d'));
+        // With sessions: Agents, Sessions, Details, and round; Shift Tab
+        // goes the other way.
         let names = [
             "noc".to_string(),
             "noc--auth".to_string(),
             "noc--web".to_string(),
         ];
         app.set_sessions(&names, "noc--web");
+        for want in [Focus::Sessions, Focus::Details, Focus::Agents] {
+            process_key(&mut app, &tab);
+            assert_eq!(app.focus, want);
+        }
+        for want in [Focus::Details, Focus::Sessions, Focus::Agents] {
+            process_key(&mut app, &back);
+            assert_eq!(app.focus, want);
+        }
+        // A closed section is passed over, and gives the keys up.
+        process_key(&mut app, &key('S'));
         process_key(&mut app, &tab);
+        assert_eq!(app.focus, Focus::Details);
+        process_key(&mut app, &key('d'));
+        assert_eq!(app.focus, Focus::Agents);
+        process_key(&mut app, &key('d'));
+        process_key(&mut app, &key('S'));
+        process_key(&mut app, &tab);
+        assert_eq!(app.focus, Focus::Sessions);
+        process_key(&mut app, &key('S'));
+        assert_eq!((app.focus, app.source), (Focus::Agents, Focus::Agents));
+        process_key(&mut app, &key('S'));
+    }
+
+    #[test]
+    fn the_sessions_section_has_its_own_keys() {
+        let mut app = app();
+        let names = [
+            "noc".to_string(),
+            "noc--auth".to_string(),
+            "noc--web".to_string(),
+        ];
+        app.set_sessions(&names, "noc--web");
+        process_key(&mut app, &bare(BareKey::Tab));
         assert_eq!(app.focus, Focus::Sessions);
         assert_eq!(app.selected_session().unwrap().name, "noc--web");
         // j, k, gg and G move among the sessions, not the agents.
@@ -1190,23 +1270,57 @@ mod tests {
         assert_eq!(intent, Some(Intent::Refresh));
         process_key(&mut app, &key('v'));
         assert_eq!(app.group_by, crate::app::GroupBy::Team);
-        // Tab, h and Esc go back to the agents.
-        for back in [tab.clone(), key('h'), bare(BareKey::Esc)] {
+        // h and Esc go back to the agents.
+        for back in [key('h'), bare(BareKey::Esc)] {
             app.focus = Focus::Sessions;
+            app.source = Focus::Sessions;
             process_key(&mut app, &back);
-            assert_eq!(app.focus, Focus::Agents);
+            assert_eq!((app.focus, app.source), (Focus::Agents, Focus::Agents));
         }
-        // S hides the section, and takes the keys back with it.
-        process_key(&mut app, &tab);
-        process_key(&mut app, &key('S'));
-        assert!(!app.sessions_shown());
+    }
+
+    #[test]
+    fn the_details_section_scrolls_and_leaves_other_keys_to_its_list() {
+        let mut app = app();
+        process_key(&mut app, &bare(BareKey::Tab));
+        assert_eq!((app.focus, app.source), (Focus::Details, Focus::Agents));
+        // What there is to scroll is known from the last drawing.
+        app.detail_max_scroll = 5;
+        app.detail_max_shift = 6;
+        app.detail_rows = 6;
+        let agent = app.selected_index;
+        process_key(&mut app, &key('j'));
+        process_key(&mut app, &bare(BareKey::Down));
+        assert_eq!(app.detail_scroll, 2);
+        process_key(&mut app, &key('k'));
+        assert_eq!(app.detail_scroll, 1);
+        process_key(&mut app, &key('G'));
+        assert_eq!(app.detail_scroll, 5);
+        process_key(&mut app, &key('g'));
+        process_key(&mut app, &key('g'));
+        assert_eq!(app.detail_scroll, 0);
+        process_key(&mut app, &with(&[KeyModifier::Ctrl], BareKey::Char('d')));
+        assert_eq!(app.detail_scroll, 3);
+        process_key(&mut app, &with(&[KeyModifier::Ctrl], BareKey::Char('u')));
+        assert_eq!(app.detail_scroll, 0);
+        // l and h, and the arrows, move it sideways, within its width.
+        process_key(&mut app, &key('l'));
+        assert_eq!(app.detail_shift, 4);
+        process_key(&mut app, &bare(BareKey::Right));
+        assert_eq!(app.detail_shift, 6);
+        process_key(&mut app, &key('h'));
+        process_key(&mut app, &bare(BareKey::Left));
+        assert_eq!(app.detail_shift, 0);
+        assert_eq!(app.selected_index, agent, "the list did not move");
+        // Any other key is for the agent the details are about.
+        let (_, intent) = process_key(&mut app, &bare(BareKey::Enter));
+        assert_eq!(intent, Some(Intent::Open));
+        let (_, intent) = process_key(&mut app, &key('w'));
+        assert_eq!(intent, Some(Intent::Worktree));
+        assert_eq!(app.focus, Focus::Details);
+        // Esc gives the keys back to that list.
+        process_key(&mut app, &bare(BareKey::Esc));
         assert_eq!(app.focus, Focus::Agents);
-        process_key(&mut app, &tab);
-        assert_eq!(app.focus, Focus::Agents);
-        assert_eq!(
-            app.notice.as_deref(),
-            Some("sessions are hidden; S shows them")
-        );
     }
 
     #[test]

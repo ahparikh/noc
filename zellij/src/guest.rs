@@ -958,7 +958,7 @@ impl State {
     /// Show a session and give it the keyboard.
     pub fn show_and_focus(&mut self, session: &str) {
         if self.show_session(session) {
-            self.app.focus = crate::app::Focus::Agents;
+            self.app.focus_agents();
             self.list_sessions();
             if self.panel_has_keyboard() && !self.host_action(&["focus-previous-pane"]) {
                 focus_previous_pane();

@@ -21,7 +21,7 @@ layout {
             // the setup script again does for you. Zellij asks for
             // the plugin's permissions once per location, in the sidebar.
             // Every setting of the sidebar is in this block.
-            plugin location="https://github.com/ahparikh/noc/releases/download/v0.2.1/zellij-noc.wasm" {
+            plugin location="https://github.com/ahparikh/noc/releases/download/beta-latest/zellij-noc.wasm" {
                 // The noc executable. A bare name is looked up on the PATH
                 // Zellij was started with; an absolute path always works.
                 noc_bin "noc"

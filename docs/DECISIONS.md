@@ -897,44 +897,26 @@ that is right, or a team needs an end that is recorded, is open
 (spec/11-teams.md). The row is only in the team grouping; grouped by
 status, Quiet agents already fold by age.
 
-### D-084: the guest pane waits for the panel
+### D-081: the inner sessions keep Zellij's tab bar, with the session's name
 
-The guest pane's loop waits, before it starts the inner session, for a
-sign the panel gives: a directory in the temporary directory, named for the
-host session.
-
-**Why:** since the inner layout loads the plugin as its tab bar (D-081),
-the host session and the inner session both load the plugin the moment the
-pair starts. The first time a plugin location is used, both fetch it and
-both write the one file Zellij keeps it in, which ends spoilt, and the
-sidebar and the tab bar fail to load until that file is removed by hand.
-The panel running is proof the plugin has been fetched, so letting it
-start the inner session makes the fetch happen once.
-The first way tried was to start the guest pane suspended and have the
-panel type its Enter. Zellij gives a suspended pane no size, so the inner
-session came up at 80 by 24 in a corner of the pane.
-**Consequence:** the pair starts a moment later, after the plugin has
-loaded. With the sidebar unable to run, the inner session starts a minute
-late. The loop and the panel must name the same path, which is one more
-thing the layout and the plugin have to agree on.
-
-### D-081: a session's tab bar is noc's own
-
-The inner layout loads the plugin as the tab bar (`role "bar"`). It draws
-what Zellij's tab bar draws, with the session's team where that one says
-"Zellij", and with no background of its own: only the tabs are coloured,
-so the bar sits on the terminal's background like the shell under it.
+The inner layout uses Zellij's own tab bar and does not hide the session's
+name, so the bar starts `Zellij (noc)` or `Zellij (noc--<team>)`. The
+plugin can draw a bar with the team in place of "Zellij" (`role "bar"`),
+and no shipped layout loads it.
 
 **Why:** with several inner sessions that look alike, the one thing the
-screen must say is which team this is. Zellij's bar can show the session's
-name beside "Zellij", but not instead of it, and the name of a session carries
-the inner session's name in front. The bar reads the team from its own
-session's name, so it needs no setting and no message from the panel.
-**Consequence:** the inner layout names the plugin's location a third
-time. Zellij's bar is one line away (`plugin location="tab-bar"`). What
-Zellij's bar gains in a new release, this one does not.
-
-## Names, state, and grouping
+screen must say is which team this is, and the session's name says it with
+nothing added. The plugin's own bar was tried in the layout and said it
+better, but a pane of the inner layout loads the moment the inner session
+starts, which is the moment the host session loads the sidebar. The first
+time a plugin location is used, both sessions fetched it and both wrote
+the one file Zellij keeps it in, which left it spoilt and nothing able to
+load. Making the inner session wait for the sidebar cured that at the cost
+of a start-up handshake between the layout and the plugin, and one way of
+waiting (a suspended pane) left the inner session at 80 by 24.
+**Consequence:** the bar says `Zellij (noc--auth)` where `auth` would do.
+A bar of noc's own needs a way to load that is not a race: a plugin
+fetched to a file by the installer, or a separate small plugin.
 
 ### D-042: names are two-way and the most recent rename wins
 

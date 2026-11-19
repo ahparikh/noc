@@ -65,16 +65,14 @@ host_focus_kind() { case "$(host_focus)" in "$1"*) return 0 ;; *) return 1 ;; es
 inner_tab_count() { z --session "$INNER" action list-tabs 2>/dev/null | tail -n +2 | grep -c . || true; }
 inner_has_tab() { z --session "$INNER" action list-tabs 2>/dev/null | grep -q "$1"; }
 
-# The colour of the label that starts the inner session's tab bar (row 1,
-# after the sidebar's frame). The bar has no background of its own, and the
-# label is in the theme's colour for the active tab.
+# The most common background colour of the inner session's tab bar (row 1).
 bar_colour() {
-	tmux capture-pane -p -e -t "$TMUX_SESSION" | sed -n 1p | sed 's/.*╮//' |
-		LC_ALL=C grep -o -E '38;2;[0-9]+;[0-9]+;[0-9]+' | head -n 1
+	tmux capture-pane -p -e -t "$TMUX_SESSION" | sed -n 1p |
+		LC_ALL=C grep -o -E '48;2;[0-9]+;[0-9]+;[0-9]+' | sort | uniq -c | sort -rn | awk 'NR == 1 { print $2 }'
 }
 
-# The tab bar of the session on show starts with this label.
-bar_says() { tmux capture-pane -p -t "$TMUX_SESSION" | sed -n 1p | grep -q -- "╮ $1 "; }
+# The tab bar of the session on show names this session.
+bar_says() { tmux capture-pane -p -t "$TMUX_SESSION" | sed -n 1p | grep -q -F -- "Zellij ($1)"; }
 session_has_client() { [ "$(clients "$1")" = 1 ]; }
 session_tab_count() { z --session "$1" action list-tabs 2>/dev/null | tail -n +2 | grep -c . || true; }
 # open_match TEXT: search the sidebar for TEXT and open the first match.
@@ -172,11 +170,10 @@ check "the sidebar runs a registry watcher" \
 check "guest pane keeps exactly one client on the inner session" \
 	[ "$(clients "$INNER")" = 1 ]
 check "the keyboard starts in the inner session" wait_for 5 host_focus_is "$GUEST"
-# noc-inner.kdl takes the session name off the pane frames; config.kdl
-# leaves it on.
+# noc-inner.kdl turns the sessions box off; config.kdl leaves it on.
 check "inner session takes its options from noc-inner.kdl" \
-	sh -c "! tmux capture-pane -p -t '$TMUX_SESSION' | grep -q -F '$INNER'"
-check "the inner session's tab bar says it holds the agents in no team" bar_says no-team
+	sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | sed -n 1p | grep 'Zellij ' | grep -v 'running' >/dev/null"
+check "the inner session's tab bar names the session" bar_says "$INNER"
 
 # ---- 2. keyboard hand-off and the theme relay ----
 HOME_COLOUR="$(bar_colour)"
@@ -280,7 +277,7 @@ sleep 1.5 # let the sidebar read the team
 open_match second
 check "Enter on a team's agent creates the team's session" wait_for 10 alive "$TEAM_SESSION"
 check "the guest pane's client moves to that session" wait_for 10 session_has_client "$TEAM_SESSION"
-check "the session's tab bar says the team" wait_for 5 bar_says auth
+check "the tab bar names the team's session" wait_for 5 bar_says "$TEAM_SESSION"
 check "the agent has a tab in its team's session" \
 	wait_for 10 sh -c "env -u ZELLIJ -u ZELLIJ_SESSION_NAME zellij --session '$TEAM_SESSION' action list-tabs | grep -q 'Second agent'"
 session_is_all_agents() { [ "$(session_tab_count "$TEAM_SESSION")" = 1 ]; }
@@ -291,7 +288,7 @@ check "the keyboard is in the session" host_focus_is "$GUEST"
 
 open_match e2e
 check "an agent in no team opens in the inner session" wait_for 10 session_has_client "$INNER"
-check "whose tab bar says so" wait_for 5 bar_says no-team
+check "whose tab bar names it" wait_for 5 bar_says "$INNER"
 check "the team's session keeps its tab" [ "$(session_tab_count "$TEAM_SESSION")" = 1 ]
 check "the agent that was already open there got no second tab" [ "$(inner_tab_count)" = "$TABS_OPEN" ]
 

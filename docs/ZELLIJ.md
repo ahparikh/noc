@@ -166,8 +166,8 @@ Each team has an inner session of its own, named `noc--<team>`; the
 agents in no team share the inner session `noc`. The guest pane shows one
 session at a time. `Enter` on an agent shows its team's session and opens the
 agent there as a tab (or focuses it where it is already open), and the tab
-bar's first word says which team you are looking at: the team's name, or
-`no-team`. A session is created the first time it is needed, from
+bar says which session you are looking at: `Zellij (noc--<team>)`, or
+`Zellij (noc)`. A session is created the first time it is needed, from
 `layouts/noc-inner.kdl`, and keeps running, with all of its tabs, while
 another session is on show. Moving between sessions does not detach anything.
 `p`, `s` and `w` act in the session on show. When a team's session ends (you
@@ -324,30 +324,24 @@ option in `layouts/noc-inner.kdl`, outside its `layout` block. Any option
 `config.kdl` accepts works there, and it overrides `config.kdl` for the
 inner session alone. Sessions started any other way never read the file.
 
-As shipped it sets three:
+As shipped it sets two:
 
 ```kdl
-session_indicator false            // no "[ N running ]" box, should you use Zellij's own tab bar
+session_indicator false            // no "[ N running ]" box in the tab bar
 
 attention {
     enabled false                  // no pane status markers, inbox or notifications
 }
 
-ui {
-    pane_frames {
-        hide_session_name true     // no session name on the focused pane's frame
-    }
-}
 ```
 
 Delete a line to get Zellij's normal behaviour back. The options are read
 when the inner session is created, so after a change end the pair
 (`zellij kill-session noc`) and start it again. The file's `layout` block is the inner session's first tab; it
-replaces `default_layout` for that session. Its first pane is noc's tab bar,
-which is Zellij's with the team's name in place of the word "Zellij";
-`plugin location="tab-bar"` there gives Zellij's own back. Each team's
-session is created from this same file, so everything in it applies to
-them too.
+replaces `default_layout` for that session. Each team's session is created
+from this same file, so everything in it applies to them too. The session's
+name is left on show, because it is what tells the sessions apart: the tab
+bar starts `Zellij (noc)` or `Zellij (noc--<team>)`.
 
 The host session's own options are at the bottom of `layouts/noc-host.kdl`.
 
@@ -400,9 +394,8 @@ bind "Alt t" { FocusPreviousPane; Write 27 116; }   // ESC t
 
 ## How it works
 
-- **One plugin, four roles.** The same file runs as the sidebar, as the
-  floating details window, as a hidden relay in each inner session, and as
-  each inner session's tab bar.
+- **One plugin, three roles in use.** The same file runs as the sidebar, as the
+  floating details window, and as a hidden relay in each inner session.
 - **The relay tells the sidebar what the inner session is doing.** A plugin
   can only see and act on its own session. The relay sees every change of
   pane, tab and focus in its session as it happens and sends it to the

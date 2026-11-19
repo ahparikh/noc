@@ -49,7 +49,7 @@ the session of one team (`noc--<team>`); the sidebar moves the guest
 pane between them. There is no per-tab sidebar and no generated configuration: everything is in two
 layout files the user copies once. `zellij/config/layouts/noc-host.kdl`
 starts the pair and holds the plugin with all of its settings, and
-`layouts/noc-inner.kdl` holds each inner session's first tab with its tab bar, the Zellij
+`layouts/noc-inner.kdl` holds each inner session's first tab, the Zellij
 options that apply to it only inside the pair, and the theme relay's key
 bindings. Nothing of noc's goes in the user's `config.kdl`. Do not add a second
 deployment. Nothing writes into the user's Zellij configuration except

@@ -8,16 +8,12 @@
 // never read this file, so the options below do not change them.
 
 // The first tab, and the frame of every tab opened later. This is Zellij's
-// default layout with noc's tab bar, which says which team the session
-// belongs to where Zellij's own says "Zellij" ("no-team" for the session of
-// the agents in no team). Change it freely; `plugin location="tab-bar"`
-// gives Zellij's own bar back. The location must be the one loaded in
-// layouts/noc-host.kdl.
+// default layout; change it freely. The tab bar starts with the session's
+// name, which says whose session you are looking at: "Zellij (noc)" for the
+// agents in no team, "Zellij (noc--<team>)" for a team.
 layout {
     pane size=1 borderless=true {
-        plugin location="https://github.com/ahparikh/noc/releases/download/v0.2.1/zellij-noc.wasm" {
-            role "bar"
-        }
+        plugin location="tab-bar"
     }
     pane
     pane size=1 borderless=true {
@@ -30,9 +26,8 @@ layout {
 // the session is created: to apply a change, end the pair (`zellij kill-session noc`) and
 // start it again.
 
-// The "[ N running ]" box of Zellij's own tab bar, with the other sessions
-// and the inbox, should you put that bar back. The sidebar already lists
-// what needs you.
+// The tab bar's "[ N running ]" box with the other sessions and the inbox.
+// The sidebar already lists what needs you.
 session_indicator false
 
 // Zellij's own tracking of what panes need: the markers on frames and tabs,
@@ -40,14 +35,6 @@ session_indicator false
 // this for agents.
 attention {
     enabled false
-}
-
-ui {
-    pane_frames {
-        // The session name leaves the focused pane's frame: the tab bar
-        // already says which team's session this is.
-        hide_session_name true
-    }
 }
 
 // Typed by the sidebar, never by you: switch this session's theme when the

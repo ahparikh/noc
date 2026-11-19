@@ -112,11 +112,6 @@ pub struct State {
     pub details_window: Option<u32>,
     /// Zellij has listed the details window among the panes.
     pub details_window_seen: bool,
-    /// When the panel last started the guest pane's command.
-    pub guest_started: Option<f64>,
-    /// The keyboard was handed to the guest pane the panel started, or the
-    /// user took it there first.
-    pub guest_handed_over: bool,
     pub pipe_buffer: String,
     pub selectable_set: Option<bool>,
     pub grab_until: f64,
@@ -157,8 +152,6 @@ impl Default for State {
             last_cols: None,
             details_window: None,
             details_window_seen: false,
-            guest_started: None,
-            guest_handed_over: false,
             pipe_buffer: String::new(),
             selectable_set: None,
             grab_until: 0.0,
@@ -402,7 +395,6 @@ impl State {
             return false;
         }
         self.follow_details_window();
-        self.start_guest();
         self.sync_panel_selectable();
         self.signal_keyboard_moves();
         if self.panel_has_keyboard() {
@@ -415,9 +407,7 @@ impl State {
         self.tick_armed = true;
         set_timeout(PANEL_TICK_SECONDS);
         self.sync_panel_selectable();
-        self.start_guest();
         let mut redraw = self.permissions_granted && self.read_shown_session();
-        self.hand_over_keyboard();
         redraw |= self.list_sessions_if_due();
         redraw |= self.watch_guest();
         self.watch_registry();

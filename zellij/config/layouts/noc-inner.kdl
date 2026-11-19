@@ -26,6 +26,11 @@ layout {
 // the session is created: to apply a change, end the pair (`zellij kill-session noc`) and
 // start it again.
 
+// The session starts locked: every key goes to the program in the pane, an
+// agent as a rule, and none is taken by Zellij until you unlock it (Ctrl g
+// by default). Delete the line to start in Zellij's normal mode.
+default_mode "locked"
+
 // The tab bar's "[ N running ]" box with the other sessions and the inbox.
 // The sidebar already lists what needs you.
 session_indicator false

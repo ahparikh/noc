@@ -368,8 +368,11 @@ host_has_clients() { [ "$(host_clients)" = "$1" ]; }
 start_again() {
 	keys "env -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID NOC_DEV_NAME=$INNER '$ROOT/dev.sh' --fake start" Enter
 }
-# Detaching inside the inner session (its own Ctrl-o d) leaves both: the
-# sidebar detaches the host, and the guest pane attaches again.
+# The inner session starts locked (noc-inner.kdl), so its keys are Ctrl-g
+# away. Detaching inside it (Ctrl-g, then its own Ctrl-o d) leaves both:
+# the sidebar detaches the host, and the guest pane attaches again.
+keys C-g
+sleep 0.5
 keys C-o
 sleep 0.5
 keys d

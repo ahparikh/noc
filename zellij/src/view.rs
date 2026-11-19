@@ -1084,11 +1084,13 @@ fn agent_detail_lines(
         .as_ref()
         .map(|r| r.text.trim().to_string())
         .unwrap_or_default();
-    if !request.is_empty() {
+    // The request and the latest message are for the details window: with
+    // no preview lines to give them, as in the panel, they are left out.
+    if !request.is_empty() && preview_lines > 0 {
         append_preview(&mut lines, theme, "ask", &request, cols, preview_lines);
     }
     let summary = agent.summary.trim();
-    if !summary.is_empty() && summary != request {
+    if !summary.is_empty() && summary != request && preview_lines > 0 {
         append_preview(&mut lines, theme, "latest", summary, cols, preview_lines);
     }
     lines.push(label_line(
@@ -1251,6 +1253,8 @@ fn session_lines(app: &ZellijNoc, theme: &Theme, cols: usize) -> Vec<Line> {
                 .with(&tail, theme.muted_style())
         });
     }
+    // An empty row sets the section apart from the next one.
+    lines.push(Line::empty());
     lines
 }
 
@@ -1288,10 +1292,6 @@ fn session_detail_lines(app: &ZellijNoc, theme: &Theme, name: &str, on_show: boo
     lines
 }
 
-/// The most wrapped lines of an agent's request or latest message in the
-/// Details section, which scrolls.
-const DETAIL_PREVIEW_LINES: usize = 12;
-
 /// What the Details section is about, to tell when it changes: the
 /// session, or the agent, or the row of the list.
 fn detail_subject(app: &ZellijNoc) -> String {
@@ -1312,10 +1312,11 @@ fn inline_detail_lines(app: &ZellijNoc, theme: &Theme, cols: usize) -> Vec<Line>
         lines.extend(session_detail_lines(app, theme, &row.name, row.on_show));
         return lines;
     }
-    let detail_height = DETAIL_PREVIEW_LINES;
     match app.selected_item() {
         Some(ListItem::Agent(i)) => {
-            let preview = detail_height;
+            // No request or latest message here: they are long, and the
+            // details window has them.
+            let preview = 0;
             lines.extend(agent_detail_lines(
                 &app.agents[i],
                 theme,
@@ -1722,18 +1723,18 @@ mod tests {
         assert_eq!(text[39], format!("{FOOTER}      \u{25cf}"));
         let details = &text[27..];
         let wanted = [
-            format!("\u{25be} Details  1-11/15 {}", "\u{2500}".repeat(19)),
+            format!("\u{25be} Details {}", "\u{2500}".repeat(28)),
             "Auth migration".to_string(),
             "!  needs approval \u{b7} 2m ago".to_string(),
             "repo      app \u{b7} main".to_string(),
             "cwd       /code/app/svc".to_string(),
-            "ask".to_string(),
-            "  Migrate the auth service to the new".to_string(),
-            "  token format and update all callers".to_string(),
-            "latest".to_string(),
-            "  Waiting for approval to delete the".to_string(),
-            "  build directory.".to_string(),
             "provider  claude \u{b7} background".to_string(),
+            "native    auth".to_string(),
+            "id        3cfff231".to_string(),
+            "model     opus \u{b7} high".to_string(),
+            "pane      work/7 \u{b7} observed".to_string(),
+            String::new(),
+            String::new(),
             format!("{FOOTER}      \u{25cf}"),
         ];
         let got: Vec<&str> = details.iter().map(|l| l.trim_end()).collect();
@@ -1963,7 +1964,7 @@ mod tests {
         );
         assert_eq!(text[list + 3].trim_end(), "   no-team  1 working");
         // The section ends with its count, as the list does.
-        assert_eq!(details, list + 4);
+        assert_eq!(details, list + 5);
         assert_eq!(text[details], rule("\u{25be} Details"));
         assert_eq!(text[details + 1].trim_end(), "Blocked one");
         assert_eq!(keys_of(&text[39]), FOOTER);
@@ -1989,7 +1990,7 @@ mod tests {
         let list = at(&text, "Sessions");
         assert_eq!(text[list], counted("\u{25be} Sessions", "1"));
         assert_eq!(text[list + 1].trim_end(), " \u{2192} no-team  1 working");
-        assert!(text[list + 2].contains("Details"));
+        assert!(text[list + 3].contains("Details"));
         // A short pane has no room for the section.
         let text = plain(&panel(&mut app, &Theme::default(), 14, 38));
         assert!(!text.iter().any(|l| l.contains("Sessions")));
@@ -2003,7 +2004,7 @@ mod tests {
         assert_eq!(shown[0], "t4  no agents");
         assert_eq!(shown[3], "\u{2192} t7  no agents");
         assert_eq!(text[list], counted("\u{25be} Sessions", "9"));
-        assert!(text[list + 6].contains("Details"));
+        assert!(text[list + 7].contains("Details"));
     }
 
     #[test]
@@ -2112,28 +2113,28 @@ mod tests {
         let mut app = app_with(DEMO);
         let theme = Theme::default();
         let details = |app: &mut ZellijNoc, cols: usize| -> Vec<String> {
-            let text = plain(&panel(app, &theme, 40, cols));
+            let text = plain(&panel(app, &theme, 20, cols));
             let at = text.iter().position(|l| l.contains("Details")).unwrap();
             text[at..text.len() - 1]
                 .iter()
                 .map(|l| l.trim_end().to_string())
                 .collect()
         };
-        // Fifteen lines in eleven rows: the title says which are in view.
+        // Nine lines in five rows: the title says which are in view.
         let shown = details(&mut app, 38);
-        assert_eq!(shown.len(), 12);
-        assert!(shown[0].starts_with("\u{25be} Details  1-11/15 \u{2500}"));
+        assert_eq!(shown.len(), 6);
+        assert!(shown[0].starts_with("\u{25be} Details  1-5/9 \u{2500}"));
         assert_eq!(shown[1], "Auth migration");
-        assert_eq!((app.detail_max_scroll, app.detail_rows), (4, 11));
+        assert_eq!((app.detail_max_scroll, app.detail_rows), (4, 5));
         app.scroll_details(2);
         let shown = details(&mut app, 38);
-        assert!(shown[0].starts_with("\u{25be} Details  3-13/15 "));
+        assert!(shown[0].starts_with("\u{25be} Details  3-7/9 "));
         assert_eq!(shown[1], "repo      app \u{b7} main");
         // No further than the last line.
         app.scroll_details(isize::MAX);
         let shown = details(&mut app, 38);
-        assert!(shown[0].starts_with("\u{25be} Details  5-15/15 "));
-        assert_eq!(shown[11], "pane      work/7 \u{b7} observed");
+        assert!(shown[0].starts_with("\u{25be} Details  5-9/9 "));
+        assert_eq!(shown[5], "pane      work/7 \u{b7} observed");
         app.scroll_details(isize::MIN);
         assert_eq!(app.detail_scroll, 0);
         // Sideways, in a pane narrower than its longest line, as far as

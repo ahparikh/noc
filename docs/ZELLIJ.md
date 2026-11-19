@@ -159,7 +159,8 @@ team's lead comes first, then the other agents in the
 usual order, with the Quiet ones behind one `Quiet` row. `Enter` on a
 heading folds the team; a folded heading says what in it needs you
 (`billing  4  1 blocked · 2 working`). An agent is one row of the list; its
-folder, team, request and provider are in the details (`D`). A search shows
+folder, team and provider are in the details (`D`), and its request and
+latest message in the details window (`d`). A search shows
 a flat list in either grouping.
 
 Each team has an inner session of its own, named `noc--<team>`; the

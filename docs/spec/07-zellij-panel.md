@@ -875,7 +875,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   footer), and only when the list is not empty: the Sessions
   section takes its rows first, when there are sessions to list and
   `available >= 14`: its title row, and while it is open one row a session,
-  at most 5. Of the `shared` rows left, the Details section takes
+  at most 5, and an empty row. Of the `shared` rows left, the Details section takes
   `shared / 3` while it is open and 1 while it is closed, when
   `shared >= 12`, else none; the list takes the rest. The split does not
   depend on the selection, so neither the status line nor the sections
@@ -1083,8 +1083,8 @@ Public API fields that are not modelled are silently ignored, e.g.
 - **Behavior:** The section is its title row (ZR-033) and, while it is open
   and has at least 2 rows, the details of what is selected in the list that
   has the keys, or had them before Details did (ZK-035): an agent (the
-  agent detail lines of ZR-024, with up to 12 wrapped lines for each of
-  `ask` and `latest`, and short identifiers), a row of the list that is
+  agent detail lines of ZR-024, without `ask` and `latest`, which only the
+  details window shows (ZR-028), and with short identifiers), a row of the list that is
   not an agent (ZR-023), or a session (ZR-039). With nothing selected it is
   the title row and empty lines. The section shows as many of the lines as
   it has rows under its title, starting `detail_scroll` lines down, and
@@ -1128,8 +1128,8 @@ Public API fields that are not modelled are silently ignored, e.g.
   | 4 | `worktree  {worktree_name}` | workspace is a linked worktree with a name (ZM-016) |
   | 5 | `cwd       {workspace.path}` (trimmed) | `path.trim()` non-empty |
   | 6 | `team      {team}`, with ` · lead` for the lead | the agent is in a team (ZR-036) |
-  | 7 | `ask` + up to P wrapped lines | ZR-028 |
-  | 8 | `latest` + up to P wrapped lines | ZR-028 |
+  | 7 | `ask` + up to P wrapped lines | details window only; ZR-028 |
+  | 8 | `latest` + up to P wrapped lines | details window only; ZR-028 |
   | 9 | `provider  {provider_detail_label}` | always |
   | 10 | `native    {name}` | `user_name` and `name` both non-empty (untrimmed) and different; `name` printed as is |
   | 11 | ids | ZR-025 |
@@ -1173,7 +1173,9 @@ Public API fields that are not modelled are silently ignored, e.g.
 - **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds; `zellij/src/view.rs` details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel
 
 #### ZR-028 Request and reply previews
-- **Behavior:** `ask` MUST be shown when `initial_request.text.trim()` is
+- **Behavior:** In the details window only (the panel's Details section
+  leaves both out: they are long, and the section is for the short facts),
+  `ask` MUST be shown when `initial_request.text.trim()` is
   non-empty; `latest` when `summary.trim()` is non-empty and differs from the
   trimmed request. Each is a label line (info, bold) followed by at most P
   lines of `"  " + line` (muted, dim) from `wrap(value, cols - 2)`. Excess
@@ -1187,7 +1189,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   name, then the inner session itself. It is drawn when there is a session
   to list, the list is not empty, help is off and `available >= 14`
   (ZR-008). It is its title row `Sessions`, which ends with the number of sessions
-  (ZR-033), and while it is open one row a session, at most 5. The rows
+  (ZR-033), and while it is open one row a session, at most 5, and an empty row under them. The rows
   are windowed starting at
   `min(selected - 2 (saturating), sessions - 5 (saturating))` so the
   selected one stays in view. A row is ` → ` (U+2192, accent colour, bold) for the session on show, whose
@@ -1949,6 +1951,7 @@ they were before the section scrolled:
 │▾ Sessions ───────────────────────── 2│  muted
 │ → auth     2 working                 │  → the session on show
 │   no-team  1 working                 │
+│                                      │
 │▾ Details ────────────────────────────│  muted
 │Auth lead                             │
 │●  working · 0m ago                   │

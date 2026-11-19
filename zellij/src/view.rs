@@ -1197,6 +1197,8 @@ fn session_lines(app: &ZellijNoc, theme: &Theme, cols: usize) -> Vec<Line> {
                 .with(&tail, theme.muted_style())
         });
     }
+    // An empty row sets the count apart from the sessions.
+    lines.push(Line::empty());
     lines.push(Line::plain(
         &format!("{count} session{}", plural(count)),
         Style::fg(theme.accent).bold(),
@@ -1887,8 +1889,9 @@ mod tests {
         );
         assert_eq!(text[list + 3].trim_end(), "   no-team  1 working");
         // The section ends with its count, as the list does.
-        assert_eq!(text[list + 4].trim_end(), "3 sessions");
-        assert_eq!(details, list + 5);
+        assert_eq!(text[list + 4].trim_end(), "");
+        assert_eq!(text[list + 5].trim_end(), "3 sessions");
+        assert_eq!(details, list + 6);
         assert_eq!(text[details], rule("\u{25be} Details"));
         assert_eq!(text[details + 1].trim_end(), "Blocked one");
         assert_eq!(text[39].trim_end(), FOOTER);
@@ -1917,7 +1920,7 @@ mod tests {
         let list = at(&text, "Sessions");
         assert_eq!(text[list], rule("\u{25be} Sessions"));
         assert_eq!(text[list + 1].trim_end(), " \u{25cf} no-team  1 working");
-        assert_eq!(text[list + 2].trim_end(), "1 session");
+        assert_eq!(text[list + 3].trim_end(), "1 session");
         // A short pane has no room for the section.
         let text = plain(&panel(&mut app, &Theme::default(), 14, 38));
         assert!(!text.iter().any(|l| l.contains("Sessions")));
@@ -1930,8 +1933,8 @@ mod tests {
         let shown: Vec<&str> = text[list + 1..list + 6].iter().map(|l| l.trim()).collect();
         assert_eq!(shown[0], "t4  no agents");
         assert_eq!(shown[3], "\u{25cf} t7  no agents");
-        assert_eq!(text[list + 6].trim_end(), "9 sessions");
-        assert!(text[list + 7].contains("Details"));
+        assert_eq!(text[list + 7].trim_end(), "9 sessions");
+        assert!(text[list + 8].contains("Details"));
     }
 
     #[test]

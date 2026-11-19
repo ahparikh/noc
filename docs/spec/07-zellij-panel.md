@@ -869,7 +869,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   line and the footer), and only when the list is not empty: the Sessions
   section takes its rows first, when there are sessions to list and
   `available >= 14`: its title row, and while it is open one row a session,
-  at most 5, and its count line. Of the `shared` rows left, the Details section takes
+  at most 5, an empty row and its count line. Of the `shared` rows left, the Details section takes
   `shared / 3` while it is open and 1 while it is closed, when
   `shared >= 12`, else none; the list takes the rest. The split does not
   depend on the selection, so neither the status line nor the sections
@@ -1181,7 +1181,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   name, then the inner session itself. It is drawn when there is a session
   to list, the list is not empty, help is off and `available >= 14`
   (ZR-008). Open, it is its title row `Sessions` (ZR-033), one row a session, at
-  most 5, and a last line `{N} session{s}` (accent, bold), the count under
+  most 5, an empty row, and a last line `{N} session{s}` (accent, bold), the count under
   its rows as the agents' count is under the list; closed, it is the title
   row `Sessions  {N}` alone. The rows are windowed starting at
   `min(selected - 2 (saturating), sessions - 5 (saturating))` so the
@@ -1942,6 +1942,7 @@ as they were before the section scrolled:
 │▾ Sessions ───────────────────────────│  muted
 │ ● auth     2 working                 │  ● the session on show
 │   no-team  1 working                 │
+│                                      │
 │2 sessions                            │  accent, bold
 │▾ Details ────────────────────────────│  muted
 │Auth lead                             │

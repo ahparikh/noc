@@ -331,7 +331,7 @@ check "and the team's session is made again when its agent is opened" wait_for 1
 # The Sessions section lists what is running, moves between them and ends
 # a team's.
 check "the sidebar lists the running sessions, the one on show marked" \
-	wait_for 5 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -A 3 '▾ Sessions' | grep -A 2 '● auth' | grep -q '2 sessions'"
+	wait_for 5 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -A 4 '▾ Sessions' | grep -A 3 '● auth' | grep -q '2 sessions'"
 keys M-m
 wait_for 5 host_focus_is "$SIDEBAR"
 keys Tab

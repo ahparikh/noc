@@ -143,18 +143,24 @@ start_pair() {
 
 # ---- start ----
 "$ROOT/dev.sh" --fake render >/dev/null || exit 2
-start_pair
-if ! wait_for 30 alive "$HOST" || ! wait_for 30 alive "$INNER"; then
-	echo "nested.sh: the pair did not start; last screen:" >&2
-	screen | tail -n 15 >&2
-	exit 1
-fi
-sleep 2
-dismiss_welcome
 
 # The prompt wraps in the narrow sidebar, so look for its last line.
 prompting() { screen | grep -q -F 'Allow? (y/n)'; }
 not_prompting() { ! prompting; }
+
+# The host session comes first: the guest pane starts the inner session
+# only once the sidebar, with its permissions, says so.
+start_host() {
+	start_pair
+	if ! wait_for 30 alive "$HOST"; then
+		echo "nested.sh: the host session did not start; last screen:" >&2
+		screen | tail -n 15 >&2
+		exit 1
+	fi
+	sleep 2
+	dismiss_welcome
+}
+start_host
 
 # Answer the prompt as a person would: move to the sidebar and press y.
 # Zellij records the grant itself. The pair is then started again, so the
@@ -165,14 +171,7 @@ if prompting && [ "${NOC_E2E_GRANT:-}" = 1 ]; then
 	sleep 0.5
 	keys y
 	wait_for 10 not_prompting
-	start_pair
-	if ! wait_for 30 alive "$HOST" || ! wait_for 30 alive "$INNER"; then
-		echo "nested.sh: the pair did not start again; last screen:" >&2
-		screen | tail -n 15 >&2
-		exit 1
-	fi
-	sleep 2
-	dismiss_welcome
+	start_host
 fi
 
 if prompting; then
@@ -181,6 +180,14 @@ if prompting; then
 	echo "or set NOC_E2E_GRANT=1 to have this script answer it." >&2
 	exit 1
 fi
+
+if ! wait_for 30 alive "$INNER"; then
+	echo "nested.sh: the sidebar did not start the inner session; last screen:" >&2
+	screen | tail -n 15 >&2
+	exit 1
+fi
+sleep 2
+dismiss_welcome
 
 SIDEBAR="P$(panes "$HOST" | jq -r 'map(select(.is_plugin and (.is_floating | not) and (.is_suppressed | not) and ((.plugin_url // "") | test("zellij-noc")))) | first | .id')"
 GUEST="T$(panes "$HOST" | jq -r 'map(select((.is_plugin | not) and (.is_floating | not))) | first | .id')"

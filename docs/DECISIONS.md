@@ -951,6 +951,30 @@ waiting (a suspended pane) left the inner session at 80 by 24.
 A bar of noc's own needs a way to load that is not a race: a plugin
 fetched to a file by the installer, or a separate small plugin.
 
+### D-084: the host session starts the inner session, and every session comes up one way
+
+The guest pane's loop waits for a line before it starts the inner session,
+and the sidebar types that line once it has its permissions. From then on
+the inner session is waited for exactly as a team's session is when the
+client is moved to it: until Zellij says a client is in it, a short
+settling time if it is new, then its relay is asked until it answers.
+
+**Why:** two things went wrong when both sessions started at once. A
+plugin in the inner layout was fetched by both and the copy Zellij keeps
+was spoilt (D-081). And the sidebar's first request reached the inner
+session in its first half second, when Zellij drops a pipe and never ends
+the command that carried it, so on a slow start the sidebar saw nothing of
+the inner session for seconds. Starting the inner session from the sidebar
+puts the two in order, and tells the sidebar when the inner session
+starts, so the waiting it already did for a team's session serves for the
+first one too. A typed line needs no file, no timeout and no suspended
+pane (which Zellij gives no size), and Enter does the same by hand.
+**Consequence:** the inner session does not start until the permission
+prompt is answered; the guest pane says so after two seconds. The sidebar
+types the line only while it sees the loop waiting, so a host layout
+without the wait still works and nothing is typed into a running session.
+The inner layout may load a plugin again without the clash of D-081.
+
 ### D-042: names are two-way and the most recent rename wins
 
 `noc rename` stores `user_name` and pushes the name to the provider where a

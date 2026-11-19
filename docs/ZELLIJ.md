@@ -460,6 +460,7 @@ bind "Alt t" { FocusPreviousPane; Write 27 116; }   // ESC t
 | Sidebar shows a permission prompt and nothing else | Move the keyboard to it (`Alt m`) and answer `y`. |
 | `noc server is not running` | Run `noc server --bg`. The sidebar reconnects by itself. |
 | A red dot; the status box says `disconnected · …` naming an executable | Zellij cannot find `noc`. Set `noc_bin` to its absolute path. |
+| The guest pane says `Waiting for the noc sidebar` | The sidebar starts the inner session once it has its permissions. Answer `y` in the sidebar, or press Enter in the guest pane to start without it. |
 | A yellow dot; the status box says `inner session "noc" is not running` | The guest pane's loop is not attached. Check that `guest_session` matches `inner=` in the layout. |
 | The inner session's status bar looks unfocused | Press `Alt m` twice. The sidebar tells the inner client it has the keyboard each time it comes back. |
 | Unlocked (`Ctrl g`), nothing you type reaches the pane | `layouts/noc-inner.kdl` still has `default_mode "locked"`, as 0.3.0 shipped it. Delete the line, set `inner_mode "locked"` in `noc-host.kdl`, and start the pair again (`zellij kill-session noc`). |

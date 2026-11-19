@@ -94,8 +94,12 @@ layout {
         // or because the team's session it was showing ended. It ends the
         // host session when the inner session has ended. The sidebar moves
         // this client between the inner session and the teams' sessions.
+        // It starts nothing until the sidebar says so, by typing a line
+        // here once it has its permissions: the host session comes up
+        // first and the inner session after it. If the sidebar cannot run,
+        // Enter in this pane starts the inner session without it.
         pane borderless=true focus=true command="sh" {
-            args "-c" "inner=noc; host=noc-host; unset ZELLIJ ZELLIJ_SESSION_NAME ZELLIJ_PANE_ID; while :; do zellij attach --create \"$inner\" options --default-layout noc-inner; sleep 0.5; if zellij list-sessions --no-formatting 2>/dev/null | grep -v EXITED | grep -q \"^$inner \"; then sleep 1; else zellij kill-session \"$host\"; exit 0; fi; done"
+            args "-c" "inner=noc; host=noc-host; unset ZELLIJ ZELLIJ_SESSION_NAME ZELLIJ_PANE_ID; { sleep 2; echo 'Waiting for the noc sidebar. If it asks for its permissions, answer y there. Enter here starts without it.'; } & read -r _; kill $! 2>/dev/null; while :; do zellij attach --create \"$inner\" options --default-layout noc-inner; sleep 0.5; if zellij list-sessions --no-formatting 2>/dev/null | grep -v EXITED | grep -q \"^$inner \"; then sleep 1; else zellij kill-session \"$host\"; exit 0; fi; done"
         }
     }
 }

@@ -410,6 +410,7 @@ impl State {
         set_timeout(PANEL_TICK_SECONDS);
         self.sync_panel_selectable();
         let mut redraw = self.permissions_granted && self.read_shown_session();
+        self.start_guest();
         redraw |= self.list_sessions_if_due();
         redraw |= self.watch_guest();
         self.watch_registry();

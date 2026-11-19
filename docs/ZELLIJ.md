@@ -243,8 +243,8 @@ pair and start it again.
 
 ### The status line
 
-The line under the list shows how many agents there are and, at its right
-edge, a dot: green when connected, yellow when something needs a look (a
+The first row of the sidebar is the title of the Agents section. It ends
+with how many agents there are and a dot: green when connected, yellow when something needs a look (a
 setting that cannot work, the inner session not running, still connecting),
 red when the registry cannot be reached. An `↑` beside the dot means a
 newer plugin release exists.

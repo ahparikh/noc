@@ -570,29 +570,41 @@ fn status_line(app: &ZellijNoc, theme: &Theme, cols: usize) -> Line {
     if let Some(notice) = &app.notice {
         return Line::plain(notice, Style::fg(theme.info));
     }
+    // The title of the Agents section, a rule, and at the end of the row
+    // the count, the mark of a newer release and the status dot.
     let count = shown_agent_count(app);
-    let mut left = if app.flat {
+    let mut text = if app.flat {
         format!("{count} match{}", if count == 1 { "" } else { "es" })
     } else {
-        format!("{count} agent{}", plural(count))
+        count.to_string()
     };
     if let Some(query) = app.search_text() {
-        left.push_str(&format!("  / {query}"));
+        text.push_str(&format!("  / {query}"));
     }
     let arrow = if app.update.is_some() {
         "\u{2191} "
     } else {
         ""
     };
-    let right = arrow.width() + 1;
-    // Keep the dot: the count is cut before the dot is dropped.
-    let left = truncate(&left, cols.saturating_sub(right + 1));
-    let gap = cols.saturating_sub(left.width() + right);
-    let mut line = Line::plain(&left, Style::fg(theme.accent).bold());
-    if cols < right + 1 {
+    let marks = arrow.width() + 1;
+    // Keep the dot: the count is cut before the dot is dropped, and the
+    // title and its rule give way before the count does.
+    let text = truncate(&text, cols.saturating_sub(marks + 1));
+    let tail = 1 + text.width() + 1 + marks;
+    let focused = app.focus == Focus::Agents;
+    let mut line = if cols >= AGENTS_TITLE.width() + 3 + tail {
+        section_heading(theme, None, AGENTS_TITLE, focused, cols - tail)
+    } else {
+        Line::empty()
+    };
+    let gap = cols.saturating_sub(line.width() + text.width() + 1 + marks);
+    line = line
+        .with(&" ".repeat(gap), Style::default())
+        .with(&text, Style::fg(theme.accent).bold());
+    if cols < marks + 1 {
         return line;
     }
-    line = line.with(&" ".repeat(gap), Style::default());
+    line = line.with(" ", Style::default());
     if !arrow.is_empty() {
         line = line.with(arrow, Style::fg(theme.attention).bold());
     }
@@ -1120,6 +1132,23 @@ fn section_heading(
     Line::plain(&title, style).with(&format!(" {}", "\u{2500}".repeat(rest)), rule)
 }
 
+/// A title row that ends with a count, after its rule.
+fn counted_heading(
+    theme: &Theme,
+    open: Option<bool>,
+    text: &str,
+    focused: bool,
+    cols: usize,
+    count: usize,
+) -> Line {
+    let count = format!(" {count}");
+    if cols < text.width() + 5 + count.width() {
+        return section_heading(theme, open, text, focused, cols);
+    }
+    section_heading(theme, open, text, focused, cols - count.width())
+        .with(&count, Style::fg(theme.accent).bold())
+}
+
 /// What a session row says after the session's name: what its agents need,
 /// `quiet` when none needs anything, `no agents` when it has none.
 fn session_summary(app: &ZellijNoc, name: &str) -> String {
@@ -1141,20 +1170,13 @@ const SESSION_LABEL_WIDTH: usize = 16;
 /// `SESSION_ROWS` rows, around the selected one.
 fn session_lines(app: &ZellijNoc, theme: &Theme, cols: usize) -> Vec<Line> {
     let focused = app.list_focus() == Focus::Sessions;
-    // Open, the count is the section's last line, as the agents' count is
-    // the list's; closed, the title carries it.
-    let count = app.sessions.len();
-    let title = if app.show_sessions {
-        SESSIONS_TITLE.to_string()
-    } else {
-        format!("{SESSIONS_TITLE}  {count}")
-    };
-    let mut lines = vec![section_heading(
+    let mut lines = vec![counted_heading(
         theme,
         Some(app.show_sessions),
-        &title,
+        SESSIONS_TITLE,
         app.focus == Focus::Sessions,
         cols,
+        app.sessions.len(),
     )];
     if !app.show_sessions {
         return lines;
@@ -1197,12 +1219,6 @@ fn session_lines(app: &ZellijNoc, theme: &Theme, cols: usize) -> Vec<Line> {
                 .with(&tail, theme.muted_style())
         });
     }
-    // An empty row sets the count apart from the sessions.
-    lines.push(Line::empty());
-    lines.push(Line::plain(
-        &format!("{count} session{}", plural(count)),
-        Style::fg(theme.accent).bold(),
-    ));
     lines
 }
 
@@ -1405,9 +1421,7 @@ pub fn render(app: &mut ZellijNoc, theme: &Theme, rows: usize, cols: usize) -> V
     let status = status_line(app, theme, cols);
     let footer = rows > 2;
     let body_rows = rows - 1 - usize::from(footer);
-    // The list is a section with a title; help is not.
-    let titled = !app.show_help && body_rows >= 3;
-    let inner_rows = body_rows - usize::from(titled);
+    let inner_rows = body_rows;
     let (mut body, mut details) = if app.show_help {
         let mut lines = help_lines(theme);
         lines.extend(version_help_lines(app.update.as_deref(), theme));
@@ -1441,26 +1455,18 @@ pub fn render(app: &mut ZellijNoc, theme: &Theme, rows: usize, cols: usize) -> V
         }
         (window, below)
     };
-    if titled {
-        body.insert(
-            0,
-            section_heading(theme, None, AGENTS_TITLE, app.focus == Focus::Agents, cols),
-        );
-    }
     body.resize(body_rows - details.len(), Line::empty());
     if app.show_info {
-        // The box covers the end of the body, directly above the status line.
-        let mut box_lines = status_box_lines(app, theme, cols);
-        let keep = box_lines.len().min(body.len());
-        let from = body.len() - keep;
-        let skip = box_lines.len() - keep;
-        for (slot, line) in body[from..].iter_mut().zip(box_lines.drain(skip..)) {
+        // The box covers the start of the body, directly under the status
+        // line, which is the first row.
+        let box_lines = status_box_lines(app, theme, cols);
+        for (slot, line) in body.iter_mut().zip(box_lines) {
             *slot = line;
         }
     }
-    app.status_row = Some(body.len());
-    let mut lines = body;
-    lines.push(status);
+    app.status_row = Some(0);
+    let mut lines = vec![status];
+    lines.append(&mut body);
     lines.append(&mut details);
     if footer {
         lines.push(footer_line(theme, FOOTER));
@@ -1520,22 +1526,25 @@ mod tests {
         out
     }
 
-    /// The panel below the title of its first section: the tests of the
-    /// list, the status line and the details count rows from the first row
-    /// of the list. `panel` is the whole of it.
+    /// The panel with its first row, the status line that is the title of
+    /// the Agents section, moved to under the list: above the title of the
+    /// next section, or the footer. So the tests of the list count its rows
+    /// from 0, and the status line is where `status_at` finds it. `panel`
+    /// is the panel as it is drawn.
     fn render(app: &mut ZellijNoc, theme: &Theme, rows: usize, cols: usize) -> Vec<String> {
-        let mut lines = panel(app, theme, rows + 1, cols);
-        if lines
-            .first()
-            .is_some_and(|l| strip(l).starts_with(AGENTS_TITLE))
-        {
-            lines.remove(0);
-            app.last_render_rows = rows;
-            app.status_row = app.status_row.map(|row| row - 1);
-            lines
-        } else {
-            panel(app, theme, rows, cols)
+        let mut lines = panel(app, theme, rows, cols);
+        if lines.len() < 2 {
+            return lines;
         }
+        let status = lines.remove(0);
+        let text = plain(&lines);
+        let at = text
+            .iter()
+            .position(|l| l.starts_with('\u{25be}') || l.starts_with('\u{25b8}'))
+            .or_else(|| text.iter().rposition(|l| l.starts_with("[?]")))
+            .unwrap_or(lines.len());
+        lines.insert(at, status);
+        lines
     }
 
     fn panel(app: &mut ZellijNoc, theme: &Theme, rows: usize, cols: usize) -> Vec<String> {
@@ -1554,7 +1563,7 @@ mod tests {
             .position(|l| l.starts_with('\u{25be}') || l.starts_with('\u{25b8}'));
         match rule {
             Some(rule) => rule - 1,
-            None if text.last().is_some_and(|l| l.trim_end() == FOOTER) => text.len() - 2,
+            None if text.last().is_some_and(|l| l.starts_with("[?]")) => text.len() - 2,
             None => text.len() - 1,
         }
     }
@@ -1564,13 +1573,24 @@ mod tests {
         text[status_at(text)].trim_end()
     }
 
-    /// The count on the status line, without the arrow and the dot.
-    fn header(text: &[String]) -> &str {
-        status(text)
+    /// What the status line counts, in words: the number at the end of the
+    /// title row as `N agents`, or the matches of a search as they are
+    /// written; a prompt or a notice as it is.
+    fn header(text: &[String]) -> String {
+        let status = status(text)
             .trim_end_matches('\u{25cf}')
             .trim_end()
             .trim_end_matches('\u{2191}')
-            .trim_end()
+            .trim_end();
+        let count = match status.rsplit_once('\u{2500}') {
+            Some((_, count)) => count.trim(),
+            None => status.trim(),
+        };
+        if !count.is_empty() && count.chars().all(|c| c.is_ascii_digit()) {
+            format!("{count} agent{}", if count == "1" { "" } else { "s" })
+        } else {
+            count.to_string()
+        }
     }
 
     /// A row of the list without the age at its right edge.
@@ -1650,9 +1670,13 @@ mod tests {
         assert_eq!(text[5], format!(" \u{25c6} Docs pass{}3h", " ".repeat(24)));
         let rest = text[10..26].iter().all(|l| l.trim().is_empty());
         assert!(rest, "list area is padded");
-        // The status line sits between the list and the details: the count
-        // on the left, the dot at the right edge.
-        assert_eq!(text[26], format!("6 agents{}\u{25cf}", " ".repeat(29)));
+        // The status line is the title row of the Agents section (the first
+        // row of the panel; `render` shows it under the list): the title, a
+        // rule, then the count and the dot at the right edge.
+        assert_eq!(
+            text[26],
+            format!("Agents {} 6 \u{25cf}", "\u{2500}".repeat(27))
+        );
         let details = &text[27..];
         let wanted = [
             format!("\u{25be} Details  1-11/15 {}", "\u{2500}".repeat(19)),
@@ -1864,7 +1888,15 @@ mod tests {
     fn the_panel_is_three_titled_sections() {
         let mut app = app_with(TEAMS);
         let rule = |title: &str| format!("{title} {}", "\u{2500}".repeat(37 - title.width()));
-        // Agents, the status line, Sessions, Details, the footer.
+        // A title row that ends with a count, or with the count and the dot.
+        let counted = |title: &str, end: &str| {
+            format!(
+                "{title} {} {end}",
+                "\u{2500}".repeat(36 - title.width() - end.width())
+            )
+        };
+        // Agents with its count and the status dot, Sessions with its
+        // count, Details, the footer.
         sessions(
             &mut app,
             &["noc", "noc--billing", "noc--auth"],
@@ -1875,11 +1907,10 @@ mod tests {
         assert!(text.iter().all(|l| l.width() == 38), "{text:?}");
         let at =
             |text: &[String], title: &str| text.iter().position(|l| l.contains(title)).unwrap();
-        assert_eq!(text[0], rule("Agents"));
+        assert_eq!(text[0], counted("Agents", "6 \u{25cf}"));
         assert_eq!(text[1].trim_end(), "Blocked  1");
         let (list, details) = (at(&text, "Sessions"), at(&text, "Details"));
-        assert!(text[list - 1].starts_with("6 agents"), "the status line");
-        assert_eq!(text[list], rule("\u{25be} Sessions"));
+        assert_eq!(text[list], counted("\u{25be} Sessions", "3"));
         // The teams' sessions by name, then the inner session; the one on
         // show is marked, and each says what its team's agents need.
         assert_eq!(text[list + 1].trim_end(), "   auth     no agents");
@@ -1889,9 +1920,7 @@ mod tests {
         );
         assert_eq!(text[list + 3].trim_end(), "   no-team  1 working");
         // The section ends with its count, as the list does.
-        assert_eq!(text[list + 4].trim_end(), "");
-        assert_eq!(text[list + 5].trim_end(), "3 sessions");
-        assert_eq!(details, list + 6);
+        assert_eq!(details, list + 4);
         assert_eq!(text[details], rule("\u{25be} Details"));
         assert_eq!(text[details + 1].trim_end(), "Blocked one");
         assert_eq!(text[39].trim_end(), FOOTER);
@@ -1901,15 +1930,12 @@ mod tests {
         app.toggle_sessions();
         let text = plain(&panel(&mut app, &Theme::default(), 40, 38));
         let list = at(&text, "Sessions");
-        assert_eq!(text[list], rule("\u{25b8} Sessions  3"));
+        assert_eq!(text[list], counted("\u{25b8} Sessions", "3"));
         assert_eq!(text[list + 1], rule("\u{25be} Details"));
         app.toggle_details();
         let text = plain(&panel(&mut app, &Theme::default(), 40, 38));
-        assert_eq!(
-            text[36].trim_end(),
-            "6 agents                             \u{25cf}"
-        );
-        assert_eq!(text[37], rule("\u{25b8} Sessions  3"));
+        assert_eq!(text[0], counted("Agents", "6 \u{25cf}"));
+        assert_eq!(text[37], counted("\u{25b8} Sessions", "3"));
         assert_eq!(text[38], rule("\u{25b8} Details"));
         assert_eq!(text[39].trim_end(), FOOTER);
         app.toggle_sessions();
@@ -1918,9 +1944,9 @@ mod tests {
         sessions(&mut app, &["noc"], "noc");
         let text = plain(&panel(&mut app, &Theme::default(), 40, 38));
         let list = at(&text, "Sessions");
-        assert_eq!(text[list], rule("\u{25be} Sessions"));
+        assert_eq!(text[list], counted("\u{25be} Sessions", "1"));
         assert_eq!(text[list + 1].trim_end(), " \u{25cf} no-team  1 working");
-        assert_eq!(text[list + 3].trim_end(), "1 session");
+        assert!(text[list + 2].contains("Details"));
         // A short pane has no room for the section.
         let text = plain(&panel(&mut app, &Theme::default(), 14, 38));
         assert!(!text.iter().any(|l| l.contains("Sessions")));
@@ -1933,8 +1959,8 @@ mod tests {
         let shown: Vec<&str> = text[list + 1..list + 6].iter().map(|l| l.trim()).collect();
         assert_eq!(shown[0], "t4  no agents");
         assert_eq!(shown[3], "\u{25cf} t7  no agents");
-        assert_eq!(text[list + 7].trim_end(), "9 sessions");
-        assert!(text[list + 8].contains("Details"));
+        assert_eq!(text[list], counted("\u{25be} Sessions", "9"));
+        assert!(text[list + 6].contains("Details"));
     }
 
     #[test]
@@ -2043,7 +2069,7 @@ mod tests {
         let mut app = app_with(DEMO);
         let theme = Theme::default();
         let details = |app: &mut ZellijNoc, cols: usize| -> Vec<String> {
-            let text = plain(&panel(app, &theme, 41, cols));
+            let text = plain(&panel(app, &theme, 40, cols));
             let at = text.iter().position(|l| l.contains("Details")).unwrap();
             text[at..text.len() - 1]
                 .iter()
@@ -2336,7 +2362,7 @@ mod tests {
         // Only an arrow beside the dot; the versions are in the status box.
         assert_eq!(
             text[status_at(&text)],
-            format!("0 agents{}\u{2191} \u{25cf}", " ".repeat(27))
+            format!("Agents {} 0 \u{2191} \u{25cf}", "\u{2500}".repeat(25))
         );
         assert_eq!(
             info(&mut app, 30, 38)[1..],
@@ -2351,11 +2377,11 @@ mod tests {
         let text = plain(&render(&mut app, &Theme::default(), 30, 22));
         assert_eq!(
             text[28],
-            format!("0 agents{}\u{2191} \u{25cf}", " ".repeat(11))
+            format!("Agents {} 0 \u{2191} \u{25cf}", "\u{2500}".repeat(9))
         );
-        // Narrower than the count: the count is cut and the dot stays.
+        // Too narrow for the title: the count and the marks stay.
         let text = plain(&render(&mut app, &Theme::default(), 30, 8));
-        assert_eq!(text[28], "0 a\u{2026} \u{2191} \u{25cf}");
+        assert_eq!(text[28], "   0 \u{2191} \u{25cf}");
         app.show_help = true;
         let text = plain(&render(&mut app, &Theme::default(), 34, 38));
         assert_eq!(
@@ -2476,19 +2502,20 @@ mod tests {
     }
 
     #[test]
-    fn the_status_box_sits_on_the_status_line_and_a_click_toggles_it() {
+    fn the_status_box_hangs_under_the_status_line_and_a_click_toggles_it() {
         let mut app = app_with(DEMO);
-        let closed = plain(&render(&mut app, &Theme::default(), 40, 38));
-        let row = status_at(&closed);
-        assert_eq!(app.status_row, Some(row));
+        let closed = plain(&panel(&mut app, &Theme::default(), 40, 38));
+        // The status line is the first row.
+        assert_eq!(app.status_row, Some(0));
+        assert!(closed[0].starts_with("Agents "));
         // A click elsewhere does nothing; on the status line it opens the box.
-        assert!(!app.click(0));
-        assert!(app.click(row as isize) && app.show_info);
-        let open = plain(&render(&mut app, &Theme::default(), 40, 38));
+        assert!(!app.click(5));
+        assert!(app.click(0) && app.show_info);
+        let open = plain(&panel(&mut app, &Theme::default(), 40, 38));
         assert_eq!(open.len(), 40);
         assert!(open.iter().all(|l| l.width() == 38));
         assert_eq!(
-            open[row - 4..row],
+            open[1..5],
             [
                 format!("\u{256d}\u{2500} status {}\u{256e}", "\u{2500}".repeat(27)),
                 format!(
@@ -2503,19 +2530,11 @@ mod tests {
             ]
         );
         // Nothing else moved.
-        assert_eq!(open[..row - 4], closed[..row - 4]);
-        assert_eq!(open[row..], closed[row..]);
+        assert_eq!(open[0], closed[0]);
+        assert_eq!(open[5..], closed[5..]);
         // A click anywhere else closes it; so does a second click on the line.
         assert!(app.click(2) && !app.show_info);
-        assert!(app.click(row as isize) && app.click(row as isize) && !app.show_info);
-        // A pane too short for the whole box shows its end.
-        app.show_info = true;
-        let tiny = plain(&render(&mut app, &Theme::default(), 4, 38));
-        assert_eq!(
-            tiny[1],
-            format!("\u{2570}{}\u{256f}", "\u{2500}".repeat(36))
-        );
-        assert_eq!(header(&tiny), "6 agents");
+        assert!(app.click(0) && app.click(0) && !app.show_info);
     }
 
     #[test]
@@ -2539,17 +2558,17 @@ mod tests {
         assert!(render(&mut app, &theme, 10, 0).is_empty());
         let one = plain(&render(&mut app, &theme, 1, 38));
         assert_eq!(one.len(), 1);
-        assert!(one[0].starts_with("6 agents"));
+        assert_eq!(header(&one), "6 agents");
         // Two rows: one list line, windowed to the selected row, and the status.
         let two = plain(&render(&mut app, &theme, 2, 38));
         assert_eq!(two.len(), 2);
         assert_eq!(row(&two[0]), " ! Auth migration");
-        assert!(two[1].starts_with("6 agents"));
+        assert_eq!(header(&two), "6 agents");
         // From three rows the footer has room too.
         let three = plain(&render(&mut app, &theme, 3, 38));
         assert_eq!(three.len(), 3);
         assert_eq!(row(&three[0]), " ! Auth migration");
-        assert!(three[1].starts_with("6 agents"));
+        assert_eq!(header(&three), "6 agents");
         assert_eq!(three[2].trim_end(), FOOTER);
         assert_eq!(app.last_render_rows, 3);
     }

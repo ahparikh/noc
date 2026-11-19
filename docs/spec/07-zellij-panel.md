@@ -710,19 +710,17 @@ Public API fields that are not modelled are silently ignored, e.g.
   | notice set | the notice text | info |
 
   Otherwise it MUST be the title `Agents` (ZR-033), a rule, and at the end
-  of the row the count `{N}` (accent colour, bold) and the status dot,
-  each after one space. `N` is the number of non-Quiet agent rows plus the
-  sum of all Quiet section counts (open or closed); Quiet agents older than
-  7 days and stopped agents are not counted. Grouped by team, `N` is the
-  sum of the team headings' counts (ZG-018). While the list holds search
-  results (ZK-026) the count is `{N} match` or `{N} matches`, `N` being the
-  number of rows, followed by two spaces and `/ {query}`. The status dot
-  `●` (ZR-003) is preceded by `↑` and a space (attention colour, bold) when
-  a newer release is recorded ([08-zellij-host.md](08-zellij-host.md)
-  ZH-022). The dot and the arrow are never dropped for lack of room: the
-  title and its rule are left out when the row cannot hold them with three
-  columns of rule, and then the count is cut with `…`. Neither the dot nor
-  the arrow says anything in words; the status box does (ZR-034).
+  of the row, after one space, the count `{N}` (accent colour, bold). `N`
+  is the number of non-Quiet agent rows plus the sum of all Quiet section
+  counts (open or closed); Quiet agents older than 7 days and stopped
+  agents are not counted. Grouped by team, `N` is the sum of the team
+  headings' counts (ZG-018). While the list holds search results (ZK-026)
+  the count is `{N} match` or `{N} matches`, `N` being the number of rows,
+  followed by two spaces and `/ {query}`. The title and its rule are left
+  out when the row cannot hold them with three columns of rule, and then
+  the count is cut with `…`. The status dot and the mark of a newer release
+  are on the footer (ZR-004); in a pane too short for a footer they follow
+  the count here, each after one space.
 - **Source:** `zellij/src/view.rs` (status_line, shown_agent_count, plural)
 - **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds, a_newer_release_is_marked_on_the_header_and_explained_in_help, search_results_are_a_flat_list_with_the_query_on_the_status_line, details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel
 
@@ -744,8 +742,9 @@ Public API fields that are not modelled are silently ignored, e.g.
 
 #### ZR-034 The status box
 - **Behavior:** While the status box is open (ZK-028) the panel MUST draw a
-  framed box over the first lines of the body, directly under the status
-  line, as wide as the pane: a top border `╭─ status ─…─╮`, one line per
+  framed box over the rows directly above the footer, where the dot is, as
+  wide as the pane and never over the first row (in a pane without a
+  footer, over its last rows): a top border `╭─ status ─…─╮`, one line per
   entry as `│ {text} │` with the text cut to the inner width, and a bottom
   border `╰─…─╯` (borders in the muted colour). The entries, in order:
   1. `● {words}` for the connection, in the dot's connection colour
@@ -761,13 +760,19 @@ Public API fields that are not modelled are silently ignored, e.g.
   shown. Nothing else moves. The box is not drawn in a pane narrower than 8
   columns.
 - **Source:** `zellij/src/view.rs` (status_box_lines, render)
-- **Verified by:** `zellij/src/view.rs` the_status_box_hangs_under_the_status_line_and_a_click_toggles_it, problems_turn_the_dot_yellow_and_are_spelled_out_in_the_status_box, a_newer_release_is_marked_on_the_header_and_explained_in_help
+- **Verified by:** `zellij/src/view.rs` the_status_box_sits_over_the_footer_and_a_click_toggles_it, problems_turn_the_dot_yellow_and_are_spelled_out_in_the_status_box, a_newer_release_is_marked_on_the_header_and_explained_in_help
 
 #### ZR-004 Footer
 - **Behavior:** The last line MUST be `[?] keys  [D]etails  [d] window` (two
   spaces between items; muted, dim) whenever the pane has more than two
-  rows. With two rows or fewer there is no footer (ZR-016).
-- **Source:** `zellij/src/view.rs` (render, FOOTER)
+  rows, and at its right edge the status dot `●` (ZR-003), preceded by `↑`
+  and a space (attention colour, bold) when a newer release is recorded
+  ([08-zellij-host.md](08-zellij-host.md) ZH-022). The dot and the arrow
+  are never dropped for lack of room: the keys are cut with `…` instead,
+  leaving one column before the marks. Neither says anything in words; the
+  status box does (ZR-034). With two rows or fewer there is no footer
+  (ZR-016), and the marks are on the status line (ZR-002).
+- **Source:** `zellij/src/view.rs` (render, panel_footer, FOOTER)
 - **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds, very_small_panes_keep_the_status_line
 
 #### ZR-033 Layout: three titled sections
@@ -784,7 +789,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   for the others. Sessions and Details close: their title starts with `▾ `
   while open and `▸ ` while closed, and a closed section is its title row
   alone, so with both closed the list has every row but those two. The
-  status line is recorded as row 0 for clicks (ZK-028).
+  row the status dot is on, the footer, is recorded for clicks (ZK-028).
 - **Source:** `zellij/src/view.rs` (render, section_heading)
 - **Verified by:** `zellij/src/view.rs` the_panel_is_three_titled_sections, the_section_with_the_keys_shows_its_selection_and_its_details, renders_colored_grouped_master_detail_panel_within_bounds (status between list and details), renders_keyboard_help_on_request (status above the footer; no title). The other tests of `view.rs` read the panel with its first row moved to under the list, so their rows count from the first row of the list
 
@@ -1185,8 +1190,8 @@ Public API fields that are not modelled are silently ignored, e.g.
   (ZR-033), and while it is open one row a session, at most 5. The rows
   are windowed starting at
   `min(selected - 2 (saturating), sessions - 5 (saturating))` so the
-  selected one stays in view. A row is ` ● ` for the session on show (the
-  dot in the `ok` colour) or three spaces; the session's label, which is
+  selected one stays in view. A row is ` ❯ ` (U+276F, accent colour, bold) for the session on show, whose
+  label is bold too, or three spaces; the session's label, which is
   its team or `no-team`, cut to 16 columns (ZR-020) and padded to the
   widest label shown; then two spaces and what the team's agents need: the
   counts of ZR-035 (`1 blocked · 2 working`), `quiet` when it has agents
@@ -1744,8 +1749,9 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 - **Verified by:** `zellij/src/panel.rs` u_asks_for_a_release_check
 
 #### ZK-028 Opening the status box
-- **Behavior:** A left click on the row of the status line MUST open the
-  status box (ZR-034), or close it when it is open; a left click on any
+- **Behavior:** A left click on the row the status dot is on (the footer,
+  or the first row of a pane without one) MUST open the status box
+  (ZR-034), or close it when it is open; a left click on any
   other row closes it. `i` toggles it. `Esc` closes it before it closes
   help or ends a search. The click works whichever pane has the keyboard,
   and does not move the keyboard.
@@ -1928,11 +1934,12 @@ Floating details window, 70 × 24 (roomy):
 
 The three sections, with a team's session running and the agents holding
 the keys; the mockups above are older: they show the status line under the
-list as `6 agents ●`, where it is now the first row, and the details as
+list as `6 agents ●`, where it is now the first row and the dot is on the
+footer, and the details as
 they were before the section scrolled:
 
 ```text
-│Agents ─────────────────────────── 4 ●│  accent, bold: it has the keys
+│Agents ───────────────────────────── 4│  accent, bold: it has the keys
 │Working  4                            │
 │ ⠹ Auth lead                        0m│  selected; the age at the edge
 │ ⠹ E2E agent                        0m│
@@ -1940,7 +1947,7 @@ they were before the section scrolled:
 │ ⠹ Billing fix                      2m│
 │  … (blank to the next section) …     │
 │▾ Sessions ───────────────────────── 2│  muted
-│ ● auth     2 working                 │  ● the session on show
+│ ❯ auth     2 working                 │  ❯ the session on show
 │   no-team  1 working                 │
 │▾ Details ────────────────────────────│  muted
 │Auth lead                             │
@@ -1949,7 +1956,7 @@ they were before the section scrolled:
 │team      auth · lead                 │
 │provider  claude · background         │
 │id        a0000011                    │
-│[?] keys  [D]etails  [d] window       │
+│[?] keys  [D]etails  [d] window      ●│  the status dot, green
 ```
 
 With both closed (`S`, `D`) the list has every row but two:

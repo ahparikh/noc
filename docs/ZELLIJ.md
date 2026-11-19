@@ -17,7 +17,7 @@ Exact behavior is specified in [spec/07-zellij-panel.md](spec/07-zellij-panel.md
 │ │ Blocked  1    │ │ inner session: noc                           │ │
 │ │ Working  2    │ │   your tabs, panes, keys and theme,          │ │
 │ │ Review   2    │ │   exactly as you configured them             │ │
-│ │ 5 agents    ● │ │                                              │ │
+│ │ [?] keys    ● │ │                                              │ │
 │ └───────────────┘ └──────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────────────────┘
 ```
@@ -178,7 +178,7 @@ sessions still running are found again at the next start.
 The sidebar has three sections, each under its title: **Agents**, the
 list, with each agent's age at the right edge of its row; **Sessions**,
 every inner session that is running; and **Details**, about the row
-selected in whichever list you were last in. In Sessions `●` marks the
+selected in whichever list you were last in. In Sessions `❯` marks the
 session you are looking at, and each row says what its team's agents need
 (`auth  1 blocked · 2 working`, or `quiet`).
 
@@ -243,13 +243,14 @@ pair and start it again.
 
 ### The status line
 
-The first row of the sidebar is the title of the Agents section. It ends
-with how many agents there are and a dot: green when connected, yellow when something needs a look (a
+The first row of the sidebar is the title of the Agents section, and ends
+with how many agents there are. The last row, which lists a few keys, ends
+with a dot: green when connected, yellow when something needs a look (a
 setting that cannot work, the inner session not running, still connecting),
 red when the registry cannot be reached. An `↑` beside the dot means a
 newer plugin release exists.
 
-Click the line, or press `i` in the sidebar, for a small box that says it
+Click that last row, or press `i` in the sidebar, for a small box that says it
 in words: the connection, any problem, the version you are running and the
 newer one. The click works whichever side has the keyboard. Click again, or
 `Esc`, to close it.
@@ -351,11 +352,11 @@ Zellij downloads a plugin URL once and then keeps using its cached copy, so
 a "latest" URL would never upgrade, and Zellij never says that a newer
 plugin exists. The URL therefore names the version, and the sidebar does
 the telling: when a release newer than the loaded plugin is out, an `↑`
-appears beside the dot on its status line, and the status box (click the
-line, or `i`) names both versions.
+appears beside the dot on its last row, and the status box (click that
+row, or `i`) names both versions.
 
 ```
-5 agents                         ↑ ●
+[?] keys  [D]etails  [d] window  ↑ ●
 ```
 
 It finds out by asking GitHub, with `curl`, where the repository's "latest

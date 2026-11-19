@@ -620,7 +620,7 @@ teams in Zellij is in [11-teams.md](11-teams.md).
   | # | Check name | Asserts |
   |---|---|---|
   | 1 | host session has the sidebar and one guest pane | a tiled plugin pane loaded from `zellij-noc.wasm` and a tiled terminal exist in the host |
-  | 2 | sidebar lists the registry's agents | the Agents title row ends `2 ●` within 10 s |
+  | 2 | sidebar lists the registry's agents | the Agents title row ends `2` within 10 s |
   | 3 | the sidebar runs a registry watcher | a process whose command line ends in `zellij-noc-registry-watch=<host>` exists within 10 s |
   | 4 | guest pane keeps exactly one client on the inner session | inner client count is 1 |
   | 5 | the keyboard starts in the inner session | host focus is the guest pane |
@@ -641,7 +641,7 @@ teams in Zellij is in [11-teams.md](11-teams.md).
   | 20 | q closes it | no visible floating plugin pane remains |
   | 21 | and the keyboard is back in the sidebar | host focus becomes the panel within 5 s |
   | 22 | / lists the agents that match what is typed | with the keyboard on the panel, after `/`, `second` and `Enter` the screen shows `1 match` within 8 s |
-  | 23 | Esc ends the search | after `Esc` the Agents title row ends `2 ●` within 8 s |
+  | 23 | Esc ends the search | after `Esc` the Agents title row ends `2` within 8 s |
   | 24 | Alt-o hides the sidebar | a host tab reports `is_fullscreen_active` true |
   | 25 | Alt-o shows it again | it reports false |
   | 26 | Enter on a team's agent creates the team's session | with the fake registry putting `Second agent` in team `auth`, and that agent searched for and opened, the session `<inner>--auth` is running within 10 s |
@@ -660,7 +660,7 @@ teams in Zellij is in [11-teams.md](11-teams.md).
   | 39 | and gives it the keyboard | host focus becomes the guest pane |
   | 40 | when the session on show ends, the guest pane shows the inner session | after `kill-session <session>`, the inner session has 1 client within 10 s |
   | 41 | and the team's session is made again when its agent is opened | after `Second agent` is opened again, the session has 1 client within 10 s; the host session's client was not detached, or the keys would not have reached the panel |
-  | 42 | the sidebar lists the running sessions, the one on show marked | the Sessions title row ends `2`, and under it is `● auth` |
+  | 42 | the sidebar lists the running sessions, the one on show marked | the Sessions title row ends `2`, and under it is `❯ auth` |
   | 43 | Enter on a session's row shows that session | after `Tab`, `G` and `Enter` in the panel, the inner session has 1 client within 10 s |
   | 44 | and hands it the keyboard | host focus becomes the guest pane |
   | 45 | x on a team session's row ends it, once confirmed | after `Tab`, `gg`, `x` and `y`, the team's session is not running within 10 s |

@@ -117,6 +117,20 @@ In the host session, anywhere:
 These three are bound in `layouts/noc-host.kdl`; change them there. The
 sidebar's help view (`?`) lists the defaults.
 
+Every other key goes to whichever side has the keyboard: to the sidebar,
+whose keys are below, or to the inner session on show. The inner session
+starts locked (`inner_mode`), and what it does with a key depends on its
+mode:
+
+| Inner session's mode | Where a key goes |
+|---|---|
+| Locked | To the program in the pane, an agent as a rule. Zellij takes only `Ctrl g`, which unlocks, and what you bind in `locked` or `shared` |
+| Normal (unlocked) | Zellij takes the keys it binds (`Ctrl p`, `Ctrl t`, `Ctrl o` and so on); every other key goes to the program in the pane. `Ctrl g` locks |
+| Pane, Tab and the other modes | Only that mode's keys do anything, until it returns to Normal |
+
+These are your own Zellij keys, from `config.kdl`; the ones named are
+Zellij's defaults.
+
 In the sidebar (after `Alt m`):
 
 | Key | Action |
@@ -236,6 +250,7 @@ pair and start it again.
 | `poll_interval_ms` | `1000` | How often the sidebar reads `noc ls` on a timer. It also reads it whenever the registry reports a change, so this is the backup. Clamped to 250..60000. |
 | `home_theme`, `away_theme` | unset | Optional pair, see below. |
 | `pane_titles` | `show` | What the frames of the inner session's panes say. `name` (the shipped setting) names each pane for its machine and what runs in it: `ohm-2 · claude` for an agent, `ohm-2 · vim` for a pane started with a command, `ohm-2 · zsh` for a shell. `hide` blanks the title, which leaves a small gap in the border. `show` leaves the titles programs set. With `name` or `hide`, a title a program sets later is not shown. |
+| `inner_mode` | `normal` | `locked` (the shipped setting) starts each new inner session in Zellij's locked mode, so an agent gets every key until you unlock with `Ctrl g`. Unlocked, you can still type. `normal` starts them unlocked. |
 | `group_by` | `status` | How the list is grouped when the sidebar starts: `status` (Blocked, Working, Review, Quiet) or `team` (one group per team). `v` switches while it runs. |
 | `colors` | built-in | The sidebar's colours: by default a fixed dark palette (blue header, red Blocked, yellow Working, teal Review, grey Quiet). `zellij` follows your Zellij theme instead; use it on a light terminal. |
 | `update_check` | `true` | `false` stops the sidebar from asking GitHub whether a newer release exists (see [Upgrading the plugin](#upgrading-the-plugin)). |
@@ -326,11 +341,9 @@ option in `layouts/noc-inner.kdl`, outside its `layout` block. Any option
 `config.kdl` accepts works there, and it overrides `config.kdl` for the
 inner session alone. Sessions started any other way never read the file.
 
-As shipped it sets four:
+As shipped it sets three:
 
 ```kdl
-default_mode "locked"              // keys go to the program in the pane until you unlock (Ctrl g)
-
 session_indicator false            // no "[ N running ]" box in the tab bar
 
 attention {
@@ -345,7 +358,10 @@ ui {
 
 ```
 
-Delete a line to get Zellij's normal behaviour back. The options are read
+Delete a line to get Zellij's normal behaviour back. Do not add
+`default_mode "locked"` to start locked: with it Zellij types nothing into
+a pane while the session is unlocked. `inner_mode` in `noc-host.kdl` starts
+the sessions locked without that. The options are read
 when the inner session is created, so after a change end the pair
 (`zellij kill-session noc`) and start it again. The file's `layout` block is the inner session's first tab; it
 replaces `default_layout` for that session. Each team's session is created
@@ -444,6 +460,7 @@ bind "Alt t" { FocusPreviousPane; Write 27 116; }   // ESC t
 | A red dot; the status box says `disconnected · …` naming an executable | Zellij cannot find `noc`. Set `noc_bin` to its absolute path. |
 | A yellow dot; the status box says `inner session "noc" is not running` | The guest pane's loop is not attached. Check that `guest_session` matches `inner=` in the layout. |
 | The inner session's status bar looks unfocused | Press `Alt m` twice. The sidebar tells the inner client it has the keyboard each time it comes back. |
+| Unlocked (`Ctrl g`), nothing you type reaches the pane | `layouts/noc-inner.kdl` still has `default_mode "locked"`, as 0.3.0 shipped it. Delete the line, set `inner_mode "locked"` in `noc-host.kdl`, and start the pair again (`zellij kill-session noc`). |
 | The inner theme does not change | Both `home_theme` and `away_theme` must be set in `noc-host.kdl`, the bindings in `noc-inner.kdl` must name the same two themes, and both themes must exist. |
 | The pair starts and ends at once | `layouts/noc-inner.kdl` is missing from `~/.config/zellij/layouts/`, so the inner session cannot be created. |
 | A new plugin version is not picked up | The URL in `noc-host.kdl` still names the old version. |

@@ -897,6 +897,25 @@ that is right, or a team needs an end that is recorded, is open
 (spec/11-teams.md). The row is only in the team grouping; grouped by
 status, Quiet agents already fold by age.
 
+### D-084: the inner sessions are locked by the relay, not by `default_mode`
+
+A new inner session starts in Zellij's locked mode because its relay locks
+it once (`action switch-mode locked`) when it first sees a client, asked to
+by the panel's `inner_mode "locked"`. The inner layout does not set
+`default_mode "locked"`.
+
+**Why:** an agent needs the keys Zellij binds in Normal mode, so the
+sessions should start locked. But Zellij types an unbound key into a pane
+only in Locked mode and in the session's default mode: with `default_mode
+"locked"`, unlocking left a session in which nothing could be typed (issue
+5). Locking from outside keeps Normal the default mode, so both modes type.
+The relay does it because it starts with its session and outlives the host,
+which makes "once per session" its own lifetime; the panel cannot tell a
+session that was just created from one it found running.
+
+**Cost:** a session is unlocked for the moment before its relay answers
+the first watch request.
+
 ### D-081: the inner sessions keep Zellij's tab bar, with the session's name
 
 The inner layout uses Zellij's own tab bar and does not hide the session's

@@ -83,7 +83,7 @@ the code. Regenerate them with `cd go && go test ./... -list '^Test'` and
 | `zellij/src/guest.rs` | 14 | inner-session pane parsing and focus, relay theme names, keyboard signals, team sessions |
 | `zellij/src/bar.rs` | 3 | the tab bar: what fits, where the tabs are, what a tab says |
 | `zellij/src/details.rs` | 1 | closing keys of the details window |
-| `zellij/e2e/nested.sh` | 55 checks | the pair end to end (§5) |
+| `zellij/e2e/nested.sh` | 57 checks | the pair end to end (§5) |
 
 `go/cmd/noc` has no test; it is a few lines that call `cli.Run`.
 

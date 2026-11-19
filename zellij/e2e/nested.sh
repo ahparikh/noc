@@ -175,6 +175,25 @@ check "inner session takes its options from noc-inner.kdl" \
 	sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | sed -n 1p | grep 'Zellij ' | grep -v 'running' >/dev/null"
 check "the inner session's tab bar names the session" bar_says "$INNER"
 
+# The inner session starts locked (inner_mode in the host layout): Zellij's
+# own Ctrl-t n opens no tab. Unlocked with Ctrl-g, it still types what
+# Zellij does not bind into the pane.
+screen_says() { tmux capture-pane -p -t "$TMUX_SESSION" | grep -q -F -- "$1"; }
+TABS_LOCKED="$(inner_tab_count)"
+keys C-t
+sleep 0.3
+keys n
+sleep 1
+check "the inner session starts locked" [ "$(inner_tab_count)" = "$TABS_LOCKED" ]
+keys C-u
+keys C-g
+sleep 0.5
+keys 'echo typed-$((40+2))' Enter
+check "unlocked, the inner session still types into its pane" wait_for 5 screen_says 'typed-42'
+keys C-g
+sleep 0.5
+keys clear Enter
+
 # ---- 2. keyboard hand-off and the theme relay ----
 HOME_COLOUR="$(bar_colour)"
 keys M-m

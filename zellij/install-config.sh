@@ -41,7 +41,7 @@ set -euo pipefail
 
 FILES="layouts/noc-host.kdl layouts/noc-inner.kdl themes/noc-blue.kdl"
 # The settings of the sidebar plugin that are carried over on an upgrade.
-SETTINGS="noc_bin guest_session icons colors pane_titles group_by poll_interval_ms update_check home_theme away_theme away_key home_key transport pipe_name"
+SETTINGS="noc_bin guest_session icons colors pane_titles inner_mode group_by poll_interval_ms update_check home_theme away_theme away_key home_key transport pipe_name"
 DEST="${ZELLIJ_CONFIG_DIR:-$HOME/.config/zellij}"
 REPO="${NOC_REPO:-ahparikh/noc}"
 CHECK=0

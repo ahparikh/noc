@@ -28,6 +28,9 @@ pub const GUEST_MISSING_SECS: f64 = 5.0;
 pub const RELAY_WATCH_SECS: f64 = 10.0;
 pub const CTX_WATCH: &str = "guest-watch";
 pub const CTX_RELAY_PUSH: &str = "relay-push";
+pub const CTX_RELAY_LOCK: &str = "relay-lock";
+/// What ends a watch request that asks the relay to lock its session.
+pub const WATCH_LOCKED: &str = "locked";
 pub const CTX_OPEN: &str = "guest-open";
 pub const CTX_SWITCH: &str = "guest-switch";
 pub const CTX_END: &str = "end-session";
@@ -170,6 +173,10 @@ pub struct RelayState {
     pub in_flight: bool,
     /// The newest snapshot, waiting for the one being sent.
     pub pending: Option<String>,
+    /// The panel wants a new session to start locked.
+    pub lock: bool,
+    /// This relay has locked its session, which it does once.
+    pub locked: bool,
 }
 
 // ---- pure helpers ----
@@ -214,12 +221,18 @@ pub fn relay_snapshot(
 }
 
 /// The host session and the relay's own session that a `watch <host>
-/// <session>` message names.
-pub fn watch_host(payload: &str) -> Option<(String, String)> {
+/// <session>` message names, and whether it ends with `locked`: the session
+/// is to start locked.
+pub fn watch_host(payload: &str) -> Option<(String, String, bool)> {
     let mut names = payload.trim().strip_prefix("watch ")?.split_whitespace();
     let (host, session) = (names.next()?, names.next()?);
+    let lock = match names.next() {
+        None => false,
+        Some(WATCH_LOCKED) => true,
+        Some(_) => return None,
+    };
     (names.next().is_none() && is_plain_name(host) && is_plain_name(session))
-        .then(|| (host.to_string(), session.to_string()))
+        .then(|| (host.to_string(), session.to_string(), lock))
 }
 
 /// The session a `switch <session> <layout>` message asks the relay to move its
@@ -327,9 +340,27 @@ pub fn agent_session(
 }
 
 /// The panel's request to a session's relay: watch this session for the panel
-/// in `host`.
-pub fn watch_command(guest: &str, plugin_url: &str, host: &str) -> Vec<String> {
-    relay_command(guest, plugin_url, &format!("watch {host} {guest}"))
+/// in `host`, and with `lock` put the session in Zellij's locked mode if this
+/// relay has not done so before.
+pub fn watch_command(guest: &str, plugin_url: &str, host: &str, lock: bool) -> Vec<String> {
+    let message = if lock {
+        format!("watch {host} {guest} {WATCH_LOCKED}")
+    } else {
+        format!("watch {host} {guest}")
+    };
+    relay_command(guest, plugin_url, &message)
+}
+
+/// The relay's command that puts its own session in Zellij's locked mode.
+pub fn lock_command(session: &str) -> Vec<String> {
+    strings(&[
+        "zellij",
+        "--session",
+        session,
+        "action",
+        "switch-mode",
+        "locked",
+    ])
 }
 
 /// The panel's request to the relay of the session on show: move the client
@@ -741,7 +772,7 @@ impl State {
         self.guest.in_flight = true;
         self.guest.last_watch = Some(now);
         run(
-            &watch_command(&self.guest.session, &url, &host),
+            &watch_command(&self.guest.session, &url, &host, self.config.lock_inner),
             ctx(CTX_WATCH),
         );
         redraw | (unanswered && self.on_guest_unreadable("is not answering"))
@@ -1329,7 +1360,8 @@ impl State {
             return;
         }
         let payload = message.payload.as_deref().unwrap_or_default();
-        if let Some((host, session)) = watch_host(payload) {
+        if let Some((host, session, lock)) = watch_host(payload) {
+            self.relay.lock = lock;
             self.relay.host = Some(host);
             self.relay.session = session;
             self.relay.watched_at = now_secs();
@@ -1399,6 +1431,13 @@ impl State {
     fn relay_push(&mut self, clients: &[ClientInfo]) {
         if self.relay_host().is_none() {
             return;
+        }
+        // A relay starts with its session, so the first client it sees is in
+        // a session that was just created: it starts locked when the panel
+        // asks for that. Once only, so the user's own Ctrl g stands.
+        if self.relay.lock && !self.relay.locked && !clients.is_empty() {
+            self.relay.locked = true;
+            run(&lock_command(&self.relay.session), ctx(CTX_RELAY_LOCK));
         }
         // Zellij's pane records do not say what runs in a pane; it answers
         // when asked, pane by pane.
@@ -1741,17 +1780,24 @@ mod tests {
         assert_eq!((nobody.clients, nobody.focused), (0, None));
 
         // A watch request names the panel's session, then the relay's own.
-        let names = |host: &str, session: &str| Some((host.to_string(), session.to_string()));
+        let names =
+            |host: &str, session: &str| Some((host.to_string(), session.to_string(), false));
         assert_eq!(watch_host("watch noc-host noc"), names("noc-host", "noc"));
         assert_eq!(
             watch_host("  watch   a.b_c   noc--auth "),
             names("a.b_c", "noc--auth")
+        );
+        // And may ask for the session to start locked.
+        assert_eq!(
+            watch_host("watch noc-host noc locked"),
+            Some(("noc-host".to_string(), "noc".to_string(), true))
         );
         for bad in [
             "watch",
             "watch ",
             "watch a",
             "watch a b c",
+            "watch a b locked c",
             "watch a;b c",
             "theme x",
             "",
@@ -2071,7 +2117,7 @@ mod tests {
         );
         assert!(command[2].contains("focus-previous-pane"));
         assert_eq!(
-            watch_command("inner", "file:/p/zellij-noc.wasm", "outer"),
+            watch_command("inner", "file:/p/zellij-noc.wasm", "outer", false),
             [
                 "zellij",
                 "--session",
@@ -2085,6 +2131,21 @@ mod tests {
                 "zellij-noc.relay",
                 "--",
                 "watch outer inner"
+            ]
+        );
+        assert_eq!(
+            watch_command("inner", "file:/p/zellij-noc.wasm", "outer", true).last(),
+            Some(&"watch outer inner locked".to_string())
+        );
+        assert_eq!(
+            lock_command("inner"),
+            [
+                "zellij",
+                "--session",
+                "inner",
+                "action",
+                "switch-mode",
+                "locked"
             ]
         );
         assert_eq!(

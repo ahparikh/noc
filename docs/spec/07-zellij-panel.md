@@ -367,6 +367,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   | `update_check` | on | exactly `false` → off | whether the header can show `↑ vX.Y.Z` (ZR-002) |
   | `colors` | built-in | exactly `zellij` → follow the Zellij theme | ZR-018 |
   | `pane_titles` | show | exactly `name` → name the inner session's panes; exactly `hide` → blank their titles | [08-zellij-host.md](08-zellij-host.md) ZX-038 |
+  | `inner_mode` | normal | exactly `locked` → a new inner session starts locked | [08-zellij-host.md](08-zellij-host.md) ZX-040 |
   | `group_by` | status | exactly `team` → group by team; any other value is `status` | how the list is grouped when the panel starts (ZG-017) |
 
   What the theme and key settings do is specified in

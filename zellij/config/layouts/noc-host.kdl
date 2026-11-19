@@ -44,6 +44,14 @@ layout {
                 // title. "show" leaves the titles programs set.
                 pane_titles "name"
 
+                // The mode a new inner session starts in. "locked": every key
+                // goes to the program in the pane, an agent as a rule, and
+                // none is taken by Zellij until you unlock the session
+                // (Ctrl g by default). Unlocked, Zellij takes the keys it
+                // binds and the rest is still typed into the pane. "normal"
+                // starts the sessions unlocked.
+                inner_mode "locked"
+
                 // How the list is grouped when the sidebar starts: "status"
                 // (Blocked, Working, Review, Quiet) or "team" (one group per
                 // team, then the agents in no team). `v` in the sidebar

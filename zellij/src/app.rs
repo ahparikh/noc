@@ -251,6 +251,8 @@ pub struct Config {
     /// Follow the Zellij theme instead of the built-in colours.
     pub zellij_colors: bool,
     pub pane_titles: PaneTitles,
+    /// Whether a new inner session starts in Zellij's locked mode.
+    pub lock_inner: bool,
     /// How the list is grouped when the panel starts.
     pub group_by: GroupBy,
 }
@@ -272,6 +274,7 @@ impl Default for Config {
             update_check: true,
             zellij_colors: false,
             pane_titles: PaneTitles::Show,
+            lock_inner: false,
             group_by: GroupBy::Status,
         }
     }
@@ -368,6 +371,7 @@ impl Config {
             Some("name") => PaneTitles::Name,
             _ => PaneTitles::Show,
         };
+        config.lock_inner = get("inner_mode") == Some("locked");
         config.group_by = match get("group_by") {
             Some("team") => GroupBy::Team,
             _ => GroupBy::Status,
@@ -1903,6 +1907,9 @@ mod tests {
             let config = Config::from_map(&map(&[("pane_titles", value)]));
             assert_eq!(config.pane_titles, want, "{value}");
         }
+        assert!(!defaults.lock_inner);
+        assert!(Config::from_map(&map(&[("inner_mode", "locked")])).lock_inner);
+        assert!(!Config::from_map(&map(&[("inner_mode", "normal")])).lock_inner);
         assert!(!Config::from_map(&map(&[("update_check", " false ")])).update_check);
         assert!(Config::from_map(&map(&[("update_check", "no")])).update_check);
         assert!(defaults.problems().is_empty() && !defaults.themes_enabled());

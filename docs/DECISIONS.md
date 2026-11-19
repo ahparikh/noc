@@ -897,6 +897,22 @@ that is right, or a team needs an end that is recorded, is open
 (spec/11-teams.md). The row is only in the team grouping; grouped by
 status, Quiet agents already fold by age.
 
+### D-084: the guest pane waits for the panel
+
+The host layout starts the guest pane suspended, and the panel starts it.
+
+**Why:** since the inner layout loads the plugin as its tab bar (D-081),
+the host session and the inner session both load the plugin the moment the
+pair starts. The first time a plugin location is used, both fetch it and
+both write the one file Zellij keeps it in, which ends spoilt, and the
+sidebar and the tab bar fail to load until that file is removed by hand.
+The panel running is proof the plugin has been fetched, so letting it
+start the inner session makes the fetch happen once.
+**Consequence:** the pair starts a moment later, after the plugin has
+loaded. With the sidebar unable to run, the guest pane says to press Enter
+instead of starting by itself; before, the inner session started without
+it.
+
 ### D-081: a session's tab bar is noc's own
 
 The inner layout loads the plugin as the tab bar (`role "bar"`). It draws

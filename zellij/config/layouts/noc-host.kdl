@@ -86,7 +86,12 @@ layout {
         // or because the team's session it was showing ended. It ends the
         // host session when the inner session has ended. The sidebar moves
         // this client between the inner session and the teams' sessions.
-        pane borderless=true focus=true command="sh" {
+        // It starts suspended and the sidebar starts it, so the inner
+        // session, whose tab bar is the same plugin, is created once the
+        // plugin is there: two sessions that download it at the same moment
+        // spoil the copy Zellij keeps. If the sidebar cannot run, Enter in
+        // this pane starts it.
+        pane borderless=true focus=true command="sh" start_suspended=true {
             args "-c" "inner=noc; host=noc-host; unset ZELLIJ ZELLIJ_SESSION_NAME ZELLIJ_PANE_ID; while :; do zellij attach --create \"$inner\" options --default-layout noc-inner; sleep 0.5; if zellij list-sessions --no-formatting 2>/dev/null | grep -v EXITED | grep -q \"^$inner \"; then sleep 1; else zellij kill-session \"$host\"; exit 0; fi; done"
         }
     }

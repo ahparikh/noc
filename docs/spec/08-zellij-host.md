@@ -222,7 +222,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** `zellij/e2e/nested.sh` "inner session wears the away theme while the sidebar has the keyboard", "inner session returns to its home theme"; MANUAL: with a `config.kdl` that binds a key of its own, that key and Zellij's default keys still work in a session created from the layout
 
 ### ZX-004 The host layout
-- **Behavior:** `layouts/noc-host.kdl` MUST define one vertically split pane with two children: a pane of `size=38` containing `plugin location="noc"`, and a pane with `borderless=true focus=true command="sh"` whose arguments are `-c` and the guest loop (ZX-007). The session is started from outside Zellij with `zellij --session noc-host --new-session-with-layout noc-host`.
+- **Behavior:** `layouts/noc-host.kdl` MUST define one vertically split pane with two children: a pane of `size=38` containing `plugin location="noc"`, and a pane with `borderless=true focus=true command="sh" start_suspended=true` whose arguments are `-c` and the guest loop (ZX-007). The pane waits for Enter, which the panel sends (ZX-040). The session is started from outside Zellij with `zellij --session noc-host --new-session-with-layout noc-host`.
 - **Source:** `zellij/config/layouts/noc-host.kdl`
 - **Verified by:** `zellij/e2e/nested.sh` "host session has the sidebar and one guest pane", "the keyboard starts in the inner session"
 
@@ -252,6 +252,12 @@ pane, tab, focus and theme state stays in the plugin (D-036).
   The loop only ever attaches to the inner session. The panel moves the client it holds to another session and back (ZT-002).
 - **Source:** `zellij/config/layouts/noc-host.kdl`
 - **Verified by:** `zellij/e2e/nested.sh` "guest pane keeps exactly one client on the inner session", "the inner client stays attached in the guest pane", "and the guest pane attaches to the inner session again", "ending the inner session ends the host session"
+
+### ZX-040 The panel starts the guest pane
+- **Behavior:** With permissions granted, on every `PaneUpdate` and tick, when the guest pane (ZX-010) is held and has not exited (it is waiting to run its command), the panel MUST type Enter into it (`action write --pane-id terminal_<N> 13`, ZX-016), and again every `2.0` s for as long as it is still held. So the inner session, whose tab bar is this plugin (ZX-035), is created only once the panel runs, by which time Zellij has fetched the plugin and kept it: two sessions that fetch a plugin from its URL at the same moment both write the one file Zellij keeps it in (behaviour 15). When the panel cannot run (its permissions are not granted, or the plugin did not load), the pane keeps waiting and Enter in it starts the pair without the sidebar.
+- **Source:** `zellij/src/panel.rs` (`start_guest`, `GUEST_START_RETRY`); `zellij/src/main.rs` (`on_pane_update`, `on_panel_tick`); `zellij/config/layouts/noc-host.kdl`
+- **Decision:** D-084
+- **Verified by:** `zellij/e2e/nested.sh` "guest pane keeps exactly one client on the inner session" (the inner session exists only because the panel started the pane); the wait before permissions are granted is MANUAL
 
 ### ZX-035 The inner layout
 - **Behavior:** `layouts/noc-inner.kdl` MUST define the inner session's first tab, and with it the frame of every tab opened later, as Zellij's default layout with the plugin's own tab bar: a one-row borderless pane holding `plugin location="<URL>" { role "bar" }` (ZT-012), where the URL is the plugin location of ZX-002; a pane; a one-row borderless `status-bar` pane. Every session is created from this layout (ZT-001). It MUST carry, outside the `layout` block, the options that apply to the inner session only; as shipped, `session_indicator false`, `attention { enabled false }` and `ui { pane_frames { hide_session_name true } }`; and the relay bindings (ZX-003). Zellij applies a layout file's options and bindings to the session that layout creates, over `config.kdl`, so sessions started any other way are unaffected. The options are read only when the inner session is created.
@@ -742,6 +748,16 @@ confirmed by running it.
 14. In a session created from a layout, a tab opened later (`action
     new-tab`) is framed by that layout's panes around its own pane, so the
     layout's tab bar is every tab's.
+15. Zellij keeps a plugin fetched from a URL in one file of its cache
+    directory, named by a number made from the URL, and never fetches that
+    URL again while the file is there. Two sessions that start at the same
+    moment and load the same URL for the first time both write that file:
+    it ends longer than the plugin, and the plugin fails to load (`type
+    mismatch` from the one, `No such file or directory` from the other) in
+    every session until the file is removed. Seen with the host session's
+    panel and the inner session's tab bar.
+16. A pane with `start_suspended=true` is reported held and not exited
+    until it is given Enter, which `action write --pane-id` can type.
 
 ## Design choices
 

@@ -20,6 +20,9 @@ use zellij_tile::prelude::*;
 /// The panel's pane has no title of its own: its first row says `Agents`.
 /// A blank, because Zellij shows the plugin's location for an empty name.
 pub const PANEL_TITLE: &str = " ";
+/// How long the panel waits for the guest pane to start before it sends
+/// the Enter again.
+pub const GUEST_START_RETRY: f64 = 2.0;
 
 // ---- keys -> intents (pure) ----
 
@@ -926,6 +929,35 @@ impl State {
         self.sync_panel_selectable();
         if !self.host_action(&["move-focus", "left"]) {
             focus_plugin_pane(self.plugin_id, false, false);
+        }
+    }
+
+    /// The guest pane's command starts suspended, and the panel starts it,
+    /// with the Enter its "press Enter to run" waits for. So the inner
+    /// session, whose tab bar is this plugin, is created only once the
+    /// panel runs, by which time Zellij has the plugin: two sessions that
+    /// fetch a plugin from its URL at the same moment both write the one
+    /// file Zellij keeps it in, and spoil it.
+    pub fn start_guest(&mut self) {
+        if !self.permissions_granted {
+            return;
+        }
+        let Some(guest) = self.guest_pane() else {
+            return;
+        };
+        if !guest.is_held || guest.exited {
+            return;
+        }
+        let now = now_secs();
+        if self
+            .guest_started
+            .is_some_and(|t| now - t < GUEST_START_RETRY)
+        {
+            return;
+        }
+        let pane = format!("terminal_{}", guest.id);
+        if self.host_action(&["write", "--pane-id", pane.as_str(), "13"]) {
+            self.guest_started = Some(now);
         }
     }
 

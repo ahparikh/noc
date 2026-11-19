@@ -214,7 +214,7 @@ sidebar opened.
 Everything is in the `plugin` block of `layouts/noc-host.kdl`:
 
 ```kdl
-plugin location="https://github.com/ahparikh/noc/releases/download/v0.2.1/zellij-noc.wasm" {
+plugin location="https://github.com/ahparikh/noc/releases/download/v0.3.0/zellij-noc.wasm" {
     noc_bin "noc"
     guest_session "noc"
     icons "unicode"

@@ -594,10 +594,16 @@ fn status_line(app: &ZellijNoc, theme: &Theme, cols: usize, marked: bool) -> Lin
     let text = truncate(&text, cols.saturating_sub(marks));
     let tail = 1 + text.width() + marks;
     let focused = app.focus == Focus::Agents;
-    let mut line = if cols >= AGENTS_TITLE.width() + 3 + tail {
-        section_heading(theme, None, AGENTS_TITLE, focused, cols - tail)
-    } else {
-        Line::empty()
+    // The title says how the list is grouped, and gives that up before it
+    // gives itself up.
+    let full = agents_title(app);
+    let fits = |title: &str| cols >= title.width() + 3 + tail;
+    let title = [full.as_str(), AGENTS_TITLE]
+        .into_iter()
+        .find(|title| fits(title));
+    let mut line = match title {
+        Some(title) => section_heading(theme, None, title, focused, cols - tail),
+        None => Line::empty(),
     };
     let gap = cols.saturating_sub(line.width() + text.width() + marks);
     line = line
@@ -1133,6 +1139,16 @@ fn agent_detail_lines(
 pub const AGENTS_TITLE: &str = "Agents";
 pub const DETAILS_TITLE: &str = "Details";
 pub const SESSIONS_TITLE: &str = "Sessions";
+
+/// The title of the Agents section: `Agents (status)` or `Agents (team)`,
+/// after how the list is grouped. Search results are in neither grouping,
+/// and their title is `Agents` alone.
+fn agents_title(app: &ZellijNoc) -> String {
+    if app.flat {
+        return AGENTS_TITLE.to_string();
+    }
+    format!("{AGENTS_TITLE} ({})", app.group_by.as_str())
+}
 
 /// A section's title row: the title, then a rule to the edge of the pane. A
 /// section that closes has an arrow before it, down while it is open. The
@@ -1719,7 +1735,10 @@ mod tests {
         // The status line is the title row of the Agents section (the first
         // row of the panel; `render` shows it under the list): the title, a
         // rule, then the count. The dot is at the right edge of the footer.
-        assert_eq!(text[26], format!("Agents {} 6", "\u{2500}".repeat(29)));
+        assert_eq!(
+            text[26],
+            format!("Agents (status) {} 6", "\u{2500}".repeat(20))
+        );
         assert_eq!(text[39], format!("{FOOTER}      \u{25cf}"));
         let details = &text[27..];
         let wanted = [
@@ -1838,6 +1857,8 @@ mod tests {
             ]
         );
         assert_eq!(header(&text), "6 agents");
+        // The title says the grouping.
+        assert!(status(&text).starts_with("Agents (team) \u{2500}"));
         // Headings are in the accent colour, bold; the first one is selected.
         let accent = color_code(Theme::default().accent, false);
         assert!(raw[2].starts_with(&format!("\u{1b}[1;{accent}mbilling  4")));
@@ -1951,7 +1972,7 @@ mod tests {
         assert!(text.iter().all(|l| l.width() == 38), "{text:?}");
         let at =
             |text: &[String], title: &str| text.iter().position(|l| l.contains(title)).unwrap();
-        assert_eq!(text[0], counted("Agents", "6"));
+        assert_eq!(text[0], counted("Agents (status)", "6"));
         assert_eq!(text[1].trim_end(), "Blocked  1");
         let (list, details) = (at(&text, "Sessions"), at(&text, "Details"));
         assert_eq!(text[list], counted("\u{25be} Sessions", "3"));
@@ -1978,7 +1999,7 @@ mod tests {
         assert_eq!(text[list + 1], rule("\u{25be} Details"));
         app.toggle_details();
         let text = plain(&panel(&mut app, &Theme::default(), 40, 38));
-        assert_eq!(text[0], counted("Agents", "6"));
+        assert_eq!(text[0], counted("Agents (status)", "6"));
         assert_eq!(text[37], counted("\u{25b8} Sessions", "3"));
         assert_eq!(text[38], rule("\u{25b8} Details"));
         assert_eq!(keys_of(&text[39]), FOOTER);
@@ -2407,7 +2428,7 @@ mod tests {
         // the status box.
         assert_eq!(
             text[status_at(&text)],
-            format!("Agents {} 0", "\u{2500}".repeat(29))
+            format!("Agents (status) {} 0", "\u{2500}".repeat(20))
         );
         assert_eq!(text[29], format!("{FOOTER}    \u{2191} \u{25cf}"));
         assert_eq!(
@@ -2421,7 +2442,13 @@ mod tests {
         );
         // Narrow: both still fit.
         let text = plain(&render(&mut app, &Theme::default(), 30, 22));
-        assert_eq!(text[28], format!("Agents {} 0", "\u{2500}".repeat(13)));
+        assert_eq!(
+            text[28],
+            format!("Agents (status) {} 0", "\u{2500}".repeat(4))
+        );
+        // Narrower, the title gives up the grouping before itself.
+        let narrower = plain(&render(&mut app, &Theme::default(), 30, 16));
+        assert_eq!(narrower[28], format!("Agents {} 0", "\u{2500}".repeat(7)));
         // The keys are cut before the marks are.
         assert_eq!(text[29], "[?] keys  [D]etai\u{2026} \u{2191} \u{25cf}");
         // Too narrow for the title: the count stays, and the marks.
@@ -2466,6 +2493,8 @@ mod tests {
         app.search.as_mut().unwrap().typing = false;
         let found = plain(&render(&mut app, &Theme::default(), 60, 38));
         assert_eq!(header(&found), "7 matches  / an");
+        // Search results are in neither grouping, and the title says none.
+        assert!(status(&found).starts_with("Agents \u{2500}"));
         assert!(found.iter().any(|l| l.contains("Ancient")), "{found:?}");
         assert!(
             found.iter().any(|l| l.trim_end() == "Quiet  4"),

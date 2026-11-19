@@ -709,20 +709,25 @@ Public API fields that are not modelled are silently ignored, e.g.
   | search being typed | `/ {text}▏` (U+258F cursor) | accent |
   | notice set | the notice text | info |
 
-  Otherwise it MUST be the title `Agents` (ZR-033), a rule, and at the end
-  of the row, after one space, the count `{N}` (accent colour, bold). `N`
+  Otherwise it MUST be the title (ZR-033), a rule, and at the end
+  of the row, after one space, the count `{N}` (accent colour, bold). The
+  title says how the list is grouped (ZG-017): `Agents (status)` or
+  `Agents (team)`; while the list holds search results (ZK-026), which are
+  in neither grouping, it is `Agents` alone. `N`
   is the number of non-Quiet agent rows plus the sum of all Quiet section
   counts (open or closed); Quiet agents older than 7 days and stopped
   agents are not counted. Grouped by team, `N` is the sum of the team
   headings' counts (ZG-018). While the list holds search results (ZK-026)
   the count is `{N} match` or `{N} matches`, `N` being the number of rows,
-  followed by two spaces and `/ {query}`. The title and its rule are left
-  out when the row cannot hold them with three columns of rule, and then
+  followed by two spaces and `/ {query}`. When the row cannot hold the
+  title with three columns of rule, the title is `Agents` alone; when it
+  cannot hold that either, the title and its rule are left out, and then
   the count is cut with `…`. The status dot and the mark of a newer release
   are on the footer (ZR-004); in a pane too short for a footer they follow
   the count here, each after one space.
-- **Source:** `zellij/src/view.rs` (status_line, shown_agent_count, plural)
-- **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds, a_newer_release_is_marked_on_the_header_and_explained_in_help, search_results_are_a_flat_list_with_the_query_on_the_status_line, details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel
+- **Source:** `zellij/src/view.rs` (status_line, agents_title, shown_agent_count, plural)
+- **Decision:** D-084
+- **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds, a_newer_release_is_marked_on_the_header_and_explained_in_help (the title in a narrow pane), team_grouping_shows_headings_the_lead_and_folded_counts (`Agents (team)`), search_results_are_a_flat_list_with_the_query_on_the_status_line, details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel
 
 #### ZR-003 The status dot
 - **Behavior:** The dot's colour MUST be the worst of the connection and
@@ -1941,7 +1946,7 @@ footer, and the details as
 they were before the section scrolled:
 
 ```text
-│Agents ───────────────────────────── 4│  accent, bold: it has the keys
+│Agents (status) ──────────────────── 4│  accent, bold: it has the keys
 │Working  4                            │
 │ ⠹ Auth lead                        0m│  selected; the age at the edge
 │ ⠹ E2E agent                        0m│

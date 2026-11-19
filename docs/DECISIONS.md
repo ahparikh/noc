@@ -897,6 +897,17 @@ that is right, or a team needs an end that is recorded, is open
 (spec/11-teams.md). The row is only in the team grouping; grouped by
 status, Quiet agents already fold by age.
 
+### D-084: the Agents title says how the list is grouped
+
+The title of the Agents section is `Agents (status)` or `Agents (team)`.
+Search results are in neither grouping and are under `Agents` alone, as is
+a pane too narrow for the longer title.
+
+**Why:** `v` said which grouping it switched to in a notice that is gone a
+moment later, and after that only the shape of the list told the two
+apart; a list of one team's agents and a list of working agents can look
+alike.
+
 ### D-081: the inner sessions keep Zellij's tab bar, with the session's name
 
 The inner layout uses Zellij's own tab bar and does not hide the session's

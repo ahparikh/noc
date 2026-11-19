@@ -435,7 +435,7 @@ The panel does not read the inner session itself. The relay there (ZX-039) sends
 - **Verified by:** `zellij/src/details.rs` `the_window_closes_on_esc_d_capital_d_and_q_only`; `zellij/e2e/nested.sh` "d opens the floating details window" (title), "q closes it"
 
 ### ZX-034 Panel pane title
-- **Behavior:** The panel's pane MUST have no title: its first row already says `Agents` ([07-zellij-panel.md](07-zellij-panel.md) ZR-033). The panel names its pane a single space, once, when permissions are granted (ZH-004); an empty name would make Zellij show the plugin's location.
+- **Behavior:** The panel's pane MUST have no title: its first row already says `Agents (status)` or `Agents (team)` ([07-zellij-panel.md](07-zellij-panel.md) ZR-033). The panel names its pane a single space, once, when permissions are granted (ZH-004); an empty name would make Zellij show the plugin's location.
 - **Source:** `zellij/src/main.rs` (`on_granted`); `zellij/src/panel.rs` (`PANEL_TITLE`)
 - **Verified by:** `zellij/e2e/nested.sh` "host session has the sidebar and one guest pane" (finds the panel by its plugin location); that the frame shows no title is MANUAL
 
@@ -620,7 +620,7 @@ teams in Zellij is in [11-teams.md](11-teams.md).
   | # | Check name | Asserts |
   |---|---|---|
   | 1 | host session has the sidebar and one guest pane | a tiled plugin pane loaded from `zellij-noc.wasm` and a tiled terminal exist in the host |
-  | 2 | sidebar lists the registry's agents | the Agents title row ends `2` within 10 s |
+  | 2 | sidebar lists the registry's agents | the Agents title row is `Agents (status)`, a rule and `2` within 10 s |
   | 3 | the sidebar runs a registry watcher | a process whose command line ends in `zellij-noc-registry-watch=<host>` exists within 10 s |
   | 4 | guest pane keeps exactly one client on the inner session | inner client count is 1 |
   | 5 | the keyboard starts in the inner session | host focus is the guest pane |
@@ -641,7 +641,7 @@ teams in Zellij is in [11-teams.md](11-teams.md).
   | 20 | q closes it | no visible floating plugin pane remains |
   | 21 | and the keyboard is back in the sidebar | host focus becomes the panel within 5 s |
   | 22 | / lists the agents that match what is typed | with the keyboard on the panel, after `/`, `second` and `Enter` the screen shows `1 match` within 8 s |
-  | 23 | Esc ends the search | after `Esc` the Agents title row ends `2` within 8 s |
+  | 23 | Esc ends the search | after `Esc` the Agents title row is `Agents (status)`, a rule and `2` within 8 s |
   | 24 | Alt-o hides the sidebar | a host tab reports `is_fullscreen_active` true |
   | 25 | Alt-o shows it again | it reports false |
   | 26 | Enter on a team's agent creates the team's session | with the fake registry putting `Second agent` in team `auth`, and that agent searched for and opened, the session `<inner>--auth` is running within 10 s |

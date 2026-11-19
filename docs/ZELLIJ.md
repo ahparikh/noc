@@ -244,7 +244,8 @@ pair and start it again.
 
 ### The status line
 
-The first row of the sidebar is the title of the Agents section, and ends
+The first row of the sidebar is the title of the Agents section. It says
+how the list is grouped, `Agents (status)` or `Agents (team)`, and ends
 with how many agents there are. The last row, which lists a few keys, ends
 with a dot: green when connected, yellow when something needs a look (a
 setting that cannot work, the inner session not running, still connecting),

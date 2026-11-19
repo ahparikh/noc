@@ -164,7 +164,7 @@ GUEST="T$(panes "$HOST" | jq -r 'map(select((.is_plugin | not) and (.is_floating
 check "host session has the sidebar and one guest pane" \
 	[ "$SIDEBAR" != "Pnull" -a "$GUEST" != "Tnull" ]
 check "sidebar lists the registry's agents" \
-	wait_for 10 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q -E 'Agents ─+ 2│'"
+	wait_for 10 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q -E 'Agents \(status\) ─+ 2│'"
 check "the sidebar runs a registry watcher" \
 	wait_for 10 pgrep -f -- "zellij-noc-registry-watch=$HOST\$"
 check "guest pane keeps exactly one client on the inner session" \
@@ -257,7 +257,7 @@ check "/ lists the agents that match what is typed" \
 	wait_for 8 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q '1 match'"
 keys Escape
 check "Esc ends the search" \
-	wait_for 8 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q -E 'Agents ─+ 2│'"
+	wait_for 8 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q -E 'Agents \(status\) ─+ 2│'"
 keys M-m
 wait_for 5 host_focus_is "$GUEST"
 

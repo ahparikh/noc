@@ -666,11 +666,11 @@ teams in Zellij is in [11-teams.md](11-teams.md).
   | 39 | and gives it the keyboard | host focus becomes the guest pane |
   | 40 | when the session on show ends, the guest pane shows the inner session | after `kill-session <session>`, the inner session has 1 client within 10 s |
   | 41 | and the team's session is made again when its agent is opened | after `Second agent` is opened again, the session has 1 client within 10 s; the host session's client was not detached, or the keys would not have reached the panel |
-  | 42 | the sidebar lists the running sessions, the one on show marked | the screen shows `Sessions  2` and, within the two rows under it, `● auth` |
+  | 42 | the sidebar lists the running sessions, the one on show marked | the Sessions section shows `● auth` and ends `2 sessions` |
   | 43 | Enter on a session's row shows that session | after `Tab`, `G` and `Enter` in the panel, the inner session has 1 client within 10 s |
   | 44 | and hands it the keyboard | host focus becomes the guest pane |
   | 45 | x on a team session's row ends it, once confirmed | after `Tab`, `gg`, `x` and `y`, the team's session is not running within 10 s |
-  | 46 | and the section lists the inner session alone | the screen shows `Sessions  1` |
+  | 46 | and the section lists the inner session alone | the section ends `1 session` |
   | 47 | detaching the inner session's client detaches the host too | after `Ctrl o`, `d` typed into the inner session, host client count is 0 within 8 s |
   | 48 | and the guest pane attaches to the inner session again | the inner session has 1 client within 8 s; the pair is then attached again |
   | 49 | Alt-d detaches the host client | host client count is 0 |

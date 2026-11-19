@@ -1141,10 +1141,18 @@ const SESSION_LABEL_WIDTH: usize = 16;
 /// `SESSION_ROWS` rows, around the selected one.
 fn session_lines(app: &ZellijNoc, theme: &Theme, cols: usize) -> Vec<Line> {
     let focused = app.list_focus() == Focus::Sessions;
+    // Open, the count is the section's last line, as the agents' count is
+    // the list's; closed, the title carries it.
+    let count = app.sessions.len();
+    let title = if app.show_sessions {
+        SESSIONS_TITLE.to_string()
+    } else {
+        format!("{SESSIONS_TITLE}  {count}")
+    };
     let mut lines = vec![section_heading(
         theme,
         Some(app.show_sessions),
-        &format!("{SESSIONS_TITLE}  {}", app.sessions.len()),
+        &title,
         app.focus == Focus::Sessions,
         cols,
     )];
@@ -1189,6 +1197,10 @@ fn session_lines(app: &ZellijNoc, theme: &Theme, cols: usize) -> Vec<Line> {
                 .with(&tail, theme.muted_style())
         });
     }
+    lines.push(Line::plain(
+        &format!("{count} session{}", plural(count)),
+        Style::fg(theme.accent).bold(),
+    ));
     lines
 }
 
@@ -1865,7 +1877,7 @@ mod tests {
         assert_eq!(text[1].trim_end(), "Blocked  1");
         let (list, details) = (at(&text, "Sessions"), at(&text, "Details"));
         assert!(text[list - 1].starts_with("6 agents"), "the status line");
-        assert_eq!(text[list], rule("\u{25be} Sessions  3"));
+        assert_eq!(text[list], rule("\u{25be} Sessions"));
         // The teams' sessions by name, then the inner session; the one on
         // show is marked, and each says what its team's agents need.
         assert_eq!(text[list + 1].trim_end(), "   auth     no agents");
@@ -1874,7 +1886,9 @@ mod tests {
             " \u{25cf} billing  1 blocked \u{b7} 1 working \u{b7} 1\u{2026}"
         );
         assert_eq!(text[list + 3].trim_end(), "   no-team  1 working");
-        assert_eq!(details, list + 4);
+        // The section ends with its count, as the list does.
+        assert_eq!(text[list + 4].trim_end(), "3 sessions");
+        assert_eq!(details, list + 5);
         assert_eq!(text[details], rule("\u{25be} Details"));
         assert_eq!(text[details + 1].trim_end(), "Blocked one");
         assert_eq!(text[39].trim_end(), FOOTER);
@@ -1901,8 +1915,9 @@ mod tests {
         sessions(&mut app, &["noc"], "noc");
         let text = plain(&panel(&mut app, &Theme::default(), 40, 38));
         let list = at(&text, "Sessions");
-        assert_eq!(text[list], rule("\u{25be} Sessions  1"));
+        assert_eq!(text[list], rule("\u{25be} Sessions"));
         assert_eq!(text[list + 1].trim_end(), " \u{25cf} no-team  1 working");
+        assert_eq!(text[list + 2].trim_end(), "1 session");
         // A short pane has no room for the section.
         let text = plain(&panel(&mut app, &Theme::default(), 14, 38));
         assert!(!text.iter().any(|l| l.contains("Sessions")));
@@ -1911,11 +1926,12 @@ mod tests {
         let names: Vec<&str> = many.iter().map(String::as_str).collect();
         sessions(&mut app, &names, "noc--t7");
         let text = plain(&panel(&mut app, &Theme::default(), 40, 38));
-        let list = at(&text, "Sessions  9");
+        let list = at(&text, "Sessions");
         let shown: Vec<&str> = text[list + 1..list + 6].iter().map(|l| l.trim()).collect();
         assert_eq!(shown[0], "t4  no agents");
         assert_eq!(shown[3], "\u{25cf} t7  no agents");
-        assert!(text[list + 6].contains("Details"));
+        assert_eq!(text[list + 6].trim_end(), "9 sessions");
+        assert!(text[list + 7].contains("Details"));
     }
 
     #[test]

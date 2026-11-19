@@ -363,6 +363,7 @@ impl State {
             guest::CTX_WATCH => self.on_guest_watch(exit),
             guest::CTX_OPEN => self.on_guest_open(exit, stdout, stderr, context),
             guest::CTX_SWITCH => self.on_guest_switch(exit, stderr),
+            guest::CTX_READY => self.on_guest_ready(exit, stdout, context),
             guest::CTX_END => self.on_end_session(exit, stderr, context),
             guest::CTX_HOST_INFO => {
                 if exit == Some(0) {

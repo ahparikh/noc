@@ -961,6 +961,25 @@ impl State {
         }
     }
 
+    /// The keyboard starts in the panel (the layout says so), where the
+    /// permission prompt of a new plugin location is answered. Once the
+    /// guest pane the panel started holds a session, the keyboard goes
+    /// there, once: where the user works.
+    pub fn hand_over_keyboard(&mut self) {
+        if self.guest_handed_over || self.guest_started.is_none() {
+            return;
+        }
+        let Some(guest) = self.guest_pane() else {
+            return;
+        };
+        if guest.nested_session.is_none() {
+            return;
+        }
+        if !self.panel_has_keyboard() || self.host_action(&["move-focus", "right"]) {
+            self.guest_handed_over = true;
+        }
+    }
+
     /// The details window was opened from the panel, so when it closes the
     /// keyboard comes back to the panel; Zellij would give it to the guest
     /// pane. Closed means gone from the panes after having been among them.

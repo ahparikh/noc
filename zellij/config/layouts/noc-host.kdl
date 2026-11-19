@@ -14,7 +14,10 @@
 
 layout {
     pane split_direction="vertical" {
-        pane size=38 {
+        // The keyboard starts here, so that the first time a plugin location
+        // is used its permissions can be answered at once (y); the sidebar
+        // hands the keyboard to the inner session when that has started.
+        pane size=38 focus=true {
             // The sidebar. The plugin is loaded from a release: Zellij
             // downloads a URL once and keeps it, so upgrading means changing
             // the version here and in layouts/noc-inner.kdl, which running
@@ -91,7 +94,7 @@ layout {
         // plugin is there: two sessions that download it at the same moment
         // spoil the copy Zellij keeps. If the sidebar cannot run, Enter in
         // this pane starts it.
-        pane borderless=true focus=true command="sh" start_suspended=true {
+        pane borderless=true command="sh" start_suspended=true {
             args "-c" "inner=noc; host=noc-host; unset ZELLIJ ZELLIJ_SESSION_NAME ZELLIJ_PANE_ID; while :; do zellij attach --create \"$inner\" options --default-layout noc-inner; sleep 0.5; if zellij list-sessions --no-formatting 2>/dev/null | grep -v EXITED | grep -q \"^$inner \"; then sleep 1; else zellij kill-session \"$host\"; exit 0; fi; done"
         }
     }

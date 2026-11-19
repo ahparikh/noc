@@ -171,7 +171,7 @@ check "the sidebar runs a registry watcher" \
 	wait_for 10 pgrep -f -- "zellij-noc-registry-watch=$HOST\$"
 check "guest pane keeps exactly one client on the inner session" \
 	[ "$(clients "$INNER")" = 1 ]
-check "the keyboard starts in the inner session" host_focus_is "$GUEST"
+check "the keyboard starts in the inner session" wait_for 5 host_focus_is "$GUEST"
 # noc-inner.kdl takes the session name off the pane frames; config.kdl
 # leaves it on.
 check "inner session takes its options from noc-inner.kdl" \

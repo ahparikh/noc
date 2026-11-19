@@ -89,13 +89,14 @@ layout {
         // or because the team's session it was showing ended. It ends the
         // host session when the inner session has ended. The sidebar moves
         // this client between the inner session and the teams' sessions.
-        // It starts suspended and the sidebar starts it, so the inner
-        // session, whose tab bar is the same plugin, is created once the
-        // plugin is there: two sessions that download it at the same moment
-        // spoil the copy Zellij keeps. If the sidebar cannot run, Enter in
-        // this pane starts it.
-        pane borderless=true command="sh" start_suspended=true {
-            args "-c" "inner=noc; host=noc-host; unset ZELLIJ ZELLIJ_SESSION_NAME ZELLIJ_PANE_ID; while :; do zellij attach --create \"$inner\" options --default-layout noc-inner; sleep 0.5; if zellij list-sessions --no-formatting 2>/dev/null | grep -v EXITED | grep -q \"^$inner \"; then sleep 1; else zellij kill-session \"$host\"; exit 0; fi; done"
+        // Before it starts the inner session it waits for the sidebar's
+        // sign (a directory the sidebar makes), so that the inner session,
+        // whose tab bar is the same plugin, is created once the plugin is
+        // there: two sessions that download it at the same moment spoil
+        // the copy Zellij keeps. After a minute without the sign it starts
+        // anyway.
+        pane borderless=true command="sh" {
+            args "-c" "inner=noc; host=noc-host; unset ZELLIJ ZELLIJ_SESSION_NAME ZELLIJ_PANE_ID; ready=\"${TMPDIR:-/tmp}/noc-ready-$host\"; rmdir \"$ready\" 2>/dev/null; n=0; until [ -d \"$ready\" ] || [ $n -ge 600 ]; do [ $n -eq 20 ] && echo 'Waiting for the noc sidebar. If it asks for permissions, answer y there.'; sleep 0.1; n=$((n+1)); done; rmdir \"$ready\" 2>/dev/null; while :; do zellij attach --create \"$inner\" options --default-layout noc-inner; sleep 0.5; if zellij list-sessions --no-formatting 2>/dev/null | grep -v EXITED | grep -q \"^$inner \"; then sleep 1; else zellij kill-session \"$host\"; exit 0; fi; done"
         }
     }
 }

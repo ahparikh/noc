@@ -222,7 +222,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** `zellij/e2e/nested.sh` "inner session wears the away theme while the sidebar has the keyboard", "inner session returns to its home theme"; MANUAL: with a `config.kdl` that binds a key of its own, that key and Zellij's default keys still work in a session created from the layout
 
 ### ZX-004 The host layout
-- **Behavior:** `layouts/noc-host.kdl` MUST define one vertically split pane with two children: a pane of `size=38 focus=true` containing `plugin location="noc"`, and a pane with `borderless=true command="sh" start_suspended=true` whose arguments are `-c` and the guest loop (ZX-007). The pane waits for Enter, which the panel sends (ZX-040). The session is started from outside Zellij with `zellij --session noc-host --new-session-with-layout noc-host`.
+- **Behavior:** `layouts/noc-host.kdl` MUST define one vertically split pane with two children: a pane of `size=38 focus=true` containing `plugin location="noc"`, and a pane with `borderless=true command="sh"` whose arguments are `-c` and the guest loop (ZX-007), which first waits for the panel's sign (ZX-040). The session is started from outside Zellij with `zellij --session noc-host --new-session-with-layout noc-host`.
 - **Source:** `zellij/config/layouts/noc-host.kdl`
 - **Verified by:** `zellij/e2e/nested.sh` "host session has the sidebar and one guest pane", "the keyboard starts in the inner session"
 
@@ -243,7 +243,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 
 ### ZX-007 The guest loop
 - **Behavior:** The guest pane MUST run this loop with `inner=noc; host=noc-host`:
-  1. Unset `ZELLIJ`, `ZELLIJ_SESSION_NAME` and `ZELLIJ_PANE_ID`.
+  1. Unset `ZELLIJ`, `ZELLIJ_SESSION_NAME` and `ZELLIJ_PANE_ID`. Then, once, wait for the panel's sign (ZX-040): remove the directory `${TMPDIR:-/tmp}/noc-ready-<host>` if it is there, wait until it is there again, looking every `0.1` s, for at most `60` s, saying `Waiting for the noc sidebar. If it asks for permissions, answer y there.` after `2` s, and remove it.
   2. Run `zellij attach --create "$inner" options --default-layout noc-inner`. This creates the inner session on first start, with the inner layout (ZX-035); when the session already exists the layout is not read.
   3. When that client returns, sleep `0.5` s and test whether `zellij list-sessions --no-formatting` has a line starting `<inner> ` that does not contain `EXITED`.
   4. If it does (the client detached, or the team's session it was showing ended): sleep `1` s, and go to step 2. The loop cannot tell the two apart; the panel can, and detaches the host session's client in the first case (ZT-005).
@@ -254,8 +254,8 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** `zellij/e2e/nested.sh` "guest pane keeps exactly one client on the inner session", "the inner client stays attached in the guest pane", "and the guest pane attaches to the inner session again", "ending the inner session ends the host session"
 
 ### ZX-040 The panel starts the guest pane
-- **Behavior:** With permissions granted, on every `PaneUpdate` and tick, when the guest pane (ZX-010) is held and has not exited (it is waiting to run its command), the panel MUST type Enter into it (`action write --pane-id terminal_<N> 13`, ZX-016), and again every `2.0` s for as long as it is still held. So the inner session, whose tab bar is this plugin (ZX-035), is created only once the panel runs, by which time Zellij has fetched the plugin and kept it: two sessions that fetch a plugin from its URL at the same moment both write the one file Zellij keeps it in (behaviour 15). The keyboard starts in the panel's pane, so the permission prompt Zellij shows there for a plugin location it has not seen can be answered at once; were the inner session started first, its tab bar would ask too, in a row that cannot take the keyboard. Once the guest pane the panel started holds a session (ZT-003), the panel MUST hand it the keyboard, once (`action move-focus right`), unless the user has moved it already. When the panel cannot run (its permissions are refused, or the plugin did not load), the guest pane keeps waiting, and Enter in it, after moving there, starts the pair without the sidebar.
-- **Source:** `zellij/src/panel.rs` (`start_guest`, `hand_over_keyboard`, `GUEST_START_RETRY`); `zellij/src/main.rs` (`on_pane_update`, `on_panel_tick`); `zellij/config/layouts/noc-host.kdl`
+- **Behavior:** With permissions granted, on every `PaneUpdate` and tick, when no session is attached in the guest pane (ZX-010, ZT-003) and the pane has not exited, the panel MUST give the guest loop its sign (ZX-007) by running `/bin/sh -c 'mkdir "${TMPDIR:-/tmp}/noc-ready-$1" 2>/dev/null; :' sh <host session>` (context `host-action`), and again every `2.0` s for as long as no session is attached there. The sign is a directory because making one never writes through a link someone else left at that path. So the inner session, whose tab bar is this plugin (ZX-035), is created only once the panel runs, by which time Zellij has fetched the plugin and kept it: two sessions that fetch a plugin from its URL at the same moment both write the one file Zellij keeps it in (behaviour 15). The keyboard starts in the panel's pane, so the permission prompt Zellij shows there for a plugin location it has not seen can be answered at once; were the inner session started first, its tab bar would ask too, in a row that cannot take the keyboard. Once the guest pane the panel started holds a session (ZT-003), the panel MUST hand it the keyboard, once (`action move-focus right`), unless the user has moved it already. When the panel cannot run (its permissions are refused or not answered, or the plugin did not load), the guest loop starts the inner session by itself after its `60` s. The guest pane is not started suspended for the panel to start: Zellij gives such a pane no size until the window is next resized (behaviour 16).
+- **Source:** `zellij/src/panel.rs` (`start_guest`, `hand_over_keyboard`, `GUEST_START_RETRY`, `GUEST_READY_SCRIPT`); `zellij/src/main.rs` (`on_pane_update`, `on_panel_tick`); `zellij/config/layouts/noc-host.kdl`
 - **Decision:** D-084
 - **Verified by:** `zellij/e2e/nested.sh` "guest pane keeps exactly one client on the inner session" (the inner session exists only because the panel started the pane), "the keyboard starts in the inner session" (handed over); the wait before permissions are granted is MANUAL
 
@@ -756,8 +756,11 @@ confirmed by running it.
     mismatch` from the one, `No such file or directory` from the other) in
     every session until the file is removed. Seen with the host session's
     panel and the inner session's tab bar.
-16. A pane with `start_suspended=true` is reported held and not exited
-    until it is given Enter, which `action write --pane-id` can type.
+16. A pane with `start_suspended=true` has no size until the window is
+    resized after it was started: Zellij cannot size a pane that runs
+    nothing yet (`failed to set terminal id … to size` in its log), and
+    starts its command at 80 columns by 24 rows. A nested session in such
+    a pane is drawn that small in a corner of the pane.
 
 ## Design choices
 

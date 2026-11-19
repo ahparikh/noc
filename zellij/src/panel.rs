@@ -23,6 +23,9 @@ pub const PANEL_TITLE: &str = " ";
 /// How long the panel waits for the guest pane to start before it sends
 /// the Enter again.
 pub const GUEST_START_RETRY: f64 = 2.0;
+/// Makes the directory the guest pane's loop waits for. `$1` is the host
+/// session; the loop in `noc-host.kdl` names the same path.
+pub const GUEST_READY_SCRIPT: &str = "mkdir \"${TMPDIR:-/tmp}/noc-ready-$1\" 2>/dev/null; :";
 
 // ---- keys -> intents (pure) ----
 
@@ -932,12 +935,14 @@ impl State {
         }
     }
 
-    /// The guest pane's command starts suspended, and the panel starts it,
-    /// with the Enter its "press Enter to run" waits for. So the inner
-    /// session, whose tab bar is this plugin, is created only once the
-    /// panel runs, by which time Zellij has the plugin: two sessions that
-    /// fetch a plugin from its URL at the same moment both write the one
-    /// file Zellij keeps it in, and spoil it.
+    /// The guest pane's loop waits for a sign before it starts the inner
+    /// session: a directory, which the panel makes here, again every
+    /// `GUEST_START_RETRY` until a session is attached in the guest pane.
+    /// So the inner session, whose tab bar is this plugin, is created only
+    /// once the panel runs, by which time Zellij has the plugin: two
+    /// sessions that fetch a plugin from its URL at the same moment both
+    /// write the one file Zellij keeps it in, and spoil it. A directory,
+    /// because making one never writes through a link someone left there.
     pub fn start_guest(&mut self) {
         if !self.permissions_granted {
             return;
@@ -945,9 +950,12 @@ impl State {
         let Some(guest) = self.guest_pane() else {
             return;
         };
-        if !guest.is_held || guest.exited {
+        if guest.nested_session.is_some() || guest.exited {
             return;
         }
+        let Some(host) = self.session_name.clone() else {
+            return;
+        };
         let now = now_secs();
         if self
             .guest_started
@@ -955,10 +963,11 @@ impl State {
         {
             return;
         }
-        let pane = format!("terminal_{}", guest.id);
-        if self.host_action(&["write", "--pane-id", pane.as_str(), "13"]) {
-            self.guest_started = Some(now);
-        }
+        run_command(
+            &["/bin/sh", "-c", GUEST_READY_SCRIPT, "sh", host.as_str()],
+            ctx(crate::guest::CTX_HOST_ACTION),
+        );
+        self.guest_started = Some(now);
     }
 
     /// The keyboard starts in the panel (the layout says so), where the

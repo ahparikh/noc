@@ -133,6 +133,42 @@ It needs the plugin's permissions already granted for the build path (run
 3. If it is a design decision, record it in `docs/DECISIONS.md`.
 4. Run the checks above.
 
+## A beta of the Zellij frontend
+
+To use a branch's plugin and layouts in daily use before they are released,
+publish them as the beta:
+
+```sh
+packaging/beta.sh
+```
+
+It builds the plugin from `HEAD` and replaces the pre-release `beta-latest`
+with it, and moves the tag `beta-latest` to a commit that is `HEAD` with
+the two layouts loading that plugin. The tag is not `v…`, so the release
+workflow does not run and the Homebrew formula is untouched; a pre-release
+is not "latest", so nobody on a release is told to upgrade. The binary is
+not part of a beta: it runs with the released `noc`.
+
+To install it:
+
+```sh
+sha=$(git ls-remote https://github.com/ahparikh/noc refs/tags/beta-latest | cut -f1)
+curl -fsSL "https://raw.githubusercontent.com/ahparikh/noc/$sha/zellij/install-config.sh" |
+  NOC_REF="$sha" NOC_REPLACE_INNER=1 bash
+```
+
+The commit is named, not the tag, because GitHub serves a moved tag's old
+files for some minutes. `NOC_REPLACE_INNER=1` installs the beta's inner
+layout whatever is there: the file an earlier beta shipped cannot be
+fetched again to tell whether yours was edited. The plugin's location is
+the same for every beta, and Zellij keeps what it downloaded from a
+location, so the copy it kept has to go before the pair is started again:
+the files with all-digit names in Zellij's cache directory
+(`~/Library/Caches/org.Zellij-Contributors.Zellij` on macOS,
+`~/.cache/zellij` on Linux) are the plugins it downloaded. Its permission
+is per location, so it is asked for once. To go back, install the release
+(`install-config.sh` with no `NOC_REF`).
+
 ## Releasing
 
 A release is a tag. Pushing `vX.Y.Z` runs `.github/workflows/release.yml`,

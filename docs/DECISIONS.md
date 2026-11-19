@@ -801,7 +801,122 @@ tenth of a second. `poll_interval_ms` now sets how long a lost event can
 last, so it can be raised without the list feeling slow. One more process
 (`noc watch`) runs for as long as the pair does.
 
-## Names, state, and grouping
+### D-072: one session per team, one session on show
+
+In Zellij each team has its own inner session, named
+`<inner>--<team>`. The agents in no team use the inner session itself. The
+host session's guest pane shows one session at a time. The panel changes sessions
+by asking the relay of the session on show to switch its client's session,
+which Zellij does inside the running client and which creates the session when
+it is not running. Zellij tells the host which session is nested in the
+guest pane, and the panel takes the session on show from that.
+
+**Why:** each piece of work gets its own tabs and layout, and moving
+between pieces of work is one step instead of a search through tabs. The
+sidebar still lists every team, because what needs attention anywhere is
+its purpose. Switching the client in place was measured against the
+alternative, ending the client and attaching another from the guest pane's
+loop: the switch shows the new session about a tenth of a second after the
+key, with no detach, and the terminal never leaves Zellij's screen. A
+Zellij command run from outside cannot switch a client, so the request
+goes through the relay, which is in the session with it. Taking the session on
+show from what Zellij reports, instead of from what the panel last asked
+for, keeps the panel right when a session ends or the user changes session
+themselves.
+**Consequence:** "one inner session" (D-055) is now "one session on show".
+What the panel knows about a session is kept per session. A session is created
+from the inner layout, which for a client that changes session is looked up
+by name in the default configuration directory; a pair that keeps its
+configuration elsewhere, as the development pair does, names the file by
+its path (`team_layout`). A session that is being created cannot take a relay
+until it has a tab, so the first read of a new session waits a quarter of a
+second, which makes opening a team for the first time take about half a
+second. Sessions are never ended by noc.
+
+### D-080: the panel, not the guest pane's loop, detaches the host
+
+When the guest pane's client exits, its loop attaches a new one to the
+inner session and does nothing else. The panel detaches the host session's
+client if the session that client was in is still running.
+
+**Why:** one detach should leave both sessions (D-055), but a client also
+exits when the session it is in ends, and with sessions that is ordinary: the
+last tab of a team's session is closed. The loop sees only that its client
+returned. The panel knows which session was on show and can ask whether it is
+still running.
+**Consequence:** closing a team's last tab shows the inner session instead
+of detaching. A pair whose panel is not running (its permissions were
+refused) no longer detaches the host when the inner client detaches; the
+loop attaches again and the host stays.
+
+### D-082: the sidebar is three titled sections, and one of two has the keys
+
+The sidebar is Agents, Sessions and Details, each under its title row.
+Sessions lists the running inner sessions. Sessions and Details close to
+their title row, so the list can have the sidebar to itself, and are never
+hidden. `Tab` moves the keys between the two lists and `Shift Tab` into
+Details and out; Details is about the list that last had the keys, and
+with them it scrolls, down and sideways.
+
+**Why:** with a session per team, "what do I have open" is a different
+question from "which agents need me", and the answer is short: a handful
+of sessions. A list of its own answers it in either grouping, where the
+team grouping answers it only by listing every team. Two lists need
+titles to be told apart, and one of them must own `j`, `k` and `Enter`;
+a visible owner (its title in the accent colour, its row highlighted)
+is cheaper to learn than separate keys for each list. Ending a session
+lives there because that is where a session is a thing one can point at.
+A closed section keeps its title row because a section that
+vanishes leaves no sign that it can come back, or of which key brings it.
+Details scrolls instead of being cut because what it holds varies from two
+lines to twenty, and a third of the sidebar cannot be right for both; it
+moves sideways because paths and commands do not wrap usefully.
+**Consequence:** three rows of the sidebar are titles. Sessions takes its
+rows before Details does, so on a short pane Details shrinks first, and
+under 14 rows Sessions is not drawn. The keys that act on an agent are
+refused while Sessions has the keys, since no agent is highlighted then;
+in Details they act on what the details are about, so `h` and `l`, which
+scroll there, do not fold or open. Details is not on `Tab`'s round: reached
+through Sessions it would be about a session, never an agent. A team with a session but no listed
+agent shows as `no agents`; a team with agents but no session is not in
+the section.
+
+### D-083: a team with no agent at work rests behind one row
+
+Grouped by team, the teams whose agents are all Quiet are listed last,
+behind one `Quiet teams` row that starts closed. Nothing is stored: a team
+is at rest for exactly as long as none of its agents is at work.
+
+**Why:** a team is a name its agents share, so it lasts as long as any
+agent carries it, and finished work would otherwise fill the list for
+ever. Deriving "at rest" from the agents needs no new state, no command
+and no decision from the user, and undoes itself when work resumes.
+**Consequence:** a team name used again wakes the whole team: its old
+Quiet agents come back with it, behind the team's own Quiet row. Whether
+that is right, or a team needs an end that is recorded, is open
+(spec/11-teams.md). The row is only in the team grouping; grouped by
+status, Quiet agents already fold by age.
+
+### D-081: the inner sessions keep Zellij's tab bar, with the session's name
+
+The inner layout uses Zellij's own tab bar and does not hide the session's
+name, so the bar starts `Zellij (noc)` or `Zellij (noc--<team>)`. The
+plugin can draw a bar with the team in place of "Zellij" (`role "bar"`),
+and no shipped layout loads it.
+
+**Why:** with several inner sessions that look alike, the one thing the
+screen must say is which team this is, and the session's name says it with
+nothing added. The plugin's own bar was tried in the layout and said it
+better, but a pane of the inner layout loads the moment the inner session
+starts, which is the moment the host session loads the sidebar. The first
+time a plugin location is used, both sessions fetched it and both wrote
+the one file Zellij keeps it in, which left it spoilt and nothing able to
+load. Making the inner session wait for the sidebar cured that at the cost
+of a start-up handshake between the layout and the plugin, and one way of
+waiting (a suspended pane) left the inner session at 80 by 24.
+**Consequence:** the bar says `Zellij (noc--auth)` where `auth` would do.
+A bar of noc's own needs a way to load that is not a race: a plugin
+fetched to a file by the installer, or a separate small plugin.
 
 ### D-042: names are two-way and the most recent rename wins
 
@@ -1107,25 +1222,14 @@ background agent needs none.
 **Consequence:** a remote agent that lives in someone's terminal is not
 given a new home by attaching to it.
 
-### D-072: one room per team, one room on show *(planned)*
-
-In Zellij each team would have its own inner session, a room, and the host
-session's guest pane would show one room at a time. Agents in no team would
-use the default room, which is today's inner session. This is not designed
-in detail yet; see spec/11-teams.md.
-
-**Why:** each piece of work gets its own tabs and layout, and moving
-between pieces of work is one step instead of a search through tabs. The
-sidebar still lists every team, because what needs attention anywhere is
-its purpose.
-**Consequence:** this would replace "one inner session" (D-055) with "one
-room on show".
-
-### D-073: a tab is one agent, and its panes are ways into it *(planned)*
+### D-073: a tab is one agent, and its panes are ways into it *(planned in part)*
 
 An agent has one tab. The other panes in that tab, such as a shell in its
 worktree, belong to that agent. An agent's tab is found wherever it is
-open, it is never moved between rooms, and it outlives the agent.
+open, it is never moved between sessions, and it outlives the agent. Built:
+an agent is opened in the session where it is already open, and otherwise in
+its team's session (spec/08-zellij-host.md ZT-006). Not built: the panes that
+belong to an agent's tab (spec/11-teams.md).
 
 **Why:** a tab bar of agents is a readable picture of a team, and the shell
 beside an agent is the one you want when you look at it. Zellij cannot move

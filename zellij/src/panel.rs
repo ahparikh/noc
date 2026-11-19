@@ -1,7 +1,10 @@
 //! Key handling and intents, polling, stop/rename, opening agents, and
 //! keyboard ownership between the panel and the inner session.
 
-use crate::app::{is_team_char, is_team_name, PendingStop, Transport, ZellijNoc, TEAM_NAME_MAX};
+use crate::app::{
+    is_team_char, is_team_name, Focus, PendingStop, Transport, ZellijNoc, DETAIL_SHIFT,
+    TEAM_NAME_MAX,
+};
 use crate::guest::keyboard_signal;
 use crate::model::{parse_snapshot, Agent, AgentGroup};
 use crate::panes::{
@@ -14,7 +17,9 @@ use crate::{
 use std::collections::BTreeMap;
 use zellij_tile::prelude::*;
 
-pub const PANEL_TITLE: &str = "NOC";
+/// The panel's pane has no title of its own: its first row says `Agents`.
+/// A blank, because Zellij shows the plugin's location for an empty name.
+pub const PANEL_TITLE: &str = " ";
 
 // ---- keys -> intents (pure) ----
 
@@ -25,6 +30,16 @@ pub enum Intent {
         stacked: bool,
     },
     Worktree,
+    /// Show the session of the selected team or agent.
+    TeamSession,
+    /// Show the session selected in the Sessions section.
+    ShowSession {
+        name: String,
+    },
+    /// End a team's session.
+    EndSession {
+        name: String,
+    },
     Details,
     Refresh,
     /// The search query changed: read the list for the new one.
@@ -246,6 +261,74 @@ fn handle_search_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> Option<Inten
     Some(Intent::Search)
 }
 
+/// Keys while the Sessions section has them. `None` leaves the key to the
+/// panel's own keys (help, search, grouping and the like); the keys that act
+/// on an agent are refused, since no agent is selected.
+fn handle_session_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> Option<Option<Intent>> {
+    match key.bare_key {
+        BareKey::Char('j') | BareKey::Down => app.move_session(1),
+        BareKey::Char('k') | BareKey::Up => app.move_session(-1),
+        BareKey::Char('g') => {
+            if std::mem::take(&mut app.pending_g) {
+                app.session_index = 0;
+            } else {
+                app.pending_g = true;
+            }
+            return Some(None);
+        }
+        BareKey::Char('G') => app.move_session(isize::MAX),
+        BareKey::Enter | BareKey::Char('l') | BareKey::Char('o') => {
+            app.pending_g = false;
+            let name = app.selected_session()?.name.clone();
+            return Some(Some(Intent::ShowSession { name }));
+        }
+        BareKey::Char('x') => {
+            app.pending_g = false;
+            let name = app.selected_session()?.name.clone();
+            if name == app.config.guest_session {
+                app.set_notice("ending it would end the pair; quit it from inside");
+            } else {
+                app.pending_end = Some(name);
+            }
+        }
+        BareKey::Char('h') | BareKey::Left => app.focus_agents(),
+        BareKey::Esc if !app.show_info && !app.show_help && app.search.is_none() => {
+            app.focus_agents()
+        }
+        BareKey::Char('p' | 's' | 'w' | 'd' | 'n' | 't' | 'T' | ' ') => {
+            app.pending_g = false;
+            app.set_notice("that key is for an agent; Tab goes back to them");
+        }
+        _ => return None,
+    }
+    Some(None)
+}
+
+/// Keys while the Details section has them: they move what it shows, down
+/// and sideways. Whether a key was one of them; any other goes to the list
+/// the details are about.
+fn handle_details_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> bool {
+    match key.bare_key {
+        BareKey::Char('j') | BareKey::Down => app.scroll_details(1),
+        BareKey::Char('k') | BareKey::Up => app.scroll_details(-1),
+        BareKey::Char('l') | BareKey::Right => app.shift_details(DETAIL_SHIFT as isize),
+        BareKey::Char('h') | BareKey::Left => app.shift_details(-(DETAIL_SHIFT as isize)),
+        BareKey::Char('g') => {
+            if std::mem::take(&mut app.pending_g) {
+                app.scroll_details(isize::MIN);
+            } else {
+                app.pending_g = true;
+            }
+        }
+        BareKey::Char('G') => app.scroll_details(isize::MAX),
+        BareKey::Esc if !app.show_info && !app.show_help && app.search.is_none() => {
+            app.focus = app.source;
+        }
+        _ => return false,
+    }
+    true
+}
+
 /// Apply one key to the panel state. Returns whether to redraw and the
 /// intent (if any) the host must act on.
 pub fn process_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> (bool, Option<Intent>) {
@@ -261,6 +344,12 @@ pub fn process_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> (bool, Option<
     let modifiers = &key.key_modifiers;
     if modifiers.contains(&KeyModifier::Ctrl) {
         return match key.bare_key {
+            BareKey::Char('d') | BareKey::Char('u') if app.focus == Focus::Details => {
+                let half = (app.detail_rows / 2).max(1) as isize;
+                let down = key.bare_key == BareKey::Char('d');
+                app.scroll_details(if down { half } else { -half });
+                (true, None)
+            }
             BareKey::Char('d') => {
                 app.move_half_page(true);
                 (true, None)
@@ -289,6 +378,34 @@ pub fn process_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> (bool, Option<
         app.set_notice("stop cancelled");
         return (true, None);
     }
+    if let Some(name) = app.pending_end.take() {
+        if key.bare_key == BareKey::Char('y') && modifiers.is_empty() {
+            app.set_notice(format!("ending {}\u{2026}", app.session_label(&name)));
+            return (true, Some(Intent::EndSession { name }));
+        }
+        app.set_notice("end cancelled");
+        return (true, None);
+    }
+    match key.bare_key {
+        BareKey::Tab => {
+            app.toggle_focus(modifiers.is_empty());
+            return (true, None);
+        }
+        BareKey::Char('S') => {
+            app.toggle_sessions();
+            return (true, None);
+        }
+        _ => {}
+    }
+    if app.focus == Focus::Details && handle_details_key(app, key) {
+        return (true, None);
+    }
+    // Any other key in Details is for the list the details are about.
+    if app.list_focus() == Focus::Sessions {
+        if let Some(handled) = handle_session_key(app, key) {
+            return (true, handled);
+        }
+    }
     let was_pending_g = app.pending_g;
     if key.bare_key != BareKey::Char('g') {
         app.pending_g = false;
@@ -302,7 +419,7 @@ pub fn process_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> (bool, Option<
             app.press_g();
         }
         BareKey::Char('G') => app.select_last(),
-        BareKey::Char('d') => app.toggle_details(),
+        BareKey::Char('D') => app.toggle_details(),
         BareKey::Char('?') => app.toggle_help(),
         BareKey::Char('i') => app.toggle_info(),
         BareKey::Esc => {
@@ -335,7 +452,8 @@ pub fn process_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> (bool, Option<
         BareKey::Char('p') => intent = Some(Intent::Pane { stacked: false }),
         BareKey::Char('s') => intent = Some(Intent::Pane { stacked: true }),
         BareKey::Char('w') => intent = Some(Intent::Worktree),
-        BareKey::Char('D') => intent = Some(Intent::Details),
+        BareKey::Char('o') => intent = Some(Intent::TeamSession),
+        BareKey::Char('d') => intent = Some(Intent::Details),
         BareKey::Char('r') => intent = Some(Intent::Refresh),
         BareKey::Char('u') => intent = Some(Intent::CheckUpdate),
         BareKey::Char('x') => request_stop(app),
@@ -414,6 +532,9 @@ impl State {
             Intent::Open => self.open_selected_agent(),
             Intent::Pane { stacked } => self.open_agent_pane(stacked),
             Intent::Worktree => self.open_worktree_shell(),
+            Intent::TeamSession => self.show_selected_team(),
+            Intent::ShowSession { name } => self.show_and_focus(&name),
+            Intent::EndSession { name } => self.end_session(&name),
             Intent::Details => self.open_details_window(),
             Intent::Refresh | Intent::Search => self.refresh(),
             Intent::CheckUpdate => self.check_for_update_now(),
@@ -659,7 +780,7 @@ impl State {
         agent
     }
 
-    /// Another running Zellij session (not the host, not the inner session)
+    /// Another running Zellij session (not the host, not one of the sessions)
     /// that an agent is already bound to.
     pub fn other_running_session_for(&self, agent: &Agent) -> Option<String> {
         let list = get_session_list().ok()?;
@@ -746,7 +867,10 @@ impl State {
             None,
         );
         match open_plugin_pane_floating(&url, config, coordinates, BTreeMap::new()) {
-            Some(PaneId::Plugin(id)) => self.details_window = Some(id),
+            Some(PaneId::Plugin(id)) => {
+                self.details_window = Some(id);
+                self.details_window_seen = false;
+            }
             _ => self
                 .app
                 .set_notice("Zellij could not open the details window"),
@@ -784,6 +908,11 @@ impl State {
             }
             return;
         }
+        self.grab_keyboard();
+    }
+
+    /// Bring the keyboard to the panel.
+    pub fn grab_keyboard(&mut self) {
         if let Some(guest) = self.guest_pane() {
             let fullscreen = self
                 .own_tab_position
@@ -797,6 +926,25 @@ impl State {
         self.sync_panel_selectable();
         if !self.host_action(&["move-focus", "left"]) {
             focus_plugin_pane(self.plugin_id, false, false);
+        }
+    }
+
+    /// The details window was opened from the panel, so when it closes the
+    /// keyboard comes back to the panel; Zellij would give it to the guest
+    /// pane. Closed means gone from the panes after having been among them.
+    pub fn follow_details_window(&mut self) {
+        let Some(id) = self.details_window else {
+            return;
+        };
+        let there = self.panes.iter().any(|p| p.is_plugin && p.id == id);
+        if there {
+            self.details_window_seen = true;
+        } else if self.details_window_seen {
+            self.details_window = None;
+            self.details_window_seen = false;
+            if !self.panel_has_keyboard() {
+                self.grab_keyboard();
+            }
         }
     }
 
@@ -1033,6 +1181,183 @@ mod tests {
         );
         assert_eq!(app.notice.as_deref(), Some("stopping Stoppable\u{2026}"));
         assert!(app.pending_stop.is_none());
+    }
+
+    #[test]
+    fn tab_moves_between_the_lists_and_shift_tab_into_the_details() {
+        let mut app = app();
+        let tab = bare(BareKey::Tab);
+        let details = with(&[KeyModifier::Shift], BareKey::Tab);
+        // No session is listed yet: Tab has nowhere to go.
+        let (redraw, intent) = process_key(&mut app, &tab);
+        assert!(redraw && intent.is_none());
+        assert_eq!(app.focus, Focus::Agents);
+        assert_eq!(app.notice.as_deref(), Some("no session is listed yet"));
+        // Shift Tab: into the agent's details, and out again.
+        process_key(&mut app, &details);
+        assert_eq!((app.focus, app.source), (Focus::Details, Focus::Agents));
+        process_key(&mut app, &details);
+        assert_eq!(app.focus, Focus::Agents);
+        // `d` closes the details: nothing to go into.
+        process_key(&mut app, &key('D'));
+        process_key(&mut app, &details);
+        assert_eq!(app.focus, Focus::Agents);
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("details are closed; D opens them")
+        );
+        process_key(&mut app, &key('D'));
+        // With sessions, Tab goes between the two lists and never through
+        // the details, which stay about the list the keys are in.
+        let names = [
+            "noc".to_string(),
+            "noc--auth".to_string(),
+            "noc--web".to_string(),
+        ];
+        app.set_sessions(&names, "noc--web");
+        for want in [Focus::Sessions, Focus::Agents, Focus::Sessions] {
+            process_key(&mut app, &tab);
+            assert_eq!((app.focus, app.source), (want, want));
+        }
+        // From a list's details, Tab goes to the other list.
+        process_key(&mut app, &details);
+        assert_eq!((app.focus, app.source), (Focus::Details, Focus::Sessions));
+        process_key(&mut app, &tab);
+        assert_eq!((app.focus, app.source), (Focus::Agents, Focus::Agents));
+        // A closed section gives the keys up, and is not gone to.
+        process_key(&mut app, &details);
+        process_key(&mut app, &key('D'));
+        assert_eq!(app.focus, Focus::Agents);
+        process_key(&mut app, &key('D'));
+        process_key(&mut app, &tab);
+        assert_eq!(app.focus, Focus::Sessions);
+        process_key(&mut app, &key('S'));
+        assert_eq!((app.focus, app.source), (Focus::Agents, Focus::Agents));
+        process_key(&mut app, &tab);
+        assert_eq!(app.focus, Focus::Agents);
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("sessions are closed; S opens them")
+        );
+        process_key(&mut app, &key('S'));
+    }
+
+    #[test]
+    fn the_sessions_section_has_its_own_keys() {
+        let mut app = app();
+        let names = [
+            "noc".to_string(),
+            "noc--auth".to_string(),
+            "noc--web".to_string(),
+        ];
+        app.set_sessions(&names, "noc--web");
+        process_key(&mut app, &bare(BareKey::Tab));
+        assert_eq!(app.focus, Focus::Sessions);
+        assert_eq!(app.selected_session().unwrap().name, "noc--web");
+        // j, k, gg and G move among the sessions, not the agents.
+        let agent = app.selected_index;
+        process_key(&mut app, &key('k'));
+        assert_eq!(app.selected_session().unwrap().name, "noc--auth");
+        process_key(&mut app, &key('G'));
+        assert_eq!(app.selected_session().unwrap().name, "noc");
+        process_key(&mut app, &key('g'));
+        process_key(&mut app, &key('g'));
+        assert_eq!(app.selected_session().unwrap().name, "noc--auth");
+        assert_eq!(app.selected_index, agent);
+        // Enter, l and o show the selected session.
+        for k in [bare(BareKey::Enter), key('l'), key('o')] {
+            let (_, intent) = process_key(&mut app, &k);
+            assert_eq!(
+                intent,
+                Some(Intent::ShowSession {
+                    name: "noc--auth".to_string()
+                })
+            );
+        }
+        // x asks, and only y ends it.
+        let (_, intent) = process_key(&mut app, &key('x'));
+        assert!(intent.is_none());
+        assert_eq!(app.pending_end.as_deref(), Some("noc--auth"));
+        let (_, intent) = process_key(&mut app, &key('n'));
+        assert!(intent.is_none() && app.pending_end.is_none());
+        assert_eq!(app.notice.as_deref(), Some("end cancelled"));
+        process_key(&mut app, &key('x'));
+        let (_, intent) = process_key(&mut app, &key('y'));
+        assert_eq!(
+            intent,
+            Some(Intent::EndSession {
+                name: "noc--auth".to_string()
+            })
+        );
+        // The inner session is not ended from here.
+        process_key(&mut app, &key('G'));
+        let (_, intent) = process_key(&mut app, &key('x'));
+        assert!(intent.is_none() && app.pending_end.is_none());
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("ending it would end the pair; quit it from inside")
+        );
+        // An agent's keys are refused; the panel's own still work.
+        for c in ['p', 's', 'w', 'd', 'n', 't', 'T'] {
+            let (_, intent) = process_key(&mut app, &key(c));
+            assert!(intent.is_none(), "{c}");
+            assert!(app.pending_rename.is_none() && app.pending_team.is_none());
+        }
+        let (_, intent) = process_key(&mut app, &key('r'));
+        assert_eq!(intent, Some(Intent::Refresh));
+        process_key(&mut app, &key('v'));
+        assert_eq!(app.group_by, crate::app::GroupBy::Team);
+        // h and Esc go back to the agents.
+        for back in [key('h'), bare(BareKey::Esc)] {
+            app.focus = Focus::Sessions;
+            app.source = Focus::Sessions;
+            process_key(&mut app, &back);
+            assert_eq!((app.focus, app.source), (Focus::Agents, Focus::Agents));
+        }
+    }
+
+    #[test]
+    fn the_details_section_scrolls_and_leaves_other_keys_to_its_list() {
+        let mut app = app();
+        process_key(&mut app, &with(&[KeyModifier::Shift], BareKey::Tab));
+        assert_eq!((app.focus, app.source), (Focus::Details, Focus::Agents));
+        // What there is to scroll is known from the last drawing.
+        app.detail_max_scroll = 5;
+        app.detail_max_shift = 6;
+        app.detail_rows = 6;
+        let agent = app.selected_index;
+        process_key(&mut app, &key('j'));
+        process_key(&mut app, &bare(BareKey::Down));
+        assert_eq!(app.detail_scroll, 2);
+        process_key(&mut app, &key('k'));
+        assert_eq!(app.detail_scroll, 1);
+        process_key(&mut app, &key('G'));
+        assert_eq!(app.detail_scroll, 5);
+        process_key(&mut app, &key('g'));
+        process_key(&mut app, &key('g'));
+        assert_eq!(app.detail_scroll, 0);
+        process_key(&mut app, &with(&[KeyModifier::Ctrl], BareKey::Char('d')));
+        assert_eq!(app.detail_scroll, 3);
+        process_key(&mut app, &with(&[KeyModifier::Ctrl], BareKey::Char('u')));
+        assert_eq!(app.detail_scroll, 0);
+        // l and h, and the arrows, move it sideways, within its width.
+        process_key(&mut app, &key('l'));
+        assert_eq!(app.detail_shift, 4);
+        process_key(&mut app, &bare(BareKey::Right));
+        assert_eq!(app.detail_shift, 6);
+        process_key(&mut app, &key('h'));
+        process_key(&mut app, &bare(BareKey::Left));
+        assert_eq!(app.detail_shift, 0);
+        assert_eq!(app.selected_index, agent, "the list did not move");
+        // Any other key is for the agent the details are about.
+        let (_, intent) = process_key(&mut app, &bare(BareKey::Enter));
+        assert_eq!(intent, Some(Intent::Open));
+        let (_, intent) = process_key(&mut app, &key('w'));
+        assert_eq!(intent, Some(Intent::Worktree));
+        assert_eq!(app.focus, Focus::Details);
+        // Esc gives the keys back to that list.
+        process_key(&mut app, &bare(BareKey::Esc));
+        assert_eq!(app.focus, Focus::Agents);
     }
 
     #[test]
@@ -1375,7 +1700,7 @@ mod tests {
             ('p', Intent::Pane { stacked: false }),
             ('s', Intent::Pane { stacked: true }),
             ('w', Intent::Worktree),
-            ('D', Intent::Details),
+            ('d', Intent::Details),
             ('r', Intent::Refresh),
         ] {
             assert_eq!(process_key(&mut app, &key(c)).1, Some(want), "{c}");
@@ -1404,7 +1729,7 @@ mod tests {
         // Help and details toggles.
         process_key(&mut app, &key('?'));
         assert!(app.show_help);
-        process_key(&mut app, &key('d'));
+        process_key(&mut app, &key('D'));
         assert!(!app.show_help && !app.show_details);
         process_key(&mut app, &key('?'));
         process_key(&mut app, &bare(BareKey::Esc));

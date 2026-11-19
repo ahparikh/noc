@@ -1,12 +1,12 @@
 //! Rendering of the panel and the floating details window.
 
-use crate::app::{Connection, ListItem, Transport, ZellijNoc, SPINNER};
+use crate::app::{Connection, Focus, ListItem, Transport, ZellijNoc, SESSION_ROWS, SPINNER};
 use crate::model::{age_label, Agent, AgentGroup};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use zellij_tile::prelude::{ModeInfo, PaletteColor};
 
-pub const FOOTER: &str = "[?] keys  [d]etails  [D] window";
-pub const DETAILS_FOOTER: &str = "Esc / D  close";
+pub const FOOTER: &str = "[?] keys  [D]etails  [d] window";
+pub const DETAILS_FOOTER: &str = "Esc / d  close";
 
 // ---- theme ----
 
@@ -190,6 +190,8 @@ struct Line {
     spans: Vec<Span>,
     fill: Style,
     trailing_reset: bool,
+    /// The columns left out at the start: the line is scrolled sideways.
+    shift: usize,
 }
 
 /// Control characters would reach the terminal verbatim; drop them.
@@ -223,7 +225,40 @@ impl Line {
         self.spans.iter().map(|s| s.text.width()).sum()
     }
 
+    /// The line without its first `shift` columns.
+    fn shifted(&self) -> Line {
+        let mut skip = self.shift;
+        let mut spans = Vec::new();
+        for span in &self.spans {
+            let mut text = String::new();
+            for ch in span.text.chars() {
+                let w = ch.width().unwrap_or(0);
+                if skip >= w && w > 0 {
+                    skip -= w;
+                } else if skip > 0 && w > 0 {
+                    // Half of a wide character: a blank in its place.
+                    skip = 0;
+                    text.push(' ');
+                } else {
+                    text.push(ch);
+                }
+            }
+            spans.push(Span {
+                text,
+                style: span.style,
+            });
+        }
+        Line {
+            spans,
+            shift: 0,
+            ..self.clone()
+        }
+    }
+
     fn fitted(&self, cols: usize) -> Vec<Span> {
+        if self.shift > 0 {
+            return self.shifted().fitted(cols);
+        }
         let total = self.width();
         let mut out: Vec<Span> = Vec::new();
         let mut used = 0usize;
@@ -385,7 +420,7 @@ fn shown_agent_count(app: &ZellijNoc) -> usize {
                 !app.by_team() && (app.flat || app.agents[*i].group() != AgentGroup::Quiet),
             ),
             ListItem::Section { count, .. } | ListItem::Team { count, .. } => *count,
-            ListItem::TeamQuiet { .. } => 0,
+            ListItem::TeamQuiet { .. } | ListItem::QuietTeams { .. } => 0,
         })
         .sum()
 }
@@ -393,9 +428,10 @@ fn shown_agent_count(app: &ZellijNoc) -> usize {
 fn item_group(app: &ZellijNoc, item: &ListItem) -> AgentGroup {
     match item {
         ListItem::Agent(i) => app.agents[*i].group(),
-        ListItem::Section { .. } | ListItem::Team { .. } | ListItem::TeamQuiet { .. } => {
-            AgentGroup::Quiet
-        }
+        ListItem::Section { .. }
+        | ListItem::Team { .. }
+        | ListItem::TeamQuiet { .. }
+        | ListItem::QuietTeams { .. } => AgentGroup::Quiet,
     }
 }
 
@@ -413,7 +449,7 @@ fn group_count(app: &ZellijNoc, group: AgentGroup) -> usize {
                     0
                 }
             }
-            ListItem::Team { .. } | ListItem::TeamQuiet { .. } => 0,
+            ListItem::Team { .. } | ListItem::TeamQuiet { .. } | ListItem::QuietTeams { .. } => 0,
         })
         .sum()
 }
@@ -500,7 +536,7 @@ fn health(app: &ZellijNoc) -> Health {
 /// lasts. Otherwise: how many agents on the left, and on the right an `↑`
 /// when a newer release exists and a dot coloured by `health`. What the dot
 /// and the arrow stand for is in the status box (`status_box_lines`).
-fn status_line(app: &ZellijNoc, theme: &Theme, cols: usize) -> Line {
+fn status_line(app: &ZellijNoc, theme: &Theme, cols: usize, marked: bool) -> Line {
     if let Some(rename) = &app.pending_rename {
         return Line::plain(
             &format!("Rename: {}\u{258f}", rename.text),
@@ -519,6 +555,12 @@ fn status_line(app: &ZellijNoc, theme: &Theme, cols: usize) -> Line {
             Style::fg(theme.attention),
         );
     }
+    if let Some(name) = &app.pending_end {
+        return Line::plain(
+            &format!("End session {}?  y / n", app.session_label(name)),
+            Style::fg(theme.attention),
+        );
+    }
     if let Some(search) = app.search.as_ref().filter(|s| s.typing) {
         return Line::plain(
             &format!("/ {}\u{258f}", search.text),
@@ -528,33 +570,72 @@ fn status_line(app: &ZellijNoc, theme: &Theme, cols: usize) -> Line {
     if let Some(notice) = &app.notice {
         return Line::plain(notice, Style::fg(theme.info));
     }
+    // The title of the Agents section, a rule, and at the end of the row
+    // the count, the mark of a newer release and the status dot.
     let count = shown_agent_count(app);
-    let mut left = if app.flat {
+    let mut text = if app.flat {
         format!("{count} match{}", if count == 1 { "" } else { "es" })
     } else {
-        format!("{count} agent{}", plural(count))
+        count.to_string()
     };
     if let Some(query) = app.search_text() {
-        left.push_str(&format!("  / {query}"));
+        text.push_str(&format!("  / {query}"));
     }
+    // The marks are on the footer; a pane too short for a footer has them
+    // here, after the count.
+    let arrow = if marked && app.update.is_some() {
+        "\u{2191} "
+    } else {
+        ""
+    };
+    let marks = if marked { arrow.width() + 2 } else { 0 };
+    // Keep the dot: the count is cut before the dot is dropped, and the
+    // title and its rule give way before the count does.
+    let text = truncate(&text, cols.saturating_sub(marks));
+    let tail = 1 + text.width() + marks;
+    let focused = app.focus == Focus::Agents;
+    let mut line = if cols >= AGENTS_TITLE.width() + 3 + tail {
+        section_heading(theme, None, AGENTS_TITLE, focused, cols - tail)
+    } else {
+        Line::empty()
+    };
+    let gap = cols.saturating_sub(line.width() + text.width() + marks);
+    line = line
+        .with(&" ".repeat(gap), Style::default())
+        .with(&text, Style::fg(theme.accent).bold());
+    if !marked || cols < marks {
+        return line;
+    }
+    line = line.with(" ", Style::default());
+    if !arrow.is_empty() {
+        line = line.with(arrow, Style::fg(theme.attention).bold());
+    }
+    line.with(STATUS_DOT, Style::fg(health(app).color(theme)))
+}
+
+/// The dot that says how the panel is doing, by its colour.
+const STATUS_DOT: &str = "\u{25cf}";
+
+/// The panel's last row: the keys worth remembering and, at its right
+/// edge, the mark of a newer release and the status dot. The marks are
+/// never dropped for lack of room: the keys are cut instead.
+fn panel_footer(app: &ZellijNoc, theme: &Theme, cols: usize) -> Line {
     let arrow = if app.update.is_some() {
         "\u{2191} "
     } else {
         ""
     };
-    let right = arrow.width() + 1;
-    // Keep the dot: the count is cut before the dot is dropped.
-    let left = truncate(&left, cols.saturating_sub(right + 1));
-    let gap = cols.saturating_sub(left.width() + right);
-    let mut line = Line::plain(&left, Style::fg(theme.accent).bold());
-    if cols < right + 1 {
-        return line;
+    let marks = arrow.width() + 1;
+    if cols < marks {
+        return Line::plain(STATUS_DOT, Style::fg(health(app).color(theme)));
     }
-    line = line.with(&" ".repeat(gap), Style::default());
+    let keys = truncate(FOOTER, cols.saturating_sub(marks + 1));
+    let gap = cols - marks - keys.width();
+    let mut line = Line::plain(&keys, theme.muted_style()).with(&" ".repeat(gap), Style::default());
     if !arrow.is_empty() {
         line = line.with(arrow, Style::fg(theme.attention).bold());
     }
-    line.with("\u{25cf}", Style::fg(health(app).color(theme)))
+    line.with(STATUS_DOT, Style::fg(health(app).color(theme)))
 }
 
 /// The box that explains the status line: the connection in words, anything
@@ -637,8 +718,12 @@ fn help_lines(theme: &Theme) -> Vec<Line> {
         "v           group by team / status",
         "p / s       pane / stacked pane here",
         "w           shell in its worktree",
-        "d           toggle details",
-        "D           details window",
+        "o           show its team's session",
+        "Tab         agents / sessions",
+        "Shift-Tab   into the details, and out",
+        "S           close / open sessions",
+        "D           close / open details",
+        "d           details window",
         "n           rename agent",
         "t / T       join / leave a team",
         "x           stop agent (asks y/n)",
@@ -726,29 +811,10 @@ fn row_indent(app: &ZellijNoc, agent: &Agent) -> &'static str {
     }
 }
 
-/// The mark of a team's lead, and the most columns a team name takes on an
-/// agent's second line.
-const LEAD_MARK: &str = "\u{2605}";
-const TEAM_LABEL_WIDTH: usize = 14;
-
-/// What an agent's second line says about its team. Under a team heading
-/// only the lead is marked; anywhere else the team is named.
-fn team_label(app: &ZellijNoc, agent: &Agent) -> String {
-    let team = agent.team_name();
-    if team.is_empty() {
-        String::new()
-    } else if app.by_team() {
-        if agent.is_lead() {
-            format!("{LEAD_MARK} lead")
-        } else {
-            String::new()
-        }
-    } else if agent.is_lead() {
-        format!("{LEAD_MARK} {}", truncate(team, TEAM_LABEL_WIDTH - 2))
-    } else {
-        truncate(team, TEAM_LABEL_WIDTH)
-    }
-}
+/// The columns of an agent row's age (`100d` is the widest), and the fewest
+/// columns a title keeps beside it.
+const AGE_WIDTH: usize = 4;
+const AGE_MIN_TITLE: usize = 8;
 
 fn agent_primary_line(
     app: &ZellijNoc,
@@ -760,11 +826,26 @@ fn agent_primary_line(
     let group = agent.group();
     let indent = row_indent(app, agent);
     let prefix = format!(" {indent}{} ", agent_symbol(app, agent));
-    let title = truncate(&agent.title(), cols.saturating_sub(prefix.width()));
+    // The age sits in a column of its own at the right edge, so it is in
+    // the same place on every row whatever the title. A pane too narrow to
+    // leave the title a few columns has no age.
+    let room = cols.saturating_sub(prefix.width());
+    let age = age_label(agent.recency(), &app.generated_at);
+    let age = if age.is_empty() || room < AGE_WIDTH + 1 + AGE_MIN_TITLE {
+        String::new()
+    } else {
+        format!(" {age:>AGE_WIDTH$}")
+    };
+    let title_width = room - age.width().min(room);
+    let mut title = truncate(&agent.title(), title_width);
+    if !age.is_empty() {
+        title = pad(&title, title_width);
+    }
     let mut line = if selected {
-        let style = Style::selected(theme).bold();
-        Line::plain(&prefix, style)
-            .with(&title, style)
+        let style = Style::selected(theme);
+        Line::plain(&prefix, style.bold())
+            .with(&title, style.bold())
+            .with(&age, style)
             .filled(Style::fill(theme))
     } else {
         let title_color = if group == AgentGroup::Quiet {
@@ -774,44 +855,25 @@ fn agent_primary_line(
         };
         Line::plain(&prefix, Style::fg(theme.group(group)).bold())
             .with(&title, Style::fg(title_color))
+            .with(&age, theme.muted_style())
     };
     line.trailing_reset = true;
     line
 }
 
-fn secondary_text(app: &ZellijNoc, agent: &Agent) -> String {
-    let group = agent.group();
-    let indent = row_indent(app, agent);
-    let age = age_label(agent.recency(), &app.generated_at);
-    let rest = if group == AgentGroup::Blocked && !agent.attention.detail.trim().is_empty() {
-        agent.attention.detail.trim().to_string()
+/// The row that holds the teams with no agent at work: `Quiet teams  N`,
+/// at the left edge like a team heading, in the Quiet colour.
+fn quiet_teams_line(theme: &Theme, count: usize, expanded: bool, selected: bool) -> Line {
+    let arrow = if expanded { "\u{25be}" } else { "\u{25b8}" };
+    let text = format!("{arrow} {QUIET_TEAMS}  {count}");
+    if selected {
+        Line::plain(&text, Style::selected(theme).bold()).filled(Style::fill(theme))
     } else {
-        agent.workspace_label()
-    };
-    let mut text = format!(
-        "   {indent}{} {age:>3}",
-        agent.provider_icon(app.config.nerd_icons)
-    );
-    for part in [team_label(app, agent), rest] {
-        if !part.is_empty() {
-            text.push_str("  ");
-            text.push_str(&part);
-        }
+        Line::plain(&text, Style::fg(theme.group(AgentGroup::Quiet)).bold())
     }
-    if group == AgentGroup::Quiet && agent.display_state.starts_with("needs_") {
-        text.push_str("  stopped waiting on you");
-    }
-    text.trim_end().to_string()
 }
 
-fn agent_secondary_line(app: &ZellijNoc, theme: &Theme, agent: &Agent, selected: bool) -> Line {
-    let text = secondary_text(app, agent);
-    if selected {
-        Line::plain(&text, Style::selected(theme)).filled(Style::fill(theme))
-    } else {
-        Line::plain(&text, theme.muted_style())
-    }
-}
+pub const QUIET_TEAMS: &str = "Quiet teams";
 
 fn section_line(theme: &Theme, label: &str, count: usize, expanded: bool, selected: bool) -> Line {
     let arrow = if expanded { "\u{25be}" } else { "\u{25b8}" };
@@ -875,11 +937,12 @@ fn agent_list_lines(app: &ZellijNoc, theme: &Theme, cols: usize) -> (Vec<Line>, 
         if selected && selected_line.is_none() {
             selected_line = Some(lines.len());
         }
+        // Highlighted only while the agents have the keys.
+        let selected = selected && app.list_focus() == Focus::Agents;
         match item {
             ListItem::Agent(i) => {
                 let agent = &app.agents[*i];
                 lines.push(agent_primary_line(app, theme, agent, selected, cols));
-                lines.push(agent_secondary_line(app, theme, agent, selected));
             }
             ListItem::Section {
                 age,
@@ -922,6 +985,9 @@ fn agent_list_lines(app: &ZellijNoc, theme: &Theme, cols: usize) -> (Vec<Line>, 
                 *expanded,
                 selected,
             )),
+            ListItem::QuietTeams { count, expanded } => {
+                lines.push(quiet_teams_line(theme, *count, *expanded, selected))
+            }
         }
     }
     (lines, selected_line.unwrap_or(0))
@@ -983,27 +1049,7 @@ fn agent_detail_lines(
         state.push_str(&format!(" \u{b7} {age} ago"));
     }
     lines.push(Line::plain(&state, Style::fg(theme.group(agent.group()))));
-    lines.push(label_line(
-        "provider",
-        &agent.provider_detail_label(),
-        theme,
-    ));
-    if !agent.user_name.is_empty() && !agent.name.is_empty() && agent.user_name != agent.name {
-        lines.push(label_line("native", &agent.name, theme));
-    }
-    lines.extend(id_lines(agent, theme, roomy));
-    let model = agent.model.trim();
-    let effort = agent.reasoning_effort.trim();
-    match (model.is_empty(), effort.is_empty()) {
-        (false, false) => lines.push(label_line(
-            "model",
-            &format!("{model} \u{b7} {effort}"),
-            theme,
-        )),
-        (false, true) => lines.push(label_line("model", model, theme)),
-        (true, false) => lines.push(label_line("effort", effort, theme)),
-        (true, true) => {}
-    }
+    // Where the work is, then what it is, then which program does it.
     if let Some(workspace) = &agent.workspace {
         let repo = if workspace.is_git() {
             workspace.repo_name()
@@ -1028,17 +1074,45 @@ fn agent_detail_lines(
             lines.push(label_line("cwd", workspace.path.trim(), theme));
         }
     }
+    let team = agent.team_name();
+    if !team.is_empty() {
+        let lead = if agent.is_lead() { " \u{b7} lead" } else { "" };
+        lines.push(label_line("team", &format!("{team}{lead}"), theme));
+    }
     let request = agent
         .initial_request
         .as_ref()
         .map(|r| r.text.trim().to_string())
         .unwrap_or_default();
-    if !request.is_empty() {
+    // The request and the latest message are for the details window: with
+    // no preview lines to give them, as in the panel, they are left out.
+    if !request.is_empty() && preview_lines > 0 {
         append_preview(&mut lines, theme, "ask", &request, cols, preview_lines);
     }
     let summary = agent.summary.trim();
-    if !summary.is_empty() && summary != request {
+    if !summary.is_empty() && summary != request && preview_lines > 0 {
         append_preview(&mut lines, theme, "latest", summary, cols, preview_lines);
+    }
+    lines.push(label_line(
+        "provider",
+        &agent.provider_detail_label(),
+        theme,
+    ));
+    if !agent.user_name.is_empty() && !agent.name.is_empty() && agent.user_name != agent.name {
+        lines.push(label_line("native", &agent.name, theme));
+    }
+    lines.extend(id_lines(agent, theme, roomy));
+    let model = agent.model.trim();
+    let effort = agent.reasoning_effort.trim();
+    match (model.is_empty(), effort.is_empty()) {
+        (false, false) => lines.push(label_line(
+            "model",
+            &format!("{model} \u{b7} {effort}"),
+            theme,
+        )),
+        (false, true) => lines.push(label_line("model", model, theme)),
+        (true, false) => lines.push(label_line("effort", effort, theme)),
+        (true, true) => {}
     }
     if let Some(binding) = agent.zellij_binding() {
         let place = if binding.session.is_empty() {
@@ -1055,23 +1129,194 @@ fn agent_detail_lines(
     lines
 }
 
-fn rule(theme: &Theme, cols: usize) -> Line {
-    let mut style = Style::fg(theme.accent);
-    style.dim = theme.dim;
-    Line::plain(&"\u{2500}".repeat(cols), style)
+/// The titles of the panel's three sections.
+pub const AGENTS_TITLE: &str = "Agents";
+pub const DETAILS_TITLE: &str = "Details";
+pub const SESSIONS_TITLE: &str = "Sessions";
+
+/// A section's title row: the title, then a rule to the edge of the pane. A
+/// section that closes has an arrow before it, down while it is open. The
+/// section that has the keys is in the accent colour, the others muted.
+fn section_heading(
+    theme: &Theme,
+    open: Option<bool>,
+    text: &str,
+    focused: bool,
+    cols: usize,
+) -> Line {
+    let arrow = match open {
+        Some(true) => "\u{25be} ",
+        Some(false) => "\u{25b8} ",
+        None => "",
+    };
+    let title = truncate(&format!("{arrow}{text}"), cols);
+    let style = if focused {
+        Style::fg(theme.accent).bold()
+    } else {
+        theme.muted_style().bold()
+    };
+    let rest = cols.saturating_sub(title.width() + 1);
+    let mut rule = Style::fg(theme.accent);
+    rule.dim = theme.dim;
+    Line::plain(&title, style).with(&format!(" {}", "\u{2500}".repeat(rest)), rule)
 }
 
-fn inline_detail_lines(
-    app: &ZellijNoc,
+/// A title row that ends with a count, after its rule.
+fn counted_heading(
     theme: &Theme,
+    open: Option<bool>,
+    text: &str,
+    focused: bool,
     cols: usize,
-    detail_height: usize,
-) -> Vec<Line> {
-    let mut lines = vec![rule(theme, cols)];
+    count: usize,
+) -> Line {
+    let count = format!(" {count}");
+    if cols < text.width() + 5 + count.width() {
+        return section_heading(theme, open, text, focused, cols);
+    }
+    section_heading(theme, open, text, focused, cols - count.width())
+        .with(&count, Style::fg(theme.accent).bold())
+}
+
+/// What a session row says after the session's name: what its agents need,
+/// `quiet` when none needs anything, `no agents` when it has none.
+fn session_summary(app: &ZellijNoc, name: &str) -> String {
+    match app.session_counts(name) {
+        None => String::new(),
+        Some(counts) if counts.agents == 0 => "no agents".to_string(),
+        Some(counts) => match attention_counts(counts.blocked, counts.working, counts.review) {
+            text if text.is_empty() => "quiet".to_string(),
+            text => text,
+        },
+    }
+}
+
+/// What marks the session on show in its row: an arrow,
+/// in the accent colour.
+pub const ON_SHOW_MARK: &str = " \u{2192} ";
+
+/// The widest a session's name is drawn in its row.
+const SESSION_LABEL_WIDTH: usize = 16;
+
+/// The Sessions section: a rule, the title with the number of sessions, and
+/// a row for each running inner session, the one on show marked `●`. At most
+/// `SESSION_ROWS` rows, around the selected one.
+fn session_lines(app: &ZellijNoc, theme: &Theme, cols: usize) -> Vec<Line> {
+    let focused = app.list_focus() == Focus::Sessions;
+    let mut lines = vec![counted_heading(
+        theme,
+        Some(app.show_sessions),
+        SESSIONS_TITLE,
+        app.focus == Focus::Sessions,
+        cols,
+        app.sessions.len(),
+    )];
+    if !app.show_sessions {
+        return lines;
+    }
+    let width = app
+        .sessions
+        .iter()
+        .map(|row| app.session_label(&row.name).width())
+        .max()
+        .unwrap_or(0)
+        .min(SESSION_LABEL_WIDTH);
+    let start = app
+        .session_index
+        .saturating_sub(SESSION_ROWS / 2)
+        .min(app.sessions.len().saturating_sub(SESSION_ROWS));
+    for (index, row) in app
+        .sessions
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(SESSION_ROWS)
+    {
+        let mark = if row.on_show { ON_SHOW_MARK } else { "   " };
+        let label = pad(&truncate(app.session_label(&row.name), width), width);
+        let summary = session_summary(app, &row.name);
+        let tail = if summary.is_empty() {
+            String::new()
+        } else {
+            format!("  {summary}")
+        };
+        lines.push(if focused && index == app.session_index {
+            let style = Style::selected(theme);
+            Line::plain(mark, style.bold())
+                .with(&label, style.bold())
+                .with(&tail, style)
+                .filled(Style::fill(theme))
+        } else {
+            let name = Style::fg(theme.text);
+            Line::plain(mark, Style::fg(theme.accent).bold())
+                .with(&label, if row.on_show { name.bold() } else { name })
+                .with(&tail, theme.muted_style())
+        });
+    }
+    // An empty row sets the section apart from the next one.
+    lines.push(Line::empty());
+    lines
+}
+
+/// The details of a session, shown while the Sessions section has the keys.
+fn session_detail_lines(app: &ZellijNoc, theme: &Theme, name: &str, on_show: bool) -> Vec<Line> {
+    let muted = theme.muted_style();
+    let mut lines = vec![Line::plain(
+        &format!("Session \u{b7} {}", app.session_label(name)),
+        Style::fg(theme.text).bold(),
+    )];
+    lines.push(label_line("zellij", name, theme));
+    lines.push(label_line(
+        "state",
+        if on_show {
+            "on show"
+        } else {
+            "running, out of sight"
+        },
+        theme,
+    ));
+    if let Some(counts) = app.session_counts(name) {
+        let needs = attention_counts(counts.blocked, counts.working, counts.review);
+        lines.push(label_line("agents", &counts.agents.to_string(), theme));
+        if !needs.is_empty() {
+            // On a line of its own: three counts do not fit beside a label.
+            lines.push(Line::plain(&format!("  {needs}"), muted));
+        }
+    }
+    let hint = if name == app.config.guest_session {
+        "Enter shows it."
+    } else {
+        "Enter shows it; x ends it."
+    };
+    lines.push(Line::plain(hint, muted));
+    lines
+}
+
+/// What the Details section is about, to tell when it changes: the
+/// session, or the agent, or the row of the list.
+fn detail_subject(app: &ZellijNoc) -> String {
+    if let Some(row) = app.focused_session() {
+        return format!("session {}", row.name);
+    }
+    match app.selected_agent() {
+        Some(agent) => format!("agent {}", agent.id),
+        None => format!("row {}", app.selected_index),
+    }
+}
+
+/// Everything the Details section has to say, under its title. The section
+/// shows as many of these lines as it has rows, from where it is scrolled.
+fn inline_detail_lines(app: &ZellijNoc, theme: &Theme, cols: usize) -> Vec<Line> {
+    let mut lines = Vec::new();
+    if let Some(row) = app.focused_session() {
+        lines.extend(session_detail_lines(app, theme, &row.name, row.on_show));
+        return lines;
+    }
     match app.selected_item() {
         Some(ListItem::Agent(i)) => {
-            lines.push(Line::plain("Details", Style::fg(theme.accent).bold()));
-            let preview = if detail_height >= 16 { 2 } else { 1 };
+            // No request or latest message here: they are long, and the
+            // details window has them.
+            let preview = 0;
             lines.extend(agent_detail_lines(
                 &app.agents[i],
                 theme,
@@ -1110,6 +1355,17 @@ fn inline_detail_lines(
                 lines.push(Line::plain(text, muted));
             }
         }
+        Some(ListItem::QuietTeams { count, .. }) => {
+            lines.push(Line::plain(QUIET_TEAMS, Style::fg(theme.accent).bold()));
+            let muted = theme.muted_style();
+            for text in [
+                format!("{count} team{} with no agent at work.", plural(count)).as_str(),
+                "Enter opens this row; a team",
+                "leaves it when an agent wakes.",
+            ] {
+                lines.push(Line::plain(text, muted));
+            }
+        }
         Some(ListItem::TeamQuiet { team, .. }) => {
             lines.push(Line::plain(
                 &format!("Quiet \u{b7} {}", app.team_title(team)),
@@ -1126,7 +1382,61 @@ fn inline_detail_lines(
         }
         None => {}
     }
-    lines.truncate(detail_height);
+    lines
+}
+
+/// The Details section in `height` rows: its title row, and while it is
+/// open the details from where they are scrolled, down and sideways. How
+/// far they can be scrolled is kept for the keys, and a new subject starts
+/// at the top.
+fn detail_section(app: &mut ZellijNoc, theme: &Theme, cols: usize, height: usize) -> Vec<Line> {
+    let focused = app.focus == Focus::Details;
+    if !app.show_details || height < 2 {
+        return vec![section_heading(
+            theme,
+            Some(false),
+            DETAILS_TITLE,
+            focused,
+            cols,
+        )];
+    }
+    let subject = detail_subject(app);
+    if subject != app.detail_of {
+        app.detail_of = subject;
+        app.detail_scroll = 0;
+        app.detail_shift = 0;
+    }
+    let content = inline_detail_lines(app, theme, cols);
+    let rows = height - 1;
+    app.detail_rows = rows;
+    app.detail_max_scroll = content.len().saturating_sub(rows);
+    app.detail_scroll = app.detail_scroll.min(app.detail_max_scroll);
+    let widest = content.iter().map(Line::width).max().unwrap_or(0);
+    app.detail_max_shift = widest.saturating_sub(cols);
+    app.detail_shift = app.detail_shift.min(app.detail_max_shift);
+    // The title says which lines are in view when they are not all.
+    let title = if app.detail_max_scroll > 0 {
+        format!(
+            "{DETAILS_TITLE}  {}-{}/{}",
+            app.detail_scroll + 1,
+            app.detail_scroll + rows,
+            content.len()
+        )
+    } else {
+        DETAILS_TITLE.to_string()
+    };
+    let mut lines = vec![section_heading(theme, Some(true), &title, focused, cols)];
+    lines.extend(
+        content
+            .into_iter()
+            .skip(app.detail_scroll)
+            .take(rows)
+            .map(|mut line| {
+                line.shift = app.detail_shift;
+                line
+            }),
+    );
+    lines.resize(height, Line::empty());
     lines
 }
 
@@ -1141,9 +1451,10 @@ pub fn render(app: &mut ZellijNoc, theme: &Theme, rows: usize, cols: usize) -> V
     if rows == 0 || cols == 0 {
         return Vec::new();
     }
-    let status = status_line(app, theme, cols);
     let footer = rows > 2;
+    let status = status_line(app, theme, cols, !footer);
     let body_rows = rows - 1 - usize::from(footer);
+    let inner_rows = body_rows;
     let (mut body, mut details) = if app.show_help {
         let mut lines = help_lines(theme);
         lines.extend(version_help_lines(app.update.as_deref(), theme));
@@ -1151,41 +1462,51 @@ pub fn render(app: &mut ZellijNoc, theme: &Theme, rows: usize, cols: usize) -> V
     } else if app.items.is_empty() {
         (empty_state_lines(app, theme), Vec::new())
     } else {
-        let detail_height = if app.show_details && body_rows >= 12 {
-            body_rows / 3
+        // Below the list: the sessions, then the details. The sessions take
+        // their rows first, being few and of a known number; closed, each
+        // section is its title row.
+        let sessions = if !app.sessions.is_empty() && inner_rows >= 14 {
+            session_lines(app, theme, cols)
         } else {
-            0
+            Vec::new()
         };
-        let list_height = body_rows - detail_height;
+        let shared = inner_rows - sessions.len();
+        let detail_height = match (shared >= 12, app.show_details) {
+            (true, true) => shared / 3,
+            (true, false) => 1,
+            (false, _) => 0,
+        };
+        let list_height = shared - detail_height;
         let (list, selected_line) = agent_list_lines(app, theme, cols);
         let start = selected_line
             .saturating_sub(list_height / 2)
             .min(list.len().saturating_sub(list_height));
         let window: Vec<Line> = list.into_iter().skip(start).take(list_height).collect();
-        let mut details = Vec::new();
+        let mut below = sessions;
         if detail_height > 0 {
-            details = inline_detail_lines(app, theme, cols, detail_height);
-            details.resize(detail_height, Line::empty());
+            below.extend(detail_section(app, theme, cols, detail_height));
         }
-        (window, details)
+        (window, below)
     };
     body.resize(body_rows - details.len(), Line::empty());
+    let mut lines = vec![status];
+    lines.append(&mut body);
+    lines.append(&mut details);
     if app.show_info {
-        // The box covers the end of the body, directly above the status line.
+        // The box hangs over the rows above the row that has the dot: the
+        // footer. It never covers the first row, the list's title.
         let mut box_lines = status_box_lines(app, theme, cols);
-        let keep = box_lines.len().min(body.len());
-        let from = body.len() - keep;
+        let keep = box_lines.len().min(lines.len() - 1);
+        let from = lines.len() - keep;
         let skip = box_lines.len() - keep;
-        for (slot, line) in body[from..].iter_mut().zip(box_lines.drain(skip..)) {
+        for (slot, line) in lines[from..].iter_mut().zip(box_lines.drain(skip..)) {
             *slot = line;
         }
     }
-    app.status_row = Some(body.len());
-    let mut lines = body;
-    lines.push(status);
-    lines.append(&mut details);
+    // The row the dot is on is the one a click opens the box from.
+    app.status_row = Some(if footer { rows - 1 } else { 0 });
     if footer {
-        lines.push(footer_line(theme, FOOTER));
+        lines.push(panel_footer(app, theme, cols));
     }
     lines.iter().map(|l| l.render(cols)).collect()
 }
@@ -1242,20 +1563,44 @@ mod tests {
         out
     }
 
+    /// The panel with its first row, the status line that is the title of
+    /// the Agents section, moved to under the list: above the title of the
+    /// next section, or the footer. So the tests of the list count its rows
+    /// from 0, and the status line is where `status_at` finds it. `panel`
+    /// is the panel as it is drawn.
+    fn render(app: &mut ZellijNoc, theme: &Theme, rows: usize, cols: usize) -> Vec<String> {
+        let mut lines = panel(app, theme, rows, cols);
+        if lines.len() < 2 {
+            return lines;
+        }
+        let status = lines.remove(0);
+        let text = plain(&lines);
+        let at = text
+            .iter()
+            .position(|l| l.starts_with('\u{25be}') || l.starts_with('\u{25b8}'))
+            .or_else(|| text.iter().rposition(|l| l.starts_with("[?]")))
+            .unwrap_or(lines.len());
+        lines.insert(at, status);
+        lines
+    }
+
+    fn panel(app: &mut ZellijNoc, theme: &Theme, rows: usize, cols: usize) -> Vec<String> {
+        super::render(app, theme, rows, cols)
+    }
+
     fn plain(lines: &[String]) -> Vec<String> {
         lines.iter().map(|l| strip(l)).collect()
     }
 
-    /// Where the status line is: above the details when those are shown,
-    /// and above the footer.
+    /// Where the status line is: above the title of the first section under
+    /// the list when one is drawn, and above the footer.
     fn status_at(text: &[String]) -> usize {
-        let rule = text.iter().position(|l| {
-            let l = l.trim();
-            !l.is_empty() && l.chars().all(|c| c == '\u{2500}')
-        });
+        let rule = text
+            .iter()
+            .position(|l| l.starts_with('\u{25be}') || l.starts_with('\u{25b8}'));
         match rule {
             Some(rule) => rule - 1,
-            None if text.last().is_some_and(|l| l.trim_end() == FOOTER) => text.len() - 2,
+            None if text.last().is_some_and(|l| l.starts_with("[?]")) => text.len() - 2,
             None => text.len() - 1,
         }
     }
@@ -1265,13 +1610,48 @@ mod tests {
         text[status_at(text)].trim_end()
     }
 
-    /// The count on the status line, without the arrow and the dot.
-    fn header(text: &[String]) -> &str {
-        status(text)
+    /// What the status line counts, in words: the number at the end of the
+    /// title row as `N agents`, or the matches of a search as they are
+    /// written; a prompt or a notice as it is.
+    fn header(text: &[String]) -> String {
+        let status = status(text)
+            .trim_end_matches('\u{25cf}')
+            .trim_end()
+            .trim_end_matches('\u{2191}')
+            .trim_end();
+        let count = match status.rsplit_once('\u{2500}') {
+            Some((_, count)) => count.trim(),
+            None => status.trim(),
+        };
+        if !count.is_empty() && count.chars().all(|c| c.is_ascii_digit()) {
+            format!("{count} agent{}", if count == "1" { "" } else { "s" })
+        } else {
+            count.to_string()
+        }
+    }
+
+    /// The keys on the footer, without the marks at its right edge.
+    fn keys_of(line: &str) -> &str {
+        line.trim_end()
             .trim_end_matches('\u{25cf}')
             .trim_end()
             .trim_end_matches('\u{2191}')
             .trim_end()
+    }
+
+    /// A row of the list without the age at its right edge.
+    fn row(line: &str) -> &str {
+        let line = line.trim_end();
+        match line.rsplit_once(' ') {
+            Some((rest, age))
+                if age.len() >= 2
+                    && age.ends_with(['s', 'm', 'h', 'd'])
+                    && age[..age.len() - 1].chars().all(|c| c.is_ascii_digit()) =>
+            {
+                rest.trim_end()
+            }
+            _ => line,
+        }
     }
 
     /// The lines inside the status box, opened for the occasion.
@@ -1315,45 +1695,50 @@ mod tests {
         let expect = [
             "Blocked  1",
             " ! Auth migration",
-            "   \u{2733}  2m  Bash: make clean",
             "Working  1",
             " \u{280b} Cache refactor",
-            "   \u{2b21}  0m  app \u{b7} cache-fix",
             "Review  1",
             " \u{25c6} Docs pass",
-            "   \u{2733}  3h  docs",
             "Quiet  3",
             " \u{25b8} < 24h   1",
             " \u{25b8} < 48h   1",
             " \u{25b8} < 7d    1",
         ];
         for (i, want) in expect.iter().enumerate() {
-            assert_eq!(text[i].trim_end(), *want, "line {i}");
+            assert_eq!(row(&text[i]), *want, "line {i}");
         }
-        let rest = text[13..26].iter().all(|l| l.trim().is_empty());
+        // The age is a column at the right edge, whatever the title.
+        assert_eq!(text[1], format!(" ! Auth migration{}2m", " ".repeat(19)));
+        assert_eq!(
+            text[3],
+            format!(" \u{280b} Cache refactor{}0m", " ".repeat(19))
+        );
+        assert_eq!(text[5], format!(" \u{25c6} Docs pass{}3h", " ".repeat(24)));
+        let rest = text[10..26].iter().all(|l| l.trim().is_empty());
         assert!(rest, "list area is padded");
-        // The status line sits between the list and the details: the count
-        // on the left, the dot at the right edge.
-        assert_eq!(text[26], format!("6 agents{}\u{25cf}", " ".repeat(29)));
+        // The status line is the title row of the Agents section (the first
+        // row of the panel; `render` shows it under the list): the title, a
+        // rule, then the count. The dot is at the right edge of the footer.
+        assert_eq!(text[26], format!("Agents {} 6", "\u{2500}".repeat(29)));
+        assert_eq!(text[39], format!("{FOOTER}      \u{25cf}"));
         let details = &text[27..];
         let wanted = [
-            "\u{2500}".repeat(38),
-            "Details".to_string(),
+            format!("\u{25be} Details {}", "\u{2500}".repeat(28)),
             "Auth migration".to_string(),
             "!  needs approval \u{b7} 2m ago".to_string(),
+            "repo      app \u{b7} main".to_string(),
+            "cwd       /code/app/svc".to_string(),
             "provider  claude \u{b7} background".to_string(),
             "native    auth".to_string(),
             "id        3cfff231".to_string(),
             "model     opus \u{b7} high".to_string(),
-            "repo      app \u{b7} main".to_string(),
-            "cwd       /code/app/svc".to_string(),
-            "ask".to_string(),
-            "  Migrate the auth service to the new".to_string(),
-            FOOTER.to_string(),
+            "pane      work/7 \u{b7} observed".to_string(),
+            String::new(),
+            String::new(),
+            format!("{FOOTER}      \u{25cf}"),
         ];
-        for (got, want) in details.iter().zip(wanted.iter()) {
-            assert_eq!(got.trim_end(), want);
-        }
+        let got: Vec<&str> = details.iter().map(|l| l.trim_end()).collect();
+        assert_eq!(got, wanted);
         assert!(!text.join("\n").contains("runtime"));
         assert!(!text.join("\n").contains("Ancient"));
     }
@@ -1367,11 +1752,13 @@ mod tests {
         assert_eq!(text.len(), 30);
         // available = 28, detail height 9: the list takes 19 lines and the
         // status line follows, so the rule sits on line 20.
-        assert_eq!(text[20].trim_end(), "\u{2500}".repeat(38));
-        assert_eq!(text[21].trim_end(), "Details");
-        assert_eq!(text[22].trim_end(), "Docs pass");
-        assert_eq!(text[23].trim_end(), "\u{25c6}  review \u{b7} 3h ago");
-        assert_eq!(text[29].trim_end(), FOOTER);
+        assert_eq!(
+            text[20],
+            format!("\u{25be} Details {}", "\u{2500}".repeat(28))
+        );
+        assert_eq!(text[21].trim_end(), "Docs pass");
+        assert_eq!(text[22].trim_end(), "\u{25c6}  review \u{b7} 3h ago");
+        assert_eq!(keys_of(&text[29]), FOOTER);
         let review = text
             .iter()
             .position(|l| l.starts_with("Review  1"))
@@ -1392,11 +1779,11 @@ mod tests {
         let mut app = app_with(DEMO);
         let first = plain(&render(&mut app, &Theme::default(), 40, 38));
         assert_eq!(header(&first), "6 agents");
-        assert!(first[4].starts_with(" \u{280b} Cache refactor"));
+        assert!(first[3].starts_with(" \u{280b} Cache refactor"));
         app.advance_spinner();
         let second = plain(&render(&mut app, &Theme::default(), 40, 38));
-        assert!(second[4].starts_with(" \u{2819} Cache refactor"));
-        assert_eq!(first[9].trim_end(), "Quiet  3");
+        assert!(second[3].starts_with(" \u{2819} Cache refactor"));
+        assert_eq!(first[6].trim_end(), "Quiet  3");
         // Selecting a section shows the section details.
         app.selected_index = app.items.len() - 3;
         let text = plain(&render(&mut app, &Theme::default(), 40, 38));
@@ -1413,9 +1800,9 @@ mod tests {
         // Open one: the count does not double and members indent.
         assert!(app.toggle_selected_section());
         let text = plain(&render(&mut app, &Theme::default(), 40, 38));
-        assert_eq!(text[9].trim_end(), "Quiet  3");
-        assert_eq!(text[10].trim_end(), " \u{25be} < 24h   1");
-        assert_eq!(text[11].trim_end(), "   \u{25cc} Old question");
+        assert_eq!(text[6].trim_end(), "Quiet  3");
+        assert_eq!(text[7].trim_end(), " \u{25be} < 24h   1");
+        assert_eq!(row(&text[8]), "   \u{25cc} Old question");
         assert_eq!(header(&text), "6 agents");
     }
 
@@ -1434,32 +1821,27 @@ mod tests {
         app.notice = None;
         let raw = render(&mut app, &Theme::default(), 40, 38);
         let text = plain(&raw);
-        let rows: Vec<&str> = text.iter().take(15).map(|l| l.trim_end()).collect();
+        let rows: Vec<&str> = text.iter().take(10).map(|l| row(l)).collect();
         assert_eq!(
             rows,
             [
                 "a-very-long-team-name  1",
                 " \u{25c6} Auth one",
-                "   \u{2733}  5m",
                 "billing  4",
                 " \u{25c6} Lead",
-                "   \u{2733}  4m  \u{2605} lead  app \u{b7} main",
                 " ? Blocked one",
-                "   \u{2b21}  3m",
                 " \u{280b} Worker one",
-                "   \u{2733}  2m  app \u{b7} main",
                 " \u{25b8} Quiet   1",
                 "no team  1",
                 " \u{280b} Solo",
-                "   \u{2733}  1m",
                 "",
             ]
         );
         assert_eq!(header(&text), "6 agents");
         // Headings are in the accent colour, bold; the first one is selected.
         let accent = color_code(Theme::default().accent, false);
-        assert!(raw[3].starts_with(&format!("\u{1b}[1;{accent}mbilling  4")));
-        assert!(raw[11].starts_with(&format!("\u{1b}[1;{accent}mno team  1")));
+        assert!(raw[2].starts_with(&format!("\u{1b}[1;{accent}mbilling  4")));
+        assert!(raw[7].starts_with(&format!("\u{1b}[1;{accent}mno team  1")));
         // A heading's details name the team.
         app.selected_index = 2;
         let text = plain(&render(&mut app, &Theme::default(), 40, 38));
@@ -1469,55 +1851,53 @@ mod tests {
         assert!(app.toggle_selected_section());
         let text = plain(&render(&mut app, &Theme::default(), 40, 60));
         assert_eq!(
-            text[3].trim_end(),
+            text[2].trim_end(),
             "billing  4  1 blocked \u{b7} 1 working \u{b7} 1 review"
         );
-        assert_eq!(text[4].trim_end(), "no team  1");
+        assert_eq!(text[3].trim_end(), "no team  1");
         // Too long for the pane, it is cut, not wrapped.
         let text = plain(&render(&mut app, &Theme::default(), 40, 38));
         assert_eq!(
-            text[3],
+            text[2],
             "billing  4  1 blocked \u{b7} 1 working \u{b7} 1\u{2026}"
         );
         assert_eq!(header(&text), "6 agents");
         app.selected_index = 3;
         assert!(app.toggle_selected_section());
         let text = plain(&render(&mut app, &Theme::default(), 40, 38));
-        assert_eq!(text[4].trim_end(), "no team  1  1 working");
+        assert_eq!(text[3].trim_end(), "no team  1  1 working");
         // The Quiet row opens like a Quiet section, its agents indented.
         app.selected_index = 2;
         assert!(app.toggle_selected_section());
         assert!(app.select_agent("q1"));
         let text = plain(&render(&mut app, &Theme::default(), 40, 38));
-        assert_eq!(text[10].trim_end(), " \u{25be} Quiet   1");
-        assert_eq!(text[11].trim_end(), "   \u{25cb} Quiet one");
+        assert_eq!(text[6].trim_end(), " \u{25be} Quiet   1");
+        assert_eq!(row(&text[7]), "   \u{25cb} Quiet one");
         assert_eq!(attention_counts(0, 0, 0), "");
         assert_eq!(attention_counts(2, 0, 1), "2 blocked \u{b7} 1 review");
     }
 
     #[test]
-    fn the_status_grouping_names_the_team_on_the_second_line() {
+    fn an_agent_is_one_row_and_its_details_name_the_team() {
         let mut app = app_with(TEAMS);
         let text = plain(&render(&mut app, &Theme::default(), 40, 38));
-        let second = |title: &str| -> String {
-            let at = text
-                .iter()
-                .position(|l| l.trim_end().ends_with(title))
-                .unwrap();
+        // One row an agent: the next row is the next agent, or a heading.
+        let after = |title: &str| -> String {
+            let at = text.iter().position(|l| row(l).ends_with(title)).unwrap();
             text[at + 1].trim_end().to_string()
         };
-        assert_eq!(second("Blocked one"), "   \u{2b21}  3m  billing");
-        assert_eq!(
-            second("Worker one"),
-            "   \u{2733}  2m  billing  app \u{b7} main"
-        );
-        assert_eq!(
-            second("Lead"),
-            "   \u{2733}  4m  \u{2605} billing  app \u{b7} main"
-        );
-        assert_eq!(second("Solo"), "   \u{2733}  1m");
-        // A long name is cut, and the line never leaves the pane.
-        assert_eq!(second("Auth one"), "   \u{2733}  5m  a-very-long-t\u{2026}");
+        assert_eq!(row(&after("Blocked one")), "Working  2");
+        assert_eq!(row(&after("Solo")), " \u{280b} Worker one");
+        let mut details = |id: &str| -> Vec<String> {
+            assert!(app.select_agent(id));
+            plain(&render(&mut app, &Theme::default(), 40, 38))
+                .iter()
+                .map(|l| l.trim_end().to_string())
+                .collect()
+        };
+        assert!(details("w1").contains(&"team      billing".to_string()));
+        assert!(details("lead").contains(&"team      billing \u{b7} lead".to_string()));
+        assert!(!details("solo").iter().any(|l| l.starts_with("team")));
         let narrow = render(&mut app, &Theme::default(), 40, 16);
         assert!(plain(&narrow).iter().all(|l| l.width() <= 16));
     }
@@ -1531,14 +1911,9 @@ mod tests {
         assert!(app.select_agent("q"));
         let text = plain(&render(&mut app, &Theme::default(), 30, 38));
         let pending = text.iter().position(|l| l.contains("Pending")).unwrap();
-        assert_eq!(text[pending].trim_end(), "   \u{25cc} Pending");
-        assert_eq!(
-            text[pending + 1].trim_end(),
-            "     \u{2733}  5h  stopped waiting on you"
-        );
+        assert_eq!(row(&text[pending]), "   \u{25cc} Pending");
         let idle = text.iter().position(|l| l.contains("Idle")).unwrap();
-        assert_eq!(text[idle].trim_end(), "   \u{25cb} Idle");
-        assert_eq!(text[idle + 1].trim_end(), "     \u{2b21}  3h");
+        assert_eq!(row(&text[idle]), "   \u{25cb} Idle");
         // Details use the state symbol, not the resting one.
         assert!(text
             .iter()
@@ -1548,37 +1923,279 @@ mod tests {
             .any(|l| l.trim_end() == "provider  claude \u{b7} ended"));
     }
 
+    fn sessions(app: &mut ZellijNoc, names: &[&str], on_show: &str) {
+        let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+        app.set_sessions(&names, on_show);
+    }
+
+    #[test]
+    fn the_panel_is_three_titled_sections() {
+        let mut app = app_with(TEAMS);
+        let rule = |title: &str| format!("{title} {}", "\u{2500}".repeat(37 - title.width()));
+        // A title row that ends with a count, or with the count and the dot.
+        let counted = |title: &str, end: &str| {
+            format!(
+                "{title} {} {end}",
+                "\u{2500}".repeat(36 - title.width() - end.width())
+            )
+        };
+        // Agents with its count and the status dot, Sessions with its
+        // count, Details, the footer.
+        sessions(
+            &mut app,
+            &["noc", "noc--billing", "noc--auth"],
+            "noc--billing",
+        );
+        let text = plain(&panel(&mut app, &Theme::default(), 40, 38));
+        assert_eq!(text.len(), 40);
+        assert!(text.iter().all(|l| l.width() == 38), "{text:?}");
+        let at =
+            |text: &[String], title: &str| text.iter().position(|l| l.contains(title)).unwrap();
+        assert_eq!(text[0], counted("Agents", "6"));
+        assert_eq!(text[1].trim_end(), "Blocked  1");
+        let (list, details) = (at(&text, "Sessions"), at(&text, "Details"));
+        assert_eq!(text[list], counted("\u{25be} Sessions", "3"));
+        // The teams' sessions by name, then the inner session; the one on
+        // show is marked, and each says what its team's agents need.
+        assert_eq!(text[list + 1].trim_end(), "   auth     no agents");
+        assert_eq!(
+            text[list + 2].trim_end(),
+            " \u{2192} billing  1 blocked \u{b7} 1 working \u{b7} 1\u{2026}"
+        );
+        assert_eq!(text[list + 3].trim_end(), "   no-team  1 working");
+        // The section ends with its count, as the list does.
+        assert_eq!(details, list + 5);
+        assert_eq!(text[details], rule("\u{25be} Details"));
+        assert_eq!(text[details + 1].trim_end(), "Blocked one");
+        assert_eq!(keys_of(&text[39]), FOOTER);
+        // The selection waits on the session on show.
+        assert_eq!(app.selected_session().unwrap().name, "noc--billing");
+        // Closed, a section is its title row, and the list has its rows.
+        app.toggle_sessions();
+        let text = plain(&panel(&mut app, &Theme::default(), 40, 38));
+        let list = at(&text, "Sessions");
+        assert_eq!(text[list], counted("\u{25b8} Sessions", "3"));
+        assert_eq!(text[list + 1], rule("\u{25be} Details"));
+        app.toggle_details();
+        let text = plain(&panel(&mut app, &Theme::default(), 40, 38));
+        assert_eq!(text[0], counted("Agents", "6"));
+        assert_eq!(text[37], counted("\u{25b8} Sessions", "3"));
+        assert_eq!(text[38], rule("\u{25b8} Details"));
+        assert_eq!(keys_of(&text[39]), FOOTER);
+        app.toggle_sessions();
+        app.toggle_details();
+        // The inner session alone is a session too.
+        sessions(&mut app, &["noc"], "noc");
+        let text = plain(&panel(&mut app, &Theme::default(), 40, 38));
+        let list = at(&text, "Sessions");
+        assert_eq!(text[list], counted("\u{25be} Sessions", "1"));
+        assert_eq!(text[list + 1].trim_end(), " \u{2192} no-team  1 working");
+        assert!(text[list + 3].contains("Details"));
+        // A short pane has no room for the section.
+        let text = plain(&panel(&mut app, &Theme::default(), 14, 38));
+        assert!(!text.iter().any(|l| l.contains("Sessions")));
+        // More sessions than rows: the selected one stays in view.
+        let many: Vec<String> = (0..9).map(|i| format!("noc--t{i}")).collect();
+        let names: Vec<&str> = many.iter().map(String::as_str).collect();
+        sessions(&mut app, &names, "noc--t7");
+        let text = plain(&panel(&mut app, &Theme::default(), 40, 38));
+        let list = at(&text, "Sessions");
+        let shown: Vec<&str> = text[list + 1..list + 6].iter().map(|l| l.trim()).collect();
+        assert_eq!(shown[0], "t4  no agents");
+        assert_eq!(shown[3], "\u{2192} t7  no agents");
+        assert_eq!(text[list], counted("\u{25be} Sessions", "9"));
+        assert!(text[list + 7].contains("Details"));
+    }
+
+    #[test]
+    fn the_section_with_the_keys_shows_its_selection_and_its_details() {
+        let mut app = app_with(TEAMS);
+        sessions(&mut app, &["noc", "noc--billing"], "noc");
+        let theme = Theme::default();
+        let highlight = "48;2;49;50;68";
+        let accent = color_code(theme.accent, false);
+        // A title is in the accent colour while its section has the keys.
+        let titled = |raw: &[String], title: &str| {
+            let at = plain(raw).iter().position(|l| l.contains(title)).unwrap();
+            raw[at].starts_with(&format!("\u{1b}[1;{accent}m"))
+        };
+        let raw = panel(&mut app, &theme, 40, 38);
+        let text = plain(&raw);
+        let list = text.iter().position(|l| l.contains("Sessions")).unwrap();
+        let details = text.iter().position(|l| l.contains("Details")).unwrap();
+        // The agents have the keys: their selected row is highlighted, no
+        // session row is, and the details are the agent's.
+        assert!(titled(&raw, "Agents") && !titled(&raw, "Sessions") && !titled(&raw, "Details"));
+        assert!(raw[2].contains(highlight));
+        assert!(!raw[list + 1..].iter().any(|l| l.contains(highlight)));
+        assert_eq!(text[details + 1].trim_end(), "Blocked one");
+        // `Tab`: the sessions have them, and the details are the session's.
+        app.toggle_focus(true);
+        assert_eq!(app.focus, Focus::Sessions);
+        let raw = panel(&mut app, &theme, 40, 38);
+        let text = plain(&raw);
+        assert!(!titled(&raw, "Agents") && titled(&raw, "Sessions"));
+        assert!(!raw[2].contains(highlight));
+        assert!(raw[list + 2].contains(highlight), "the session on show");
+        let got: Vec<&str> = text[details + 1..details + 7]
+            .iter()
+            .map(|l| l.trim_end())
+            .collect();
+        assert_eq!(
+            got,
+            [
+                "Session \u{b7} no-team",
+                "zellij    noc",
+                "state     on show",
+                "agents    1",
+                "  1 working",
+                "Enter shows it.",
+            ]
+        );
+        app.move_session(-1);
+        let text = plain(&panel(&mut app, &theme, 40, 38));
+        let got: Vec<&str> = text[details + 1..details + 7]
+            .iter()
+            .map(|l| l.trim_end())
+            .collect();
+        assert_eq!(
+            got,
+            [
+                "Session \u{b7} billing",
+                "zellij    noc--billing",
+                "state     running, out of sight",
+                "agents    4",
+                "  1 blocked \u{b7} 1 working \u{b7} 1 review",
+                "Enter shows it; x ends it.",
+            ]
+        );
+        // `Shift Tab`: the details have the keys, and are still about the
+        // session, whose row stays highlighted.
+        app.toggle_focus(false);
+        assert_eq!(
+            (app.focus, app.list_focus()),
+            (Focus::Details, Focus::Sessions)
+        );
+        let raw = panel(&mut app, &theme, 40, 38);
+        assert!(titled(&raw, "Details") && !titled(&raw, "Sessions"));
+        assert!(raw[list + 1].contains(highlight));
+        assert_eq!(
+            plain(&raw)[details + 1].trim_end(),
+            "Session \u{b7} billing"
+        );
+        // And round to the agents.
+        app.toggle_focus(true);
+        assert_eq!(
+            (app.focus, app.list_focus()),
+            (Focus::Agents, Focus::Agents)
+        );
+        app.toggle_focus(false);
+        assert_eq!(
+            (app.focus, app.list_focus()),
+            (Focus::Details, Focus::Agents)
+        );
+        app.focus_agents();
+        // Asking to end a session takes the status line.
+        app.pending_end = Some("noc--billing".to_string());
+        let text = plain(&panel(&mut app, &theme, 40, 38));
+        assert!(text
+            .iter()
+            .any(|l| l.trim_end() == "End session billing?  y / n"));
+        app.pending_end = None;
+        // A search holds some agents only, so the rows say nothing of them.
+        app.flat = true;
+        let text = plain(&panel(&mut app, &theme, 40, 38));
+        assert_eq!(text[list + 1].trim_end(), "   billing");
+    }
+
+    #[test]
+    fn the_details_scroll_down_and_sideways() {
+        let mut app = app_with(DEMO);
+        let theme = Theme::default();
+        let details = |app: &mut ZellijNoc, cols: usize| -> Vec<String> {
+            let text = plain(&panel(app, &theme, 20, cols));
+            let at = text.iter().position(|l| l.contains("Details")).unwrap();
+            text[at..text.len() - 1]
+                .iter()
+                .map(|l| l.trim_end().to_string())
+                .collect()
+        };
+        // Nine lines in five rows: the title says which are in view.
+        let shown = details(&mut app, 38);
+        assert_eq!(shown.len(), 6);
+        assert!(shown[0].starts_with("\u{25be} Details  1-5/9 \u{2500}"));
+        assert_eq!(shown[1], "Auth migration");
+        assert_eq!((app.detail_max_scroll, app.detail_rows), (4, 5));
+        app.scroll_details(2);
+        let shown = details(&mut app, 38);
+        assert!(shown[0].starts_with("\u{25be} Details  3-7/9 "));
+        assert_eq!(shown[1], "repo      app \u{b7} main");
+        // No further than the last line.
+        app.scroll_details(isize::MAX);
+        let shown = details(&mut app, 38);
+        assert!(shown[0].starts_with("\u{25be} Details  5-9/9 "));
+        assert_eq!(shown[5], "pane      work/7 \u{b7} observed");
+        app.scroll_details(isize::MIN);
+        assert_eq!(app.detail_scroll, 0);
+        // Sideways, in a pane narrower than its longest line, as far as
+        // that line's end and no further.
+        let narrow = details(&mut app, 24);
+        let cwd = narrow.iter().position(|l| l.starts_with("cwd")).unwrap();
+        assert_eq!(narrow[cwd], "cwd       /code/app/svc");
+        assert!(app.detail_max_shift > 0);
+        app.shift_details(4);
+        let shifted = details(&mut app, 24);
+        assert_eq!(shifted[cwd], "      /code/app/svc");
+        assert_eq!(shifted[1], " migration");
+        assert!(
+            shifted[0].starts_with("\u{25be} Details"),
+            "the title stays"
+        );
+        app.shift_details(isize::MAX);
+        assert_eq!(app.detail_shift, app.detail_max_shift);
+        // Another agent: its details start at the top again.
+        app.scroll_details(3);
+        app.move_selection(1);
+        let shown = details(&mut app, 38);
+        assert_eq!((app.detail_scroll, app.detail_shift), (0, 0));
+        assert_eq!(shown[1], "Cache refactor");
+    }
+
     #[test]
     fn renders_keyboard_help_on_request() {
         let mut app = app_with("[]");
         app.toggle_help();
-        let text = plain(&render(&mut app, &Theme::default(), 30, 38));
+        let text = plain(&render(&mut app, &Theme::default(), 34, 38));
         assert_eq!(text[0].trim_end(), "In the list");
         assert_eq!(text[1].trim_end(), "j / k       move selection");
         assert_eq!(text[5].trim_end(), "h           close a section or a team");
         assert_eq!(text[6].trim_end(), "v           group by team / status");
         assert_eq!(text[7].trim_end(), "p / s       pane / stacked pane here");
-        assert_eq!(text[11].trim_end(), "n           rename agent");
-        assert_eq!(text[12].trim_end(), "t / T       join / leave a team");
-        assert_eq!(text[13].trim_end(), "x           stop agent (asks y/n)");
-        assert_eq!(text[15].trim_end(), "/           search (also older:14d)");
-        assert_eq!(text[16].trim_end(), "u           check for a new release");
-        assert_eq!(text[17].trim_end(), "i           status and version");
-        assert_eq!(text[18].trim_end(), "? / Esc     close help");
-        assert_eq!(text[19], " ".repeat(38));
-        assert_eq!(text[20].trim_end(), "Anywhere");
-        assert_eq!(text[21].trim_end(), "Alt-m       jump to list and back");
-        assert_eq!(text[22].trim_end(), "Alt-o       hide / show this panel");
-        assert_eq!(text[23].trim_end(), "Alt-d       detach both sessions");
-        assert_eq!(text[24], " ".repeat(38));
+        assert_eq!(text[9].trim_end(), "o           show its team's session");
+        assert_eq!(text[10].trim_end(), "Tab         agents / sessions");
+        assert_eq!(text[11].trim_end(), "Shift-Tab   into the details, and out");
+        assert_eq!(text[12].trim_end(), "S           close / open sessions");
+        assert_eq!(text[15].trim_end(), "n           rename agent");
+        assert_eq!(text[16].trim_end(), "t / T       join / leave a team");
+        assert_eq!(text[17].trim_end(), "x           stop agent (asks y/n)");
+        assert_eq!(text[19].trim_end(), "/           search (also older:14d)");
+        assert_eq!(text[20].trim_end(), "u           check for a new release");
+        assert_eq!(text[21].trim_end(), "i           status and version");
+        assert_eq!(text[22].trim_end(), "? / Esc     close help");
+        assert_eq!(text[23], " ".repeat(38));
+        assert_eq!(text[24].trim_end(), "Anywhere");
+        assert_eq!(text[25].trim_end(), "Alt-m       jump to list and back");
+        assert_eq!(text[26].trim_end(), "Alt-o       hide / show this panel");
+        assert_eq!(text[27].trim_end(), "Alt-d       detach both sessions");
+        assert_eq!(text[28], " ".repeat(38));
         assert_eq!(
-            text[25].trim_end(),
+            text[29].trim_end(),
             format!("version     v{}", crate::update::CURRENT)
         );
         // The status line last, above the footer.
         assert_eq!(header(&text), "0 agents");
-        assert_eq!(status_at(&text), 28);
-        assert_eq!(text[29].trim_end(), FOOTER);
+        assert_eq!(status_at(&text), 32);
+        assert_eq!(keys_of(&text[33]), FOOTER);
     }
 
     #[test]
@@ -1597,36 +2214,29 @@ mod tests {
             70,
         ));
         assert_eq!(text.len(), 24);
+        // Where the work is, what it is, then which program does it. The
+        // ask wraps at 68 columns.
         let want = [
             "Auth migration",
             "!  needs approval \u{b7} 2m ago",
+            "repo      app \u{b7} main",
+            "cwd       /code/app/svc",
+            "ask",
+            "  Migrate the auth service to the new token format and update all",
+            "  callers",
+            "latest",
+            "  Waiting for approval to delete the build directory.",
             "provider  claude \u{b7} background",
             "native    auth",
             "id        3cfff231",
             "session   3cfff231-aaaa-bbbb",
             "model     opus \u{b7} high",
-            "repo      app \u{b7} main",
-            "cwd       /code/app/svc",
-            "ask",
-            "  Migrate the auth service to the new token format and update all callers",
-            "latest",
-            "  Waiting for approval to delete the build directory.",
             "pane      work/7 \u{b7} observed",
         ];
-        // The ask text wraps at 68 columns.
-        assert_eq!(text[9].trim_end(), want[9]);
-        assert_eq!(
-            text[10].trim_end(),
-            "  Migrate the auth service to the new token format and update all"
-        );
-        assert_eq!(text[11].trim_end(), "  callers");
-        for (i, w) in want[..9].iter().enumerate() {
-            assert_eq!(text[i].trim_end(), *w);
+        for (i, w) in want.iter().enumerate() {
+            assert_eq!(text[i].trim_end(), *w, "line {i}");
         }
-        assert_eq!(text[12].trim_end(), "latest");
-        assert_eq!(text[13].trim_end(), want[12]);
-        assert_eq!(text[14].trim_end(), want[13]);
-        assert_eq!(text[23].trim_end(), "Esc / D  close");
+        assert_eq!(text[23].trim_end(), "Esc / d  close");
 
         // The stop prompt takes the connection line.
         let mut app = app_with(DEMO);
@@ -1733,7 +2343,7 @@ mod tests {
         }
         assert_eq!(header(&text), "0 agents");
         assert_eq!(status_at(&text), 12);
-        assert_eq!(text[13].trim_end(), FOOTER);
+        assert_eq!(keys_of(&text[13]), FOOTER);
         // At the installed 38-column width the last line is cut with an ellipsis.
         let narrow = plain(&render(&mut app, &Theme::default(), 14, 38));
         assert_eq!(
@@ -1744,9 +2354,9 @@ mod tests {
         // the words are in the status box.
         let raw = render(&mut app, &Theme::default(), 14, 42);
         assert!(
-            raw[12].contains("38;2;243;139;168m\u{25cf}"),
+            raw[13].contains("38;2;243;139;168m\u{25cf}"),
             "{:?}",
-            raw[12]
+            raw[13]
         );
         assert_eq!(
             info(&mut app, 14, 42)[0],
@@ -1755,9 +2365,9 @@ mod tests {
         let mut app = app_with("[]");
         let raw = render(&mut app, &Theme::default(), 14, 42);
         assert!(
-            raw[12].contains("38;2;166;227;161m\u{25cf}"),
+            raw[13].contains("38;2;166;227;161m\u{25cf}"),
             "{:?}",
-            raw[12]
+            raw[13]
         );
         assert_eq!(info(&mut app, 14, 42)[0], "\u{25cf} connected \u{b7} poll");
     }
@@ -1783,7 +2393,7 @@ mod tests {
         );
         // Yellow while it waits.
         let raw = render(&mut app, &Theme::default(), 8, 38);
-        assert!(raw[6].contains("38;2;249;226;175m\u{25cf}"), "{:?}", raw[6]);
+        assert!(raw[7].contains("38;2;249;226;175m\u{25cf}"), "{:?}", raw[7]);
     }
 
     #[test]
@@ -1793,11 +2403,13 @@ mod tests {
         assert_eq!(header(&text), "0 agents");
         app.update = Some("v0.2.0".into());
         let text = plain(&render(&mut app, &Theme::default(), 30, 38));
-        // Only an arrow beside the dot; the versions are in the status box.
+        // Only an arrow beside the dot, on the footer; the versions are in
+        // the status box.
         assert_eq!(
             text[status_at(&text)],
-            format!("0 agents{}\u{2191} \u{25cf}", " ".repeat(27))
+            format!("Agents {} 0", "\u{2500}".repeat(29))
         );
+        assert_eq!(text[29], format!("{FOOTER}    \u{2191} \u{25cf}"));
         assert_eq!(
             info(&mut app, 30, 38)[1..],
             [
@@ -1809,21 +2421,21 @@ mod tests {
         );
         // Narrow: both still fit.
         let text = plain(&render(&mut app, &Theme::default(), 30, 22));
-        assert_eq!(
-            text[28],
-            format!("0 agents{}\u{2191} \u{25cf}", " ".repeat(11))
-        );
-        // Narrower than the count: the count is cut and the dot stays.
+        assert_eq!(text[28], format!("Agents {} 0", "\u{2500}".repeat(13)));
+        // The keys are cut before the marks are.
+        assert_eq!(text[29], "[?] keys  [D]etai\u{2026} \u{2191} \u{25cf}");
+        // Too narrow for the title: the count stays, and the marks.
         let text = plain(&render(&mut app, &Theme::default(), 30, 8));
-        assert_eq!(text[28], "0 a\u{2026} \u{2191} \u{25cf}");
+        assert_eq!(text[28], "       0");
+        assert_eq!(text[29], "[?]\u{2026} \u{2191} \u{25cf}");
         app.show_help = true;
-        let text = plain(&render(&mut app, &Theme::default(), 30, 38));
+        let text = plain(&render(&mut app, &Theme::default(), 34, 38));
         assert_eq!(
-            text[26].trim_end(),
+            text[30].trim_end(),
             "\u{2191} v0.2.0    newer plugin release;"
         );
-        assert_eq!(text[27].trim_end(), "            set it in the plugin URL");
-        assert_eq!(text[29].trim_end(), FOOTER);
+        assert_eq!(text[31].trim_end(), "            set it in the plugin URL");
+        assert_eq!(keys_of(&text[33]), FOOTER);
     }
 
     #[test]
@@ -1898,9 +2510,9 @@ mod tests {
         assert_eq!(header(&text), "0 agents");
         let raw = render(&mut app, &Theme::default(), 12, 60);
         assert!(
-            raw[10].contains("38;2;249;226;175m\u{25cf}"),
+            raw[11].contains("38;2;249;226;175m\u{25cf}"),
             "{:?}",
-            raw[10]
+            raw[11]
         );
         assert_eq!(
             info(&mut app, 12, 60),
@@ -1925,9 +2537,9 @@ mod tests {
         app.set_error("boom".into());
         let raw = render(&mut app, &Theme::default(), 12, 60);
         assert!(
-            raw[10].contains("38;2;243;139;168m\u{25cf}"),
+            raw[11].contains("38;2;243;139;168m\u{25cf}"),
             "{:?}",
-            raw[10]
+            raw[11]
         );
         // A notice takes the whole status line while it lasts.
         app.set_notice("renamed to x");
@@ -1936,19 +2548,20 @@ mod tests {
     }
 
     #[test]
-    fn the_status_box_sits_on_the_status_line_and_a_click_toggles_it() {
+    fn the_status_box_sits_over_the_footer_and_a_click_toggles_it() {
         let mut app = app_with(DEMO);
-        let closed = plain(&render(&mut app, &Theme::default(), 40, 38));
-        let row = status_at(&closed);
-        assert_eq!(app.status_row, Some(row));
-        // A click elsewhere does nothing; on the status line it opens the box.
+        let closed = plain(&panel(&mut app, &Theme::default(), 40, 38));
+        // The row the dot is on, the footer, is the one to click.
+        assert_eq!(app.status_row, Some(39));
+        assert!(closed[39].ends_with('\u{25cf}'));
+        // A click elsewhere does nothing; on the footer it opens the box.
         assert!(!app.click(0));
-        assert!(app.click(row as isize) && app.show_info);
-        let open = plain(&render(&mut app, &Theme::default(), 40, 38));
+        assert!(app.click(39) && app.show_info);
+        let open = plain(&panel(&mut app, &Theme::default(), 40, 38));
         assert_eq!(open.len(), 40);
         assert!(open.iter().all(|l| l.width() == 38));
         assert_eq!(
-            open[row - 4..row],
+            open[35..39],
             [
                 format!("\u{256d}\u{2500} status {}\u{256e}", "\u{2500}".repeat(27)),
                 format!(
@@ -1963,19 +2576,15 @@ mod tests {
             ]
         );
         // Nothing else moved.
-        assert_eq!(open[..row - 4], closed[..row - 4]);
-        assert_eq!(open[row..], closed[row..]);
-        // A click anywhere else closes it; so does a second click on the line.
+        assert_eq!(open[..35], closed[..35]);
+        assert_eq!(open[39], closed[39]);
+        // A click anywhere else closes it; so does a second click on the row.
         assert!(app.click(2) && !app.show_info);
-        assert!(app.click(row as isize) && app.click(row as isize) && !app.show_info);
-        // A pane too short for the whole box shows its end.
-        app.show_info = true;
-        let tiny = plain(&render(&mut app, &Theme::default(), 4, 38));
-        assert_eq!(
-            tiny[1],
-            format!("\u{2570}{}\u{256f}", "\u{2500}".repeat(36))
-        );
-        assert_eq!(header(&tiny), "6 agents");
+        assert!(app.click(39) && app.click(39) && !app.show_info);
+        // A pane too short for a footer has the dot on its first row.
+        let short = plain(&panel(&mut app, &Theme::default(), 2, 38));
+        assert_eq!(app.status_row, Some(0));
+        assert!(short[0].ends_with('\u{25cf}'));
     }
 
     #[test]
@@ -1999,18 +2608,18 @@ mod tests {
         assert!(render(&mut app, &theme, 10, 0).is_empty());
         let one = plain(&render(&mut app, &theme, 1, 38));
         assert_eq!(one.len(), 1);
-        assert!(one[0].starts_with("6 agents"));
+        assert_eq!(header(&one), "6 agents");
         // Two rows: one list line, windowed to the selected row, and the status.
         let two = plain(&render(&mut app, &theme, 2, 38));
         assert_eq!(two.len(), 2);
-        assert_eq!(two[0].trim_end(), " ! Auth migration");
-        assert!(two[1].starts_with("6 agents"));
+        assert_eq!(row(&two[0]), " ! Auth migration");
+        assert_eq!(header(&two), "6 agents");
         // From three rows the footer has room too.
         let three = plain(&render(&mut app, &theme, 3, 38));
         assert_eq!(three.len(), 3);
-        assert_eq!(three[0].trim_end(), " ! Auth migration");
-        assert!(three[1].starts_with("6 agents"));
-        assert_eq!(three[2].trim_end(), FOOTER);
+        assert_eq!(row(&three[0]), " ! Auth migration");
+        assert_eq!(header(&three), "6 agents");
+        assert_eq!(keys_of(&three[2]), FOOTER);
         assert_eq!(app.last_render_rows, 3);
     }
 
@@ -2027,21 +2636,20 @@ mod tests {
     }
 
     #[test]
-    fn selected_rows_highlight_both_lines_and_group_colours_are_fixed() {
+    fn the_selected_row_is_highlighted_and_group_colours_are_fixed() {
         let mut app = app_with(DEMO);
         let theme = Theme::default();
         let raw = render(&mut app, &theme, 40, 38);
-        // Selected primary and secondary lines carry the selection background.
+        // The selected row carries the selection background.
         assert!(raw[1].contains("48;2;49;50;68"));
-        assert!(raw[2].contains("48;2;49;50;68"));
-        assert!(!raw[4].contains("48;2;49;50;68"));
+        assert!(!raw[3].contains("48;2;49;50;68"));
         // herdr's colours: a blue header, red, yellow, teal and grey groups.
         let at = status_at(&plain(&raw));
         assert!(raw[at].contains("38;2;137;180;250"), "header is blue");
         assert!(raw[0].contains("38;2;243;139;168"), "Blocked is red");
-        assert!(raw[3].contains("38;2;249;226;175"), "Working is yellow");
-        assert!(raw[6].contains("38;2;148;226;213"), "Review is teal");
-        assert!(raw[9].contains("38;2;147;153;178"), "Quiet is grey");
+        assert!(raw[2].contains("38;2;249;226;175"), "Working is yellow");
+        assert!(raw[4].contains("38;2;148;226;213"), "Review is teal");
+        assert!(raw[6].contains("38;2;147;153;178"), "Quiet is grey");
         // The built-in colours are never dimmed: dim grey on a dark
         // background cannot be read.
         assert!(!raw
@@ -2051,9 +2659,9 @@ mod tests {
         let zellij = Theme::from_mode_info(&ModeInfo::default());
         let raw = render(&mut app, &zellij, 40, 38);
         assert!(raw[0].contains("38;5;1"), "Blocked heading is ANSI 1");
-        assert!(raw[3].contains("38;5;2"), "Working heading is ANSI 2");
-        assert!(raw[6].contains("38;5;6"), "Review heading is ANSI 6");
-        assert!(raw[9].contains("38;5;8"), "Quiet heading is ANSI 8");
+        assert!(raw[2].contains("38;5;2"), "Working heading is ANSI 2");
+        assert!(raw[4].contains("38;5;6"), "Review heading is ANSI 6");
+        assert!(raw[6].contains("38;5;8"), "Quiet heading is ANSI 8");
         assert_eq!(zellij.group(AgentGroup::Quiet), PaletteColor::EightBit(8));
         assert_eq!(styled_span("x", Style::default()), "x");
         let rgb = Style {

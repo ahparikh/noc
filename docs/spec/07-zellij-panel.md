@@ -12,10 +12,11 @@ results of `noc stop`, `noc rename`, `noc team set` and `noc team clear`.
 
 The plugin has one deployment: the panel is a sidebar in an outer "host"
 Zellij session, beside a single guest pane that holds the user's own Zellij
-session attached nested (the "inner" session). One WASM build serves three
-roles chosen by the `role` configuration key: `panel` (the default),
-`details` (the floating details window) and `relay` (the theme relay inside
-the inner session). This section covers the `panel` and `details` roles.
+session attached nested (the "inner" session), or the session of one of the
+teams. One WASM build serves four roles chosen by the `role` configuration
+key: `panel` (the default), `details` (the floating details window), `relay`
+(inside each inner session) and `bar` (an inner session's tab bar). This
+section covers the `panel` and `details` roles.
 
 Plugin lifecycle, permissions, polling cadence, pipe decoding, keyboard
 ownership (`Alt-m`, `Alt-o`, `Alt-d`), the theme relay, reading and driving
@@ -116,10 +117,10 @@ The plugin depends on `zellij-tile` 0.46.0 and is used with Zellij 0.46.
 | `ended_at` | `Option<String>` | `None` | recency (2nd) |
 | `created_at` | `Option<String>` | `None` | recency (3rd) |
 | `first_seen_at` | `Option<String>` | `None` | recency (4th) |
-| `attention` | `Attention` | `{kind:"", detail:""}` | Blocked secondary line |
+| `attention` | `Attention` | `{kind:"", detail:""}` | not shown; it was on the second line (ZR-013) |
 | `workspace` | `Option<Workspace>` | `None` | repo/branch/worktree/cwd, `w` directory, attach cwd |
 | `frontend_bindings` | `Vec<FrontendBinding>` | `[]` | details `pane` line; pane resolution in the inner session |
-| `team` | `String` | `""` | team grouping, the team on the secondary line (ZM-025) |
+| `team` | `String` | `""` | team grouping, the team in the details (ZM-025) |
 | `lead` | `bool` | `false` | the lead's place and mark (ZM-025) |
 | `parent_id` | `String` | `""` | parsed, not displayed |
 
@@ -571,8 +572,8 @@ Public API fields that are not modelled are silently ignored, e.g.
 
 #### ZG-018 Rows when grouped by team
 - **Behavior:** Grouped by team, `rebuild_items` MUST emit one group per
-  team, ordered by team name (byte order), then one group for the agents in
-  no team when there are any. A Quiet agent in no team that is older than 7
+  team at work, ordered by team name (byte order), then one group for the
+  agents in no team when there are any, then the teams at rest (ZG-020). A Quiet agent in no team that is older than 7
   days is not part of that group (as in ZG-006); every agent of a named
   team is part of its group, whatever its age. Each group is:
   1. a `Team` row carrying the number of agents in the group and how many
@@ -591,6 +592,23 @@ Public API fields that are not modelled are silently ignored, e.g.
 - **Source:** `zellij/src/app.rs` (rebuild_team_items)
 - **Decision:** D-070, D-071
 - **Verified by:** `zellij/src/app.rs` teams_group_by_name_with_the_lead_first_and_quiet_agents_in_one_row
+
+#### ZG-020 Teams at rest go behind one row
+- **Behavior:** A named team is at work when at least one of its agents is
+  not Quiet, and at rest otherwise, however old its agents are. Grouped by
+  team, when any team is at rest the list MUST end with one `QuietTeams`
+  row carrying the number of teams at rest, followed, only while that row
+  is open, by their groups, each as in ZG-018, ordered by team name. The
+  row starts closed; `Enter`, `l` and `Space` on it toggle it, `h` on it
+  closes it, and it stays as the user left it until the plugin is reloaded.
+  Selecting an agent of a team at rest opens it. A team goes back
+  among the teams at work, with all of its agents, the moment one of them
+  is no longer Quiet, which is also what happens when a new agent is given
+  the name of a team that was at rest. The agents in no team are never at
+  rest as a group: their old Quiet ones are left out instead (ZG-018).
+- **Source:** `zellij/src/app.rs` (rebuild_team_items, toggle_selected_section, collapse_selected_team, select_agent)
+- **Decision:** D-083
+- **Verified by:** `zellij/src/app.rs` teams_with_no_agent_at_work_rest_behind_one_row; `zellij/e2e/nested.sh` "a team with no agent at work is listed under Quiet teams"
 
 #### ZG-019 Teams start open; open state persists
 - **Behavior:** Every team's group MUST start open and every team's Quiet
@@ -679,9 +697,9 @@ Public API fields that are not modelled are silently ignored, e.g.
 - **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds; `zellij/src/view.rs` very_small_panes_keep_the_status_line; `zellij/src/view.rs` control_characters_in_names_never_reach_the_terminal
 
 #### ZR-002 The status line
-- **Behavior:** The panel has one status line (placed by ZR-033). While a
-  prompt or a notice is active it is that text alone, the first that
-  applies:
+- **Behavior:** The panel has one status line: its first row, which is the
+  title row of the Agents section (ZR-033). While a prompt or a notice is
+  active it is that text alone, the first that applies:
 
   | Condition (priority order) | Text | Colour |
   |---|---|---|
@@ -691,18 +709,18 @@ Public API fields that are not modelled are silently ignored, e.g.
   | search being typed | `/ {text}▏` (U+258F cursor) | accent |
   | notice set | the notice text | info |
 
-  Otherwise it MUST show, on the left, `{N} agent{s}` (`s` omitted only when
-  `N == 1`; accent colour, bold), where `N` is the number of non-Quiet agent
-  rows plus the sum of all Quiet section counts (open or closed); Quiet
-  agents older than 7 days and stopped agents are not counted. Grouped by
-  team, `N` is the sum of the team headings' counts (ZG-018). While the
-  list holds search results (ZK-026) the count is `{N} match` or
-  `{N} matches`, `N` being the number of rows, followed by two spaces and
-  `/ {query}`. At the right edge it MUST show the status dot `●` (ZR-003),
-  preceded by `↑` and a space (attention colour, bold) when a newer release
-  is recorded ([08-zellij-host.md](08-zellij-host.md) ZH-022). The dot and
-  the arrow are never dropped for lack of room: the count is cut with `…`
-  instead. Neither says anything in words; the status box does (ZR-034).
+  Otherwise it MUST be the title `Agents` (ZR-033), a rule, and at the end
+  of the row, after one space, the count `{N}` (accent colour, bold). `N`
+  is the number of non-Quiet agent rows plus the sum of all Quiet section
+  counts (open or closed); Quiet agents older than 7 days and stopped
+  agents are not counted. Grouped by team, `N` is the sum of the team
+  headings' counts (ZG-018). While the list holds search results (ZK-026)
+  the count is `{N} match` or `{N} matches`, `N` being the number of rows,
+  followed by two spaces and `/ {query}`. The title and its rule are left
+  out when the row cannot hold them with three columns of rule, and then
+  the count is cut with `…`. The status dot and the mark of a newer release
+  are on the footer (ZR-004); in a pane too short for a footer they follow
+  the count here, each after one space.
 - **Source:** `zellij/src/view.rs` (status_line, shown_agent_count, plural)
 - **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds, a_newer_release_is_marked_on_the_header_and_explained_in_help, search_results_are_a_flat_list_with_the_query_on_the_status_line, details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel
 
@@ -724,8 +742,9 @@ Public API fields that are not modelled are silently ignored, e.g.
 
 #### ZR-034 The status box
 - **Behavior:** While the status box is open (ZK-028) the panel MUST draw a
-  framed box over the last lines of the body, directly above the status
-  line, as wide as the pane: a top border `╭─ status ─…─╮`, one line per
+  framed box over the rows directly above the footer, where the dot is, as
+  wide as the pane and never over the first row (in a pane without a
+  footer, over its last rows): a top border `╭─ status ─…─╮`, one line per
   entry as `│ {text} │` with the text cut to the inner width, and a bottom
   border `╰─…─╯` (borders in the muted colour). The entries, in order:
   1. `● {words}` for the connection, in the dot's connection colour
@@ -741,26 +760,38 @@ Public API fields that are not modelled are silently ignored, e.g.
   shown. Nothing else moves. The box is not drawn in a pane narrower than 8
   columns.
 - **Source:** `zellij/src/view.rs` (status_box_lines, render)
-- **Verified by:** `zellij/src/view.rs` the_status_box_sits_on_the_status_line_and_a_click_toggles_it, problems_turn_the_dot_yellow_and_are_spelled_out_in_the_status_box, a_newer_release_is_marked_on_the_header_and_explained_in_help
+- **Verified by:** `zellij/src/view.rs` the_status_box_sits_over_the_footer_and_a_click_toggles_it, problems_turn_the_dot_yellow_and_are_spelled_out_in_the_status_box, a_newer_release_is_marked_on_the_header_and_explained_in_help
 
 #### ZR-004 Footer
-- **Behavior:** The last line MUST be `[?] keys  [d]etails  [D] window` (two
+- **Behavior:** The last line MUST be `[?] keys  [D]etails  [d] window` (two
   spaces between items; muted, dim) whenever the pane has more than two
-  rows. With two rows or fewer there is no footer (ZR-016).
-- **Source:** `zellij/src/view.rs` (render, FOOTER)
+  rows, and at its right edge the status dot `●` (ZR-003), preceded by `↑`
+  and a space (attention colour, bold) when a newer release is recorded
+  ([08-zellij-host.md](08-zellij-host.md) ZH-022). The dot and the arrow
+  are never dropped for lack of room: the keys are cut with `…` instead,
+  leaving one column before the marks. Neither says anything in words; the
+  status box does (ZR-034). With two rows or fewer there is no footer
+  (ZR-016), and the marks are on the status line (ZR-002).
+- **Source:** `zellij/src/view.rs` (render, panel_footer, FOOTER)
 - **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds, very_small_panes_keep_the_status_line
 
-#### ZR-033 Layout: the list on top, the status line beneath it
-- **Behavior:** From the top the panel MUST show: the body (the agent list,
+#### ZR-033 Layout: three titled sections
+- **Behavior:** The panel has three sections, each under its title row:
+  Agents, Sessions and Details. From the top it MUST show: the status
+  line, which is the Agents title row (ZR-002); the body (the agent list,
   or the help view, or the empty state), cut or padded with empty lines to
-  fill the rows the rest leaves; the status line (ZR-002); the inline
-  details block when it is shown (ZR-008); and the footer (ZR-004). So the
-  status line is directly above the details, and directly above the footer
-  when details are hidden or do not fit. The pane's own title names the
-  panel, so nothing is drawn above the list. The row the status line is
-  drawn on is recorded for clicks (ZK-028).
-- **Source:** `zellij/src/view.rs` (render)
-- **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds (status between list and details), renders_keyboard_help_on_request (status above the footer)
+  fill the rows the rest leaves; the Sessions section (ZR-038); the Details
+  section (ZR-022); and the footer (ZR-004). A title row is the title, a
+  space, and `─` to the edge of the pane (accent, dim); the Agents and
+  Sessions rows end, after the rule and a space, with their count (accent,
+  bold), so nothing but its rows is under a title. The title is bold, in
+  the accent colour for the section that has the keys (ZK-035) and muted
+  for the others. Sessions and Details close: their title starts with `▾ `
+  while open and `▸ ` while closed, and a closed section is its title row
+  alone, so with both closed the list has every row but those two. The
+  row the status dot is on, the footer, is recorded for clicks (ZK-028).
+- **Source:** `zellij/src/view.rs` (render, section_heading)
+- **Verified by:** `zellij/src/view.rs` the_panel_is_three_titled_sections, the_section_with_the_keys_shows_its_selection_and_its_details, renders_colored_grouped_master_detail_panel_within_bounds (status between list and details), renders_keyboard_help_on_request (status above the footer; no title). The other tests of `view.rs` read the panel with its first row moved to under the list, so their rows count from the first row of the list
 
 ### 3.2 Help, empty and error states
 
@@ -780,8 +811,12 @@ Public API fields that are not modelled are silently ignored, e.g.
   v           group by team / status
   p / s       pane / stacked pane here
   w           shell in its worktree
-  d           toggle details
-  D           details window
+  o           show its team's session
+  Tab         agents / sessions
+  Shift-Tab   into the details, and out
+  S           close / open sessions
+  D           close / open details
+  d           details window
   n           rename agent
   t / T       join / leave a team
   x           stop agent (asks y/n)
@@ -835,21 +870,22 @@ Public API fields that are not modelled are silently ignored, e.g.
 
 ### 3.3 List and details layout
 
-#### ZR-008 Master/detail split
+#### ZR-008 How the rows are shared
 - **Behavior:** With `available = rows - 2` (the status line and the
-  footer): `detail_height = available / 3` if
-  `show_details && available >= 12`, else 0;
-  `list_height = available - detail_height`. The list occupies the
-  first `list_height` lines, padded with empty lines; then comes the status
-  line; then the details block, exactly `detail_height` lines; then the
-  footer. The split is fixed so neither the status line nor the details
-  jump as the selection moves.
+  footer), and only when the list is not empty: the Sessions
+  section takes its rows first, when there are sessions to list and
+  `available >= 14`: its title row, and while it is open one row a session,
+  at most 5, and an empty row. Of the `shared` rows left, the Details section takes
+  `shared / 3` while it is open and 1 while it is closed, when
+  `shared >= 12`, else none; the list takes the rest. The split does not
+  depend on the selection, so neither the status line nor the sections
+  jump as it moves.
 - **Source:** `zellij/src/view.rs` (render)
 - **Verified by:** `zellij/src/view.rs` details_take_the_bottom_third_and_ready_agents_show_their_age
 
 #### ZR-009 List scrolling keeps the selection centred
-- **Behavior:** The list's rendered lines (headings, agent primary and
-  secondary lines, section rows) MUST be windowed to `list_height` starting
+- **Behavior:** The list's rendered lines (headings, agent rows, section
+  rows) MUST be windowed to `list_height` starting
   at `min(selected_line - list_height/2 (saturating), len - list_height
   (saturating))`, where `selected_line` is the first rendered line flagged
   selected (an agent's primary line or a section row; 0 if none).
@@ -868,17 +904,23 @@ Public API fields that are not modelled are silently ignored, e.g.
 
 ### 3.4 Rows
 
-#### ZR-011 Agent primary line
-- **Behavior:** Each agent row's first line MUST be
-  `" " + indent + symbol + " " + title`, where indent is two spaces for a
-  Quiet agent (inside an open section, or under a team's Quiet row) and
-  empty otherwise, and also empty for a team's lead listed first in its
-  group (ZG-018) even when it is Quiet; symbol per ZR-012,
-  and title = `Agent::title()` truncated to `cols - prefix_width` (ZR-020);
-  the rest of the line is padded with spaces to `cols`. No selection glyph is
-  drawn (the leading space keeps alignment; the highlight marks selection).
+#### ZR-011 Agent row
+- **Behavior:** An agent's row MUST be
+  `" " + indent + symbol + " " + title`, then the age in a column of its
+  own at the right edge. Indent is two spaces for a Quiet agent (inside an
+  open section, or under a team's Quiet row) and empty otherwise, and also
+  empty for a team's lead listed first in its group (ZG-018) even when it
+  is Quiet; symbol per ZR-012. The age is
+  `age_label(recency(), generated_at)` right-aligned in 4 columns after one
+  space, so it is in the same place on every row whatever the title; it is
+  muted, or in the selection colours on the selected row. It is left out
+  when unknown, and when the pane leaves the title fewer than 8 columns
+  beside it. The title is `Agent::title()` truncated (ZR-020) to the
+  columns left and, when there is an age, padded to them. No selection
+  glyph is drawn (the leading space keeps alignment; the highlight marks
+  selection).
 - **Source:** `zellij/src/view.rs` (agent_primary_line)
-- **Verified by:** `zellij/src/view.rs` quiet_agents_rest_even_if_they_stopped_waiting_on_the_user (`   ◌ Pending`); `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds
+- **Verified by:** `zellij/src/view.rs` quiet_agents_rest_even_if_they_stopped_waiting_on_the_user (`   ◌ Pending`); `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds (the age at the right edge of rows with titles of three lengths)
 
 #### ZR-012 Row status symbol
 - **Behavior:** The row symbol MUST be:
@@ -893,20 +935,13 @@ Public API fields that are not modelled are silently ignored, e.g.
 - **Decision:** D-048
 - **Verified by:** `zellij/src/view.rs` working_agents_spin_and_quiet_agents_fold_into_counted_sections; `zellij/src/view.rs` quiet_agents_rest_even_if_they_stopped_waiting_on_the_user
 
-#### ZR-013 Agent secondary line
-- **Behavior:** Each agent row's second line MUST be
-  `"   " + indent + icon + " " + age_right_aligned_to_3` then, if non-empty,
-  `"  " + team` (ZR-036), then, if non-empty,
-  `"  " + rest`, then for a Quiet agent whose `display_state` starts with
-  `needs_` the suffix `"  stopped waiting on you"`; trailing whitespace is
-  trimmed, then the line is truncated/padded to `cols`. `icon` is
-  `provider_icon(config.nerd_icons)`; `age` is
-  `age_label(recency(), generated_at)` (three spaces when unknown; `{:>3}`
-  pads but does not truncate, so `100d` takes four columns). `rest` is
-  `attention.detail.trim()` when the agent is Blocked and that is non-empty,
-  else `workspace_label()` (ZM-017). `indent` is the primary line's
-  (ZR-011).
-- **Source:** `zellij/src/view.rs` (secondary_text, agent_secondary_line, row_indent)
+#### ZR-013 An agent is one row
+- **Behavior:** An agent MUST take exactly one row of the list, its primary
+  line (ZR-011). Nothing is drawn under it: the provider, the team, the
+  workspace and what a Blocked agent waits for are in the details
+  (ZR-024), and are to be brought back to the list only where they prove
+  useful there.
+- **Source:** `zellij/src/view.rs` (agent_list_lines)
 - **Decision:** D-048
 - **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds (`   ✳  2m  Bash: make clean`); `zellij/src/view.rs` quiet_agents_rest_even_if_they_stopped_waiting_on_the_user
 
@@ -929,7 +964,6 @@ Public API fields that are not modelled are silently ignored, e.g.
   | primary prefix (marker, indent, symbol) | group colour, bold | `selected_text` on `selected_background`, bold |
   | primary title | `text` (Quiet: grey group colour), not bold | `selected_text` on `selected_background`, bold |
   | primary padding | no style | `selected_background` |
-  | secondary line | `muted`, dim | `selected_text` on `selected_background`, not dim; padding on `selected_background` |
   | section row | grey group colour | `selected_text` on `selected_background`, bold; padding on `selected_background` |
   | group heading | group colour, bold (never selected) | — |
   | team heading: name and count | `accent`, bold | `selected_text` on `selected_background`, bold; padding on `selected_background` |
@@ -937,8 +971,8 @@ Public API fields that are not modelled are silently ignored, e.g.
 
   The selected agent's highlight MUST span both of its lines across the full
   width.
-- **Source:** `zellij/src/view.rs` (agent_primary_line, agent_secondary_line, section_line, agent_list_lines)
-- **Verified by:** `zellij/src/view.rs` selected_rows_highlight_both_lines_and_group_colours_are_fixed (background on both lines, heading colours); the remaining cells `UNTESTED`
+- **Source:** `zellij/src/view.rs` (agent_primary_line, section_line, agent_list_lines)
+- **Verified by:** `zellij/src/view.rs` the_selected_row_is_highlighted_and_group_colours_are_fixed (background on the selected row, heading colours); the remaining cells `UNTESTED`
 
 #### ZR-035 Team heading
 - **Behavior:** A `Team` row MUST be `{team}  {count}` (two spaces), with
@@ -953,22 +987,15 @@ Public API fields that are not modelled are silently ignored, e.g.
 - **Decision:** D-070, D-071
 - **Verified by:** `zellij/src/view.rs` team_grouping_shows_headings_the_lead_and_folded_counts
 
-#### ZR-036 The team on the secondary line
-- **Behavior:** The `team` part of an agent's secondary line (ZR-013) MUST
-  be:
-
-  | List | Agent | Text |
-  |---|---|---|
-  | grouped by team | the team's lead | `★ lead` |
-  | grouped by team | any other agent | empty |
-  | grouped by status, or search results | lead of a team | `★ ` + the team name cut to 12 columns |
-  | grouped by status, or search results | in a team, not its lead | the team name cut to 14 columns |
-  | any | in no team | empty |
-
-  Names are cut with `…` (ZR-020). The mark is `★` (U+2605), which no state uses (ZM-012).
-- **Source:** `zellij/src/view.rs` (team_label, secondary_text)
+#### ZR-036 The team in the details
+- **Behavior:** An agent in a team MUST have the line `team      {team}` in
+  its details (ZR-024), followed by ` · lead` when it leads the team. An
+  agent in no team has no such line. The list marks neither the team nor
+  the lead: grouped by team, the heading names the team and the lead comes
+  first (ZG-018).
+- **Source:** `zellij/src/view.rs` (agent_detail_lines)
 - **Decision:** D-071
-- **Verified by:** `zellij/src/view.rs` the_status_grouping_names_the_team_on_the_second_line, team_grouping_shows_headings_the_lead_and_folded_counts
+- **Verified by:** `zellij/src/view.rs` an_agent_is_one_row_and_its_details_name_the_team
 
 ### 3.5 Colour and text primitives
 
@@ -985,7 +1012,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   `blocked`, `working`, `review` and `quiet`. An agent's state colour is its
   group's colour.
 - **Source:** `zellij/src/view.rs` (Theme::group)
-- **Verified by:** `zellij/src/view.rs` selected_rows_highlight_both_lines_and_group_colours_are_fixed
+- **Verified by:** `zellij/src/view.rs` the_selected_row_is_highlighted_and_group_colours_are_fixed
 
 #### ZR-018 The theme
 - **Behavior:** By default the theme MUST be the fixed colours of herdr's
@@ -1020,7 +1047,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   to it when that is set.
 - **Source:** `zellij/src/view.rs` (Theme::herdr, Theme::from_mode_info); `zellij/src/app.rs` (Config::from_map); callers `zellij/src/main.rs` (on_mode_update), `zellij/src/details.rs` (update_details), `zellij/src/panel.rs` (open_details_window)
 - **Decision:** D-063
-- **Verified by:** `zellij/src/view.rs` selected_rows_highlight_both_lines_and_group_colours_are_fixed (both themes' group and selection colours; no dim attribute with the built-in theme); `zellij/src/app.rs` parses_bounded_poll_configuration (the setting); the `ModeUpdate` switch UNTESTED
+- **Verified by:** `zellij/src/view.rs` the_selected_row_is_highlighted_and_group_colours_are_fixed (both themes' group and selection colours; no dim attribute with the built-in theme); `zellij/src/app.rs` parses_bounded_poll_configuration (the setting); the `ModeUpdate` switch UNTESTED
 
 #### ZR-019 SGR encoding
 - **Behavior:** A styled span MUST be `ESC[` + `;`-joined codes in the order
@@ -1029,7 +1056,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   `38;2;R;G;B`/`48;2;R;G;B` for `Rgb`. A span with no codes MUST be emitted
   as plain text. The agent primary line appends one extra `ESC[0m`.
 - **Source:** `zellij/src/view.rs` (styled_span, color_code, Line::render)
-- **Verified by:** `zellij/src/view.rs` selected_rows_highlight_both_lines_and_group_colours_are_fixed
+- **Verified by:** `zellij/src/view.rs` the_selected_row_is_highlighted_and_group_colours_are_fixed
 
 #### ZR-020 Truncation by display width
 - **Behavior:** `truncate(s, w)` MUST return `""` for `w == 0`; `s` if its
@@ -1052,28 +1079,39 @@ Public API fields that are not modelled are silently ignored, e.g.
 
 ### 3.6 Details
 
-#### ZR-022 Inline details block (agent selected)
-- **Behavior:** When `detail_height > 0` and an agent row is selected, the
-  block MUST be: a rule of `─` × `cols` (accent, dim); `Details` (accent,
-  bold); then the agent detail lines (ZR-024) with preview lines per field =
-  2 if `detail_height >= 16` else 1, and short identifiers (non-roomy);
-  truncated to `detail_height` lines. With nothing selected the block is the
-  rule alone.
-- **Source:** `zellij/src/view.rs` (inline_detail_lines)
-- **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds; `zellij/src/view.rs` details_take_the_bottom_third_and_ready_agents_show_their_age
+#### ZR-022 The Details section
+- **Behavior:** The section is its title row (ZR-033) and, while it is open
+  and has at least 2 rows, the details of what is selected in the list that
+  has the keys, or had them before Details did (ZK-035): an agent (the
+  agent detail lines of ZR-024, without `ask` and `latest`, which only the
+  details window shows (ZR-028), and with short identifiers), a row of the list that is
+  not an agent (ZR-023), or a session (ZR-039). With nothing selected it is
+  the title row and empty lines. The section shows as many of the lines as
+  it has rows under its title, starting `detail_scroll` lines down, and
+  each line from its column `detail_shift` on, the title row excepted. Both
+  are clamped when the section is drawn: the first to the number of lines
+  that do not fit, the second to the columns by which the longest line is
+  wider than the pane. When not every line fits, the title is
+  `Details  {first}-{last}/{lines}`, the lines in view. When what the
+  details are about changes (another agent, row or session), both go back
+  to 0. How they are moved is ZK-037.
+- **Source:** `zellij/src/view.rs` (detail_section, inline_detail_lines, detail_subject, Line::shifted)
+- **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds, details_take_the_bottom_third_and_ready_agents_show_their_age, the_details_scroll_down_and_sideways
 
 #### ZR-023 Inline details block (section selected)
-- **Behavior:** When a section row is selected the block MUST be: the `─`
-  rule; `Quiet · {label}` (accent, bold); then, muted and dim,
+- **Behavior:** When a section row is selected the details (ZR-022) MUST
+  be: `Quiet · {label}` (accent, bold); then, muted and dim,
   `Conversations with no process.`, `Enter opens this section; Enter on`,
   `an agent resumes it; h closes.` — the same text whether the section is
-  open or closed. When a team heading is selected the block MUST be: the
-  rule; `Team · {team}` (`No team` for the agents in no team; accent,
+  open or closed. When a team heading is selected: `Team · {team}` (`No team` for the agents in no team; accent,
   bold); then, muted and dim, `{count} agent{s}.`,
   `Enter folds or opens this team;`, `v groups by status.`. When a team's
-  Quiet row is selected: the rule; `Quiet · {team}` (`Quiet · no team`);
+  Quiet row is selected: `Quiet · {team}` (`Quiet · no team`);
   then `Conversations with no process.`, `Enter opens this row; Enter on`,
-  `an agent resumes it; h closes.`.
+  `an agent resumes it; h closes.`. When the `Quiet teams` row (ZG-020) is
+  selected: `Quiet teams` (accent, bold); then
+  `{N} team{s} with no agent at work.`, `Enter opens this row; a team`,
+  `leaves it when an agent wakes.`.
 - **Source:** `zellij/src/view.rs` (inline_detail_lines)
 - **Verified by:** `zellij/src/view.rs` working_agents_spin_and_quiet_agents_fold_into_counted_sections; `zellij/src/view.rs` team_grouping_shows_headings_the_lead_and_folded_counts (the team heading); the Quiet row's block `UNTESTED`
 
@@ -1086,22 +1124,27 @@ Public API fields that are not modelled are silently ignored, e.g.
   |---|---|---|
   | 1 | `{title}` | always; `text`, bold |
   | 2 | `{state_symbol}  {state_label} · {age} ago`, or `{state_symbol}  {state_label}` when age unknown | always; group colour. Uses `state_symbol()` (ZM-012), not the row's Quiet/spinner symbol, so a Quiet `needs_input` agent reads `?  needs input · 5h ago` and a working one `●  working` |
-  | 3 | `provider  {provider_detail_label}` | always |
-  | 4 | `native    {name}` | `user_name` and `name` both non-empty (untrimmed) and different; `name` printed as is |
-  | 5 | ids | ZR-025 |
-  | 6 | `model     {model} · {effort}` / `model     {model}` / `effort    {effort}` | ZR-026 |
-  | 7 | `repo      {repo} · {branch}` / `{repo}` / `{branch}` | workspace present; ZR-027 |
-  | 8 | `worktree  {worktree_name}` | workspace is a linked worktree with a name (ZM-016) |
-  | 9 | `cwd       {workspace.path}` (trimmed) | `path.trim()` non-empty |
-  | 10 | `ask` + up to P wrapped lines | ZR-028 |
-  | 11 | `latest` + up to P wrapped lines | ZR-028 |
-  | 12 | `pane      {session}/{pane_id} · observed`, or `pane      {pane_id} · observed` when session empty | `zellij_binding()` (ZM-018) exists; always says `observed` regardless of binding state |
+  | 3 | `repo      {repo} · {branch}` / `{repo}` / `{branch}` | workspace present; ZR-027 |
+  | 4 | `worktree  {worktree_name}` | workspace is a linked worktree with a name (ZM-016) |
+  | 5 | `cwd       {workspace.path}` (trimmed) | `path.trim()` non-empty |
+  | 6 | `team      {team}`, with ` · lead` for the lead | the agent is in a team (ZR-036) |
+  | 7 | `ask` + up to P wrapped lines | details window only; ZR-028 |
+  | 8 | `latest` + up to P wrapped lines | details window only; ZR-028 |
+  | 9 | `provider  {provider_detail_label}` | always |
+  | 10 | `native    {name}` | `user_name` and `name` both non-empty (untrimmed) and different; `name` printed as is |
+  | 11 | ids | ZR-025 |
+  | 12 | `model     {model} · {effort}` / `model     {model}` / `effort    {effort}` | ZR-026 |
+  | 13 | `pane      {session}/{pane_id} · observed`, or `pane      {pane_id} · observed` when session empty | `zellij_binding()` (ZM-018) exists; always says `observed` regardless of binding state |
+
+  Where the work is comes first, then what it is, then which program does
+  it: in the panel the block is cut at its height, and the last lines are
+  the first to go.
 
   Fields never shown: `host_id`, `activity_state`, `runtime_state` (except via
-  line 3), `attention.type`, `summary_source`, `last_seen_at`,
+  line 9), `attention.type`, `summary_source`, `last_seen_at`,
   `TextPreview.source`/`truncated`.
 - **Source:** `zellij/src/view.rs` (agent_detail_lines)
-- **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds (provider, native, repo, cwd, ask; no `runtime`); `zellij/src/view.rs` details_take_the_bottom_third_and_ready_agents_show_their_age (state line); `zellij/src/view.rs` details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel (latest, pane); `worktree` line `UNTESTED`
+- **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds (repo, cwd, ask, latest, provider, native, in that order; no `runtime`); `zellij/src/view.rs` details_take_the_bottom_third_and_ready_agents_show_their_age (state line); `zellij/src/view.rs` details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel (latest, pane); `worktree` line `UNTESTED`
 
 #### ZR-025 Identifier lines
 - **Behavior:** Inline (non-roomy): one line `id        {short_id}`, or
@@ -1130,7 +1173,9 @@ Public API fields that are not modelled are silently ignored, e.g.
 - **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds; `zellij/src/view.rs` details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel
 
 #### ZR-028 Request and reply previews
-- **Behavior:** `ask` MUST be shown when `initial_request.text.trim()` is
+- **Behavior:** In the details window only (the panel's Details section
+  leaves both out: they are long, and the section is for the short facts),
+  `ask` MUST be shown when `initial_request.text.trim()` is
   non-empty; `latest` when `summary.trim()` is non-empty and differs from the
   trimmed request. Each is a label line (info, bold) followed by at most P
   lines of `"  " + line` (muted, dim) from `wrap(value, cols - 2)`. Excess
@@ -1138,13 +1183,50 @@ Public API fields that are not modelled are silently ignored, e.g.
 - **Source:** `zellij/src/view.rs` (agent_detail_lines, append_preview)
 - **Verified by:** `zellij/src/view.rs` renders_colored_grouped_master_detail_panel_within_bounds; `zellij/src/view.rs` details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel
 
+#### ZR-038 The Sessions section
+- **Behavior:** The section lists the running inner sessions
+  ([08-zellij-host.md](08-zellij-host.md) ZT-014): the teams' sessions by
+  name, then the inner session itself. It is drawn when there is a session
+  to list, the list is not empty, help is off and `available >= 14`
+  (ZR-008). It is its title row `Sessions`, which ends with the number of sessions
+  (ZR-033), and while it is open one row a session, at most 5, and an empty row under them. The rows
+  are windowed starting at
+  `min(selected - 2 (saturating), sessions - 5 (saturating))` so the
+  selected one stays in view. A row is ` → ` (U+2192, accent colour, bold) for the session on show, whose
+  label is bold too, or three spaces; the session's label, which is
+  its team or `no-team`, cut to 16 columns (ZR-020) and padded to the
+  widest label shown; then two spaces and what the team's agents need: the
+  counts of ZR-035 (`1 blocked · 2 working`), `quiet` when it has agents
+  and none is Blocked, Working or in Review, `no agents` when no listed
+  agent is in that team. While the list holds search results, which are not
+  every agent, nothing follows the label. The label is in the `text`
+  colour and the rest muted. The selected row is highlighted like a list
+  row (ZR-015) while Sessions has the keys, or had them before Details
+  did; likewise the selected agent's row is highlighted only while Agents
+  has them, or had them before Details did.
+- **Source:** `zellij/src/view.rs` (session_lines, session_summary, agent_list_lines); `zellij/src/app.rs` (set_sessions, sessions_shown, session_label, session_counts)
+- **Decision:** D-082
+- **Verified by:** `zellij/src/view.rs` the_panel_is_three_titled_sections, the_section_with_the_keys_shows_its_selection_and_its_details; `zellij/e2e/nested.sh` "the sidebar lists the running sessions, the one on show marked", "and the section lists the inner session alone"
+
+#### ZR-039 A session's details
+- **Behavior:** While the details are about a session (ZR-022) they MUST
+  be: `Session · {label}` (`text`, bold);
+  `zellij    {the session's name}`; `state     on show` or
+  `state     running, out of sight`; unless the list holds search results,
+  `agents    {N}`, the number of listed agents in that team, and under it,
+  indented two spaces, the counts of what they need when there are any;
+  and `Enter shows it; x ends it.`, or `Enter shows it.` for the inner
+  session. All but the first line are muted.
+- **Source:** `zellij/src/view.rs` (session_detail_lines, inline_detail_lines)
+- **Verified by:** `zellij/src/view.rs` the_section_with_the_keys_shows_its_selection_and_its_details
+
 ### 3.7 Floating details window (`details.rs`, `view.rs`)
 
 #### ZR-029 Details window rendering
 - **Behavior:** `render_details_window` MUST return nothing for zero size;
   with an agent loaded, the roomy agent detail lines (ZR-024, ZR-025) with
   P = `clamp(rows / 5, 2, 8)` and no rule or `Details` heading; then pad to
-  `rows - 1` and add `Esc / D  close` (muted, dim) if there is room; truncate
+  `rows - 1` and add `Esc / d  close` (muted, dim) if there is room; truncate
   to `rows`.
 - **Source:** `zellij/src/view.rs` (render_details_window, DETAILS_FOOTER)
 - **Verified by:** `zellij/src/view.rs` details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel
@@ -1175,7 +1257,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   The instance rebuilds its theme on `ModeUpdate` (ZR-018) and ignores pipes
   and every other event.
 - **Source:** `zellij/src/details.rs` (update_details, refresh_details, on_details_result), `zellij/src/main.rs` (load, pipe)
-- **Verified by:** `E2E: zellij/e2e/nested.sh` ("D opens the floating details window": a floating plugin pane titled with the agent's name); result mapping `UNTESTED`
+- **Verified by:** `E2E: zellij/e2e/nested.sh` ("d opens the floating details window": a floating plugin pane titled with the agent's name); result mapping `UNTESTED`
 
 #### ZR-032 Details window keys
 - **Behavior:** In the details window, `Esc`, `D`, `d` or `q` (any
@@ -1211,7 +1293,7 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 | `k`, `Up` | — | previous row |
 | `g` `g` | — | first row |
 | `G` | — | last row |
-| `d` | — | toggle inline details; closes help |
+| `D` | — | close or open the Details section; closes help |
 | `?` | — | toggle help |
 | `Esc` | — | close help; cancel pending `g` |
 | `Enter`, `l` | section row | open/close section |
@@ -1225,13 +1307,17 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 | `p` | agent row | open the agent as a new pane in the inner session (ZK-010) |
 | `s` | agent row | open the agent stacked in the inner session (ZK-011) |
 | `w` | agent row | shell in its workspace, in the inner session (ZK-012) |
-| `D` | agent row | floating details window (ZK-013) |
+| `o` | agent row, team heading or its Quiet row | show that team's session (ZK-034) |
+| `Tab` | — | give the keys to the other list, Agents or Sessions (ZK-035) |
+| `Shift Tab` | — | give the keys to the Details section, or back to its list (ZK-035) |
+| `S` | — | close the Sessions section to its title, or open it (ZK-035) |
+| `d` | agent row | floating details window (ZK-013) |
 | `r` | poll transport | refresh now (ZK-014) |
 | `x` | stoppable agent row | ask `Stop {title}?  y / n` (ZK-016) |
 | `n` | agent row | start inline rename (ZK-020) |
 | `t` | agent row | open the team prompt (ZK-030) |
 | `T` | agent row in a team | take the agent out of its team (ZK-033) |
-| `q`, `Right`, `Tab`, anything else | — | no effect except cancelling a pending `g`; redraw |
+| `q`, `Right`, anything else | — | no effect except cancelling a pending `g`; redraw |
 
 ### 4.2 Dispatch rules
 
@@ -1255,7 +1341,7 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 
 #### ZK-003 Unbound keys
 - **Behavior:** An unmodified key with no binding (including `q`,
-  `Right`, `Tab`, `Backspace`, digits) MUST only cancel a pending `g` and
+  `Right`, `Backspace`, digits) MUST only cancel a pending `g` and
   request a redraw.
 - **Source:** `zellij/src/panel.rs` (process_key)
 - **Verified by:** `zellij/src/panel.rs` navigation_and_intent_keys
@@ -1288,9 +1374,11 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 - **Verified by:** `zellij/src/app.rs` navigation_clamps_and_supports_gg_and_capital_g; `zellij/src/panel.rs` modifier_rules_gate_every_binding
 
 #### ZK-007 Details and help toggles
-- **Behavior:** `d` MUST toggle `show_details` and set `show_help = false`.
-  `?` MUST toggle `show_help`. `Esc` MUST set `show_help = false`. While help
-  is shown, navigation and action keys still act on the (hidden) list.
+- **Behavior:** `D` MUST close the Details section to its title row, or
+  open it again, and set `show_help = false`; closing it while it has the
+  keys gives them back to the list its details were about. `?` MUST toggle
+  `show_help`. `Esc` MUST set `show_help = false`. While help is shown,
+  navigation and action keys still act on the (hidden) list.
 - **Source:** `zellij/src/app.rs` (toggle_details, toggle_help, close_help)
 - **Verified by:** `zellij/src/panel.rs` navigation_and_intent_keys; `zellij/src/view.rs` renders_keyboard_help_on_request (render)
 
@@ -1363,8 +1451,8 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 - **Source:** `zellij/src/panel.rs` (open_worktree_shell), `zellij/src/guest.rs` (guest_open_shell, shell_args)
 - **Verified by:** `zellij/src/guest.rs` builds_inner_session_commands; the key path and notices `UNTESTED`
 
-#### ZK-013 `D`: floating details window
-- **Behavior:** `D` MUST cancel a pending `g`; require a selected agent
+#### ZK-013 `d`: floating details window
+- **Behavior:** `d` MUST cancel a pending `g`; require a selected agent
   (`no agent is selected`) and a known plugin URL
   (`the plugin location is not known yet; try again`); close the details
   window this panel opened before, if any; then open this plugin floating in
@@ -1374,7 +1462,7 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
   `Zellij could not open the details window`. There is no explicit
   permission check.
 - **Source:** `zellij/src/panel.rs` (open_details_window)
-- **Verified by:** `E2E: zellij/e2e/nested.sh` ("D opens the floating details window"); notices `UNTESTED`
+- **Verified by:** `E2E: zellij/e2e/nested.sh` ("d opens the floating details window"); notices `UNTESTED`
 
 #### ZK-014 `r`: refresh
 - **Behavior:** `r` MUST cancel a pending `g` and run
@@ -1409,6 +1497,71 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 - **Source:** `zellij/src/panel.rs` (process_key); `zellij/src/app.rs` (toggle_group_by)
 - **Decision:** D-070
 - **Verified by:** `zellij/src/panel.rs` v_switches_the_grouping_and_enter_folds_a_team; `zellij/src/app.rs` switching_the_grouping_keeps_the_selected_agent
+
+#### ZK-035 `Tab`, `Shift Tab` and `S`: the section that has the keys
+- **Behavior:** One section has the keys: Agents when the panel loads.
+  `Tab` MUST give them to the other list: to Sessions from Agents or from
+  the agents' details, to Agents from Sessions or from a session's details.
+  When Sessions cannot take them the notice is
+  `sessions are closed; S opens them`, or `no session is listed yet`.
+  `Shift Tab` MUST give them to the Details section, which stays about the
+  list they were in (ZR-022), and from Details back to that list; with
+  Details closed the notice is `details are closed; D opens them`. So the
+  details are never reached through the other list, which would change
+  what they are about. Giving the keys to a section closes help. `S` MUST
+  close the Sessions section to its title row, or open it again. A section
+  that closes or has nothing left to list while it has the keys gives them
+  to the list the details were about, and the details go back to the
+  agents when that list was the one that closed. `Tab`, `Shift Tab` and
+  `S` are handled after the stop and end confirmations and before every
+  other binding, so they work in every section; while a rename, a team
+  name or a search is being typed they are text.
+- **Source:** `zellij/src/panel.rs` (process_key); `zellij/src/app.rs` (toggle_focus, toggle_sessions, toggle_details, list_focus, set_sessions)
+- **Decision:** D-082
+- **Verified by:** `zellij/src/panel.rs` tab_moves_between_the_lists_and_shift_tab_into_the_details; `zellij/src/view.rs` the_section_with_the_keys_shows_its_selection_and_its_details
+
+#### ZK-036 Keys while the Sessions section has them
+- **Behavior:**
+
+  | Key | Action |
+  |---|---|
+  | `j`, `Down` / `k`, `Up` | select the next / previous session; the notice is cleared |
+  | `gg` / `G` | the first / the last session |
+  | `Enter`, `l`, `o` | raise the ShowSession intent for the selected session: it is shown and given the keyboard, and Agents has the keys again ([08-zellij-host.md](08-zellij-host.md) ZT-014) |
+  | `x` | on a team's session, ask `End session {label}?  y / n` on the status line; on the inner session, the notice `ending it would end the pair; quit it from inside` |
+  | `h`, `Left` | give the keys back to Agents |
+  | `Esc` | give the keys back to Agents, unless the status box or help is open or a search is in effect, which `Esc` closes first (ZK-007) |
+  | `p`, `s`, `w`, `d`, `n`, `t`, `T`, `Space` | the notice `that key is for an agent; Tab goes back to them`; nothing else |
+  | any other key | as in the Agents section: `v`, `/`, `?`, `D`, `i`, `r`, `u`, `Ctrl-d`/`Ctrl-u` and the rest |
+
+  While the end confirmation is pending, `y` with no modifiers MUST raise
+  the EndSession intent with the notice `ending {label}…`; any other key
+  that passes the modifier filter (ZK-002) cancels with `end cancelled`.
+  The selection stays on its session when the list of sessions changes
+  while the section has the keys; while it does not, the selection is the
+  session on show, so `Tab` starts there.
+- **Source:** `zellij/src/panel.rs` (process_key, handle_session_key); `zellij/src/app.rs` (move_session, set_sessions, focus_agents); `zellij/src/view.rs` (status_line)
+- **Decision:** D-082
+- **Verified by:** `zellij/src/panel.rs` the_sessions_section_has_its_own_keys; `zellij/e2e/nested.sh` "Enter on a session's row shows that session", "x on a team session's row ends it, once confirmed"
+
+#### ZK-037 Keys while the Details section has them
+- **Behavior:**
+
+  | Key | Action |
+  |---|---|
+  | `j`, `Down` / `k`, `Up` | scroll the details one line down / up |
+  | `Ctrl-d` / `Ctrl-u` | half the section's rows down / up, at least one |
+  | `gg` / `G` | the first line / the last |
+  | `l`, `Right` / `h`, `Left` | move the details 4 columns sideways, to read a line longer than the pane, and back |
+  | `Esc` | give the keys back to the list the details are about, unless the status box or help is open or a search is in effect |
+  | any other key | as in the list the details are about: `Enter` opens the agent, `x` stops it, and so on; with a session, ZK-036 |
+
+  Scrolling stops at the last line that does not fit and at the end of the
+  longest line, as they were when the section was last drawn (ZR-022); it
+  never moves either list's selection.
+- **Source:** `zellij/src/panel.rs` (process_key, handle_details_key); `zellij/src/app.rs` (scroll_details, shift_details)
+- **Decision:** D-082
+- **Verified by:** `zellij/src/panel.rs` the_details_section_scrolls_and_leaves_other_keys_to_its_list; `zellij/src/view.rs` the_details_scroll_down_and_sideways
 
 ### 4.5 Stop (`x`)
 
@@ -1580,6 +1733,15 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 - **Decision:** D-071
 - **Verified by:** `zellij/src/panel.rs` capital_t_leaves_the_team_and_both_keys_need_an_agent, team_results_are_said_in_plain_words; running the command and the poll `UNTESTED`
 
+#### ZK-034 `o`: show a team's session
+- **Behavior:** `o` MUST raise the TeamSession intent, whatever is selected. What
+  it does, and what it says when no team or agent is selected, is specified
+  in [08-zellij-host.md](08-zellij-host.md) ZT-004. `Enter` on a team
+  heading still folds and unfolds the group (ZK-009).
+- **Source:** `zellij/src/panel.rs` (process_key, run_intent)
+- **Decision:** D-072
+- **Verified by:** `zellij/e2e/nested.sh` "o on a team heading shows the team's session"; no unit test
+
 #### ZK-027 `u`: check for a new release
 - **Behavior:** `u` MUST ask at once whether a newer release exists
   ([08-zellij-host.md](08-zellij-host.md) ZH-022), whatever `update_check`
@@ -1589,13 +1751,14 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 - **Verified by:** `zellij/src/panel.rs` u_asks_for_a_release_check
 
 #### ZK-028 Opening the status box
-- **Behavior:** A left click on the row of the status line MUST open the
-  status box (ZR-034), or close it when it is open; a left click on any
+- **Behavior:** A left click on the row the status dot is on (the footer,
+  or the first row of a pane without one) MUST open the status box
+  (ZR-034), or close it when it is open; a left click on any
   other row closes it. `i` toggles it. `Esc` closes it before it closes
   help or ends a search. The click works whichever pane has the keyboard,
   and does not move the keyboard.
 - **Source:** `zellij/src/app.rs` (click, toggle_info); `zellij/src/panel.rs` (process_key); `zellij/src/main.rs` (update_panel)
-- **Verified by:** `zellij/src/view.rs` the_status_box_sits_on_the_status_line_and_a_click_toggles_it; `zellij/src/panel.rs` i_opens_the_status_box_and_esc_closes_it_first; MANUAL: click the status line while the keyboard is in the inner session
+- **Verified by:** `zellij/src/view.rs` the_status_box_hangs_under_the_status_line_and_a_click_toggles_it; `zellij/src/panel.rs` i_opens_the_status_box_and_esc_closes_it_first; MANUAL: click the status line while the keyboard is in the inner session
 
 #### ZK-024 `/`: begin a search
 - **Behavior:** `/` MUST close help and start typing a search: a new one
@@ -1647,19 +1810,16 @@ Review Claude `Docs pass` (plain directory `docs`, 3 h); Quiet:
 `Old question` (ended `needs_input`, 5 h), `Yesterday` (Codex, idle, 30 h),
 `Monday` (3 d 4 h), `Ancient` (23 d, not shown).
 
-Panel, 40 rows, first row selected, sections closed (rows 14–25 are the
+Panel, 40 rows, first row selected, sections closed (rows 10–25 are the
 padded list area):
 
 ```text
 │Blocked  1                            │  red, bold
-│ ! Auth migration                     │  selected: both lines highlighted
-│   ✳  2m  Bash: make clean            │
+│ ! Auth migration                     │  selected: highlighted
 │Working  1                            │  yellow, bold
 │ ⠋ Cache refactor                     │  spinner animates every 0.25 s
-│   ⬡  0m  app · cache-fix             │
 │Review  1                             │  teal, bold
 │ ◆ Docs pass                          │
-│   ✳  3h  docs                        │
 │Quiet  3                              │  grey, bold
 │ ▸ < 24h   1                          │
 │ ▸ < 48h   1                          │
@@ -1671,15 +1831,15 @@ padded list area):
 │Details                               │  accent, bold
 │Auth migration                        │
 │!  needs approval · 2m ago            │  red
-│provider  claude · background         │
-│native    auth                        │
-│id        3cfff231                    │
-│model     opus · high                 │
 │repo      app · main                  │
 │cwd       /code/app/svc               │
 │ask                                   │  info, bold
 │  Migrate the auth service to the new │  1 preview line (detail height 12 < 16)
-│[?] keys  [d]etails  [D] window       │  muted, dim
+│latest                                │
+│  Waiting for approval to delete the  │
+│provider  claude · background         │
+│native    auth                        │  id and model do not fit
+│[?] keys  [D]etails  [d] window       │  muted, dim
 ```
 
 Panel, 30 rows, `< 24h` opened and its agent selected:
@@ -1687,17 +1847,13 @@ Panel, 30 rows, `< 24h` opened and its agent selected:
 ```text
 │Blocked  1                            │
 │ ! Auth migration                     │
-│   ✳  2m  Bash: make clean            │
 │Working  1                            │
 │ ⠋ Cache refactor                     │
-│   ⬡  0m  app · cache-fix             │
 │Review  1                             │
 │ ◆ Docs pass                          │
-│   ✳  3h  docs                        │
 │Quiet  3                              │
 │ ▾ < 24h   1                          │
 │   ◌ Old question                     │  selected
-│     ✳  5h  stopped waiting on you    │
 │ ▸ < 48h   1                          │
 │ ▸ < 7d    1                          │
 │                                      │
@@ -1713,14 +1869,14 @@ Panel, 30 rows, `< 24h` opened and its agent selected:
 │                                      │
 │                                      │
 │                                      │
-│[?] keys  [d]etails  [D] window       │
+│[?] keys  [D]etails  [d] window       │
 ```
 
 With the section row itself selected, the details block reads
 `Quiet · < 24h` / `Conversations with no process.` /
 `Enter opens this section; Enter on` / `an agent resumes it; h closes.`
 
-The same panel with details hidden (`d`): the status line is the last one
+The same panel with details closed (`D`): the status line is the last one
 above the footer.
 
 ```text
@@ -1728,7 +1884,7 @@ above the footer.
 │ ▸ < 7d    1                          │
 │  … (blank to the status line) …      │
 │6 agents                             ●│
-│[?] keys  [d]etails  [D] window       │
+│[?] keys  [D]etails  [d] window       │
 ```
 
 A prompt or a notice takes the whole status line while it lasts:
@@ -1761,11 +1917,6 @@ Floating details window, 70 × 24 (roomy):
 ```text
 │Auth migration                                                        │
 │!  needs approval · 2m ago                                            │
-│provider  claude · background                                         │
-│native    auth                                                        │
-│id        3cfff231                                                    │
-│session   3cfff231-aaaa-bbbb                                          │
-│model     opus · high                                                 │
 │repo      app · main                                                  │
 │cwd       /code/app/svc                                               │
 │ask                                                                   │
@@ -1773,9 +1924,60 @@ Floating details window, 70 × 24 (roomy):
 │  callers                                                             │
 │latest                                                                │
 │  Waiting for approval to delete the build directory.                 │
+│provider  claude · background                                         │
+│native    auth                                                        │
+│id        3cfff231                                                    │
+│session   3cfff231-aaaa-bbbb                                          │
+│model     opus · high                                                 │
 │pane      work/7 · observed                                           │
 │  … (blank to the last row) …                                         │
-│Esc / D  close                                                        │
+│Esc / d  close                                                        │
+```
+
+The three sections, with a team's session running and the agents holding
+the keys; the mockups above are older: they show the status line under the
+list as `6 agents ●`, where it is now the first row and the dot is on the
+footer, and the details as
+they were before the section scrolled:
+
+```text
+│Agents ───────────────────────────── 4│  accent, bold: it has the keys
+│Working  4                            │
+│ ⠹ Auth lead                        0m│  selected; the age at the edge
+│ ⠹ E2E agent                        0m│
+│ ⠹ Auth worker                      1m│
+│ ⠹ Billing fix                      2m│
+│  … (blank to the next section) …     │
+│▾ Sessions ───────────────────────── 2│  muted
+│ → auth     2 working                 │  → the session on show
+│   no-team  1 working                 │
+│                                      │
+│▾ Details ────────────────────────────│  muted
+│Auth lead                             │
+│●  working · 0m ago                   │
+│cwd       /tmp                        │
+│team      auth · lead                 │
+│provider  claude · background         │
+│id        a0000011                    │
+│[?] keys  [D]etails  [d] window      ●│  the status dot, green
+```
+
+With both closed (`S`, `D`) the list has every row but two:
+
+```text
+│▸ Sessions ───────────────────────── 2│
+│▸ Details ────────────────────────────│
+│[?] keys  [D]etails  [d] window       │
+```
+
+Grouped by team, with two teams whose agents are all Quiet:
+
+```text
+│billing  1                            │
+│ ⠹ Worker                           2m│
+│no team  1                            │
+│ ⠹ Solo                             1m│
+│▸ Quiet teams  2                      │  grey, bold; Enter opens it
 ```
 
 Empty list, before the first snapshot (6 rows):
@@ -1786,7 +1988,7 @@ Empty list, before the first snapshot (6 rows):
 │                                      │
 │                                      │
 │0 agents                             ●│  dot yellow: connecting
-│[?] keys  [d]etails  [D] window       │
+│[?] keys  [D]etails  [d] window       │
 ```
 
 Grouped by team (`v`), the `TEAMS` fixture of `zellij/src/view.rs`: team
@@ -1797,18 +1999,13 @@ The first heading is selected:
 ```text
 │a-very-long-team-name  1              │  selected; otherwise accent, bold
 │ ◆ Auth one                           │
-│   ✳  5m                              │
 │billing  4                            │  accent, bold
 │ ◆ Lead                               │  the lead first, whatever its state
-│   ✳  4m  ★ lead  app · main          │
 │ ? Blocked one                        │
-│   ⬡  3m                              │
 │ ⠋ Worker one                         │
-│   ✳  2m  app · main                  │
 │ ▸ Quiet   1                          │  the team's Quiet agents
 │no team  1                            │
 │ ⠋ Solo                               │
-│   ✳  1m                              │
 ```
 
 With `billing` folded, at 60 columns: `billing  4  1 blocked · 1 working ·
@@ -1827,7 +2024,7 @@ Server offline with no list to keep (10 rows):
 │                                      │
 │                                      │
 │0 agents                             ●│  dot red: server offline
-│[?] keys  [d]etails  [D] window       │
+│[?] keys  [D]etails  [d] window       │
 ```
 
 ---
@@ -1848,7 +2045,7 @@ Implementation choices not recorded in
 | Group colours are palette indices 1/2/6/8, not theme slots | they stay the same four colours under every theme | `zellij/src/view.rs` (group_color) |
 | No selection glyph; a leading space keeps rows aligned | the row highlight marks the selection | `zellij/src/view.rs` (agent_primary_line) |
 | Section count sits right after the label | it reads the same at any pane width | `zellij/src/view.rs` (section_line) |
-| Secondary line leads with icon and fixed-width age | the short fields lead so a long label cannot push them out | `zellij/src/view.rs` (secondary_text) |
+| An agent is one row | a second line that names the provider, the age, the team and the folder repeats itself across rows and halves what fits | `zellij/src/view.rs` (agent_list_lines) |
 | Quiet agents show `○`/`◌` whatever state they stopped in | they have no process, so they read as at rest | `zellij/src/view.rs` (agent_symbol) |
 | Working agents' symbol spins | activity reads at a glance | `zellij/src/view.rs` (agent_symbol) |
 | A single 0.25 s panel tick; polling only when its interval is due | fast enough to animate without raising the poll rate | `zellij/src/main.rs` (on_panel_tick) |
@@ -1858,7 +2055,7 @@ Implementation choices not recorded in
 | A settings problem only turns the theme switch off | the agent list must keep working | `zellij/src/app.rs` (Config::problems) |
 | Enter refuses when the agent is open in another Zellij session; `p` makes a second copy | opening it here is sometimes right and sometimes a fork, so the second copy is an explicit choice | `zellij/src/guest.rs` (guest_open_agent) |
 | Stop policy is checked in the panel before `noc stop` runs | a refusal needs no command and no confirmation | `zellij/src/panel.rs` (request_stop) |
-| One details window per panel, replaced on the next `D` | a second window would cover the first | `zellij/src/panel.rs` (open_details_window) |
+| One details window per panel, replaced on the next `d` | a second window would cover the first | `zellij/src/panel.rs` (open_details_window) |
 | Control characters are dropped from every rendered text | they would otherwise reach the terminal verbatim | `zellij/src/view.rs` (sanitize) |
 | Last output line printed without a newline | it would scroll the pane by one and hide the first row | `zellij/src/main.rs` (render) |
 
@@ -1888,7 +2085,7 @@ starts an isolated host/inner pair with the fake `noc`
 (`zellij/e2e/fake-noc`) and drives it with real key presses. Of this
 section it covers: the panel lists the registry's agents, `Enter` opens a
 Quiet section and then opens an agent in a new inner tab, `Enter` again
-focuses that tab instead of opening a copy, `D` opens the details window
+focuses that tab instead of opening a copy, `d` opens the details window
 and `q` closes it. Its other checks, its prerequisites and the isolated dev
 pair for manual checks are described in
 [08-zellij-host.md](08-zellij-host.md),

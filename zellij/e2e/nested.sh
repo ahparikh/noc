@@ -71,6 +71,32 @@ bar_colour() {
 		LC_ALL=C grep -o -E '48;2;[0-9]+;[0-9]+;[0-9]+' | sort | uniq -c | sort -rn | awk 'NR == 1 { print $2 }'
 }
 
+# The tab bar of the session on show names this session.
+bar_says() { tmux capture-pane -p -t "$TMUX_SESSION" | sed -n 1p | grep -q -F -- "Zellij ($1)"; }
+session_has_client() { [ "$(clients "$1")" = 1 ]; }
+session_tab_count() { z --session "$1" action list-tabs 2>/dev/null | tail -n +2 | grep -c . || true; }
+# open_match TEXT: search the sidebar for TEXT and open the first match.
+open_match() {
+	keys M-m
+	wait_for 5 host_focus_is "$SIDEBAR"
+	keys /
+	sleep 0.3
+	keys "$1"
+	keys Enter
+	wait_for 8 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q '1 match'"
+	keys g g
+	sleep 0.3
+	keys Enter
+	wait_for 5 host_focus_is "$GUEST"
+	# End the search, and leave the keyboard in the inner session.
+	keys M-m
+	wait_for 5 host_focus_is "$SIDEBAR"
+	keys Escape
+	sleep 0.5
+	keys M-m
+	wait_for 5 host_focus_is "$GUEST"
+}
+
 FAILED=0
 ok() { printf 'ok    %s\n' "$1"; }
 fail() {
@@ -131,23 +157,23 @@ if screen | grep -q -F 'Allow? (y/n)'; then
 	exit 1
 fi
 
-SIDEBAR="P$(panes "$HOST" | jq -r 'map(select(.is_plugin and (.is_floating | not) and (.title | test("(^|[ ─])NOC$")))) | first | .id')"
+SIDEBAR="P$(panes "$HOST" | jq -r 'map(select(.is_plugin and (.is_floating | not) and (.is_suppressed | not) and ((.plugin_url // "") | test("zellij-noc")))) | first | .id')"
 GUEST="T$(panes "$HOST" | jq -r 'map(select((.is_plugin | not) and (.is_floating | not))) | first | .id')"
 
 # ---- 1. the pair ----
 check "host session has the sidebar and one guest pane" \
 	[ "$SIDEBAR" != "Pnull" -a "$GUEST" != "Tnull" ]
 check "sidebar lists the registry's agents" \
-	wait_for 10 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q '2 agents'"
+	wait_for 10 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q -E 'Agents ─+ 2│'"
 check "the sidebar runs a registry watcher" \
 	wait_for 10 pgrep -f -- "zellij-noc-registry-watch=$HOST\$"
 check "guest pane keeps exactly one client on the inner session" \
 	[ "$(clients "$INNER")" = 1 ]
-check "the keyboard starts in the inner session" host_focus_is "$GUEST"
-# noc-inner.kdl turns the session name and the sessions box off; config.kdl
-# leaves both on.
+check "the keyboard starts in the inner session" wait_for 5 host_focus_is "$GUEST"
+# noc-inner.kdl turns the sessions box off; config.kdl leaves it on.
 check "inner session takes its options from noc-inner.kdl" \
-	sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | sed -n 1p | grep 'Zellij ' | grep -v -e '($INNER)' -e 'running' >/dev/null"
+	sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | sed -n 1p | grep 'Zellij ' | grep -v 'running' >/dev/null"
+check "the inner session's tab bar names the session" bar_says "$INNER"
 
 # ---- 2. keyboard hand-off and the theme relay ----
 HOME_COLOUR="$(bar_colour)"
@@ -210,18 +236,17 @@ sleep 1.5 # let the sidebar follow the inner focus back
 # ---- 4. details window ----
 keys M-m
 wait_for 5 host_focus_is "$SIDEBAR"
-keys D
-check "D opens the floating details window" \
+keys d
+check "d opens the floating details window" \
 	wait_for 8 sh -c "env -u ZELLIJ -u ZELLIJ_SESSION_NAME zellij --session '$HOST' action list-panes --all --json | jq -e 'any(.[]; .is_plugin and .is_floating and (.title | test(\"E2E agent\")))'"
 keys q
 check "q closes it" \
 	wait_for 5 sh -c "env -u ZELLIJ -u ZELLIJ_SESSION_NAME zellij --session '$HOST' action list-panes --all --json | jq -e 'any(.[]; .is_plugin and .is_floating and (.is_suppressed | not)) | not'"
 
+# It was opened from the sidebar, so the keyboard goes back there.
+check "and the keyboard is back in the sidebar" wait_for 5 host_focus_is "$SIDEBAR"
+
 # ---- 5. search ----
-# Closing the details window leaves the keyboard in the inner session.
-wait_for 5 host_focus_is "$GUEST"
-keys M-m
-wait_for 5 host_focus_is "$SIDEBAR"
 keys /
 sleep 0.3
 keys second
@@ -232,7 +257,7 @@ check "/ lists the agents that match what is typed" \
 	wait_for 8 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q '1 match'"
 keys Escape
 check "Esc ends the search" \
-	wait_for 8 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q '2 agents'"
+	wait_for 8 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q -E 'Agents ─+ 2│'"
 keys M-m
 wait_for 5 host_focus_is "$GUEST"
 
@@ -243,7 +268,120 @@ check "Alt-o hides the sidebar" wait_for 5 fullscreen true
 keys M-o
 check "Alt-o shows it again" wait_for 5 fullscreen false
 
-# ---- 7. detach, attach, end together ----
+# ---- 7. sessions: a team's agents open in the team's own inner session ----
+TEAM_SESSION="$INNER--auth"
+TEAMS="$ROOT/target/e2e/agents.json"
+"$ROOT/e2e/fake-noc" ls | sed 's/"name":"Second agent"/"name":"Second agent","team":"auth"/' >"$TEAMS.tmp"
+mv "$TEAMS.tmp" "$TEAMS"
+sleep 1.5 # let the sidebar read the team
+open_match second
+check "Enter on a team's agent creates the team's session" wait_for 10 alive "$TEAM_SESSION"
+check "the guest pane's client moves to that session" wait_for 10 session_has_client "$TEAM_SESSION"
+check "the tab bar names the team's session" wait_for 5 bar_says "$TEAM_SESSION"
+check "the agent has a tab in its team's session" \
+	wait_for 10 sh -c "env -u ZELLIJ -u ZELLIJ_SESSION_NAME zellij --session '$TEAM_SESSION' action list-tabs | grep -q 'Second agent'"
+session_is_all_agents() { [ "$(session_tab_count "$TEAM_SESSION")" = 1 ]; }
+check "the tab the session was created with is closed" wait_for 10 session_is_all_agents
+check "the inner session keeps running, with no client" \
+	sh -c "$(declare -f z alive clients); alive '$INNER' && [ \"\$(clients '$INNER')\" = 0 ]"
+check "the keyboard is in the session" host_focus_is "$GUEST"
+
+open_match e2e
+check "an agent in no team opens in the inner session" wait_for 10 session_has_client "$INNER"
+check "whose tab bar names it" wait_for 5 bar_says "$INNER"
+check "the team's session keeps its tab" [ "$(session_tab_count "$TEAM_SESSION")" = 1 ]
+check "the agent that was already open there got no second tab" [ "$(inner_tab_count)" = "$TABS_OPEN" ]
+
+# `o` on a team's heading shows the team's session.
+keys M-m
+wait_for 5 host_focus_is "$SIDEBAR"
+keys v # group by team
+sleep 0.5
+# The team's only agent is Quiet, so the team rests behind the last row.
+check "a team with no agent at work is listed under Quiet teams" \
+	sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q '▸ Quiet teams  1'"
+keys G
+sleep 0.3
+keys Enter # open the row
+sleep 0.5
+keys j # the team's heading
+sleep 0.3
+keys o
+check "o on a team heading shows the team's session" wait_for 10 session_has_client "$TEAM_SESSION"
+check "and gives it the keyboard" wait_for 5 host_focus_is "$GUEST"
+keys M-m
+wait_for 5 host_focus_is "$SIDEBAR"
+keys v
+sleep 0.3
+keys M-m
+wait_for 5 host_focus_is "$GUEST"
+
+# The session on show ends: Zellij moves the client back, and the sidebar
+# follows it, which opening the agent again shows.
+z kill-session "$TEAM_SESSION" >/dev/null 2>&1
+check "when the session on show ends, the guest pane shows the inner session" \
+	wait_for 10 session_has_client "$INNER"
+sleep 1
+open_match second
+check "and the team's session is made again when its agent is opened" wait_for 10 session_has_client "$TEAM_SESSION"
+
+# The Sessions section lists what is running, moves between them and ends
+# a team's.
+check "the sidebar lists the running sessions, the one on show marked" \
+	wait_for 5 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -A 2 -E '▾ Sessions ─+ 2│' | grep -q '→ auth'"
+keys M-m
+wait_for 5 host_focus_is "$SIDEBAR"
+keys Tab
+sleep 0.3
+keys G # the last row: the inner session
+sleep 0.3
+keys Enter
+check "Enter on a session's row shows that session" wait_for 10 session_has_client "$INNER"
+check "and hands it the keyboard" wait_for 5 host_focus_is "$GUEST"
+sleep 1.5 # let the section mark the inner session
+keys M-m
+wait_for 5 host_focus_is "$SIDEBAR"
+keys Tab
+sleep 0.3
+keys g g # the first row: the team's session
+sleep 0.3
+keys x
+sleep 0.3
+keys y
+session_gone() { ! alive "$TEAM_SESSION"; }
+check "x on a team session's row ends it, once confirmed" wait_for 10 session_gone
+check "and the section lists the inner session alone" \
+	wait_for 5 sh -c "tmux capture-pane -p -t '$TMUX_SESSION' | grep -q -E '▾ Sessions ─+ 1│'"
+keys M-m
+wait_for 5 host_focus_is "$GUEST"
+
+# Back to the inner session for the rest, without the team.
+open_match e2e
+wait_for 10 session_has_client "$INNER"
+z kill-session "$TEAM_SESSION" >/dev/null 2>&1
+rm -f "$TEAMS"
+sleep 1.5
+
+# ---- 8. detach, attach, end together ----
+host_clients() { z --session "$HOST" action list-clients 2>/dev/null | tail -n +2 | grep -c . || true; }
+host_has_clients() { [ "$(host_clients)" = "$1" ]; }
+start_again() {
+	keys "env -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID NOC_DEV_NAME=$INNER '$ROOT/dev.sh' --fake start" Enter
+}
+# The inner session starts locked (noc-inner.kdl), so its keys are Ctrl-g
+# away. Detaching inside it (Ctrl-g, then its own Ctrl-o d) leaves both:
+# the sidebar detaches the host, and the guest pane attaches again.
+keys C-g
+sleep 0.5
+keys C-o
+sleep 0.5
+keys d
+check "detaching the inner session's client detaches the host too" wait_for 8 host_has_clients 0
+check "and the guest pane attaches to the inner session again" wait_for 8 session_has_client "$INNER"
+start_again
+wait_for 10 host_has_clients 1
+sleep 2
+
 keys M-d
 check "Alt-d detaches the host client" wait_for 5 sh -c "[ \"\$(env -u ZELLIJ -u ZELLIJ_SESSION_NAME zellij --session '$HOST' action list-clients | tail -n +2 | grep -c .)\" = 0 ]"
 check "both sessions keep running" sh -c "$(declare -f z alive); alive '$HOST' && alive '$INNER'"

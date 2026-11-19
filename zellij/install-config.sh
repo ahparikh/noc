@@ -27,9 +27,13 @@
 #                           choices stay, including defaults you turned off.
 #   layouts/noc-inner.kdl   What your session has only beside the sidebar.
 #                           Installed new. On an upgrade, replaced if you
-#                           have not changed it; if you have, yours is kept,
-#                           only its plugin location is updated, and the new
-#                           file is left beside it as noc-inner.kdl.new.
+#                           have not changed it, which is told from the file
+#                           the release you had shipped; if you have, yours
+#                           is kept, only its plugin location is updated, and
+#                           the new file is left beside it as
+#                           noc-inner.kdl.new. NOC_REPLACE_INNER=1 replaces
+#                           it whatever is in it, as a beta does, whose
+#                           earlier file cannot be fetched again.
 #   themes/noc-blue.kdl     The blue theme and its dimmed twin.
 #
 # Whatever it replaces is kept beside the new file as <name>.bak.
@@ -244,8 +248,26 @@ install "$host_out" "$host_old" "$host_note"
 
 inner_new="$SRC/layouts/noc-inner.kdl"
 inner_old="$DEST/layouts/noc-inner.kdl"
-if [ -f "$inner_old" ] && ! cmp -s "$inner_new" "$inner_old" &&
+# Yours is yours when it is neither the new file nor the file the release
+# you have shipped, plugin locations aside. Without that release's file, a
+# file that differs from the new one counts as yours.
+inner_yours=0
+if [ "${NOC_REPLACE_INNER:-}" != 1 ] && [ -f "$inner_old" ] &&
 	[ "$(without_location "$inner_old")" != "$(without_location "$inner_new")" ]; then
+	inner_yours=1
+	had="$(plugin_location "$inner_old" | sed -n 's|.*/download/\([^/]*\)/zellij-noc\.wasm"|\1|p')"
+	shipped="${NOC_SHIPPED_INNER:-}"
+	if [ -z "$shipped" ] && [ -n "$had" ] && command -v curl >/dev/null 2>&1; then
+		shipped="$WORK/shipped-inner.kdl"
+		curl -fsSL --max-time 15 "https://raw.githubusercontent.com/$REPO/$had/zellij/config/layouts/noc-inner.kdl" \
+			-o "$shipped" 2>/dev/null || shipped=""
+	fi
+	if [ -n "$shipped" ] && [ -f "$shipped" ] &&
+		[ "$(without_location "$inner_old")" = "$(without_location "$shipped")" ]; then
+		inner_yours=0
+	fi
+fi
+if [ "$inner_yours" = 1 ]; then
 	# Yours differs in more than the plugin version: keep it, and only point
 	# its bindings at the new plugin.
 	sed "s|\"[^\"]*zellij-noc\\.wasm\"|$LOCATION|g" "$inner_old" >"$WORK/noc-inner.kdl"

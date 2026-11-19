@@ -65,6 +65,12 @@ pub enum ListItem {
         count: usize,
         expanded: bool,
     },
+    /// The teams whose agents are all Quiet, folded into one row at the end
+    /// of the team grouping. `count` is the number of teams.
+    QuietTeams {
+        count: usize,
+        expanded: bool,
+    },
 }
 
 /// How the list is grouped.
@@ -102,6 +108,41 @@ impl Transport {
         }
     }
 }
+
+/// The section of the panel that takes the keys.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Focus {
+    #[default]
+    Agents,
+    Sessions,
+    Details,
+}
+
+/// How far `h` and `l` move the details sideways.
+pub const DETAIL_SHIFT: usize = 4;
+
+/// A running inner session, as a row of the Sessions section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionRow {
+    /// The Zellij session's name.
+    pub name: String,
+    /// The guest pane shows it.
+    pub on_show: bool,
+}
+
+/// What a session's row says of its agents: how many are Blocked, Working
+/// and in Review.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SessionCounts {
+    pub blocked: usize,
+    pub working: usize,
+    pub review: usize,
+    /// Every agent of the session's team, the Quiet ones too.
+    pub agents: usize,
+}
+
+/// The most session rows the section shows at once.
+pub const SESSION_ROWS: usize = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Connection {
@@ -164,6 +205,7 @@ enum SelectionKey {
     Section(QuietAge),
     Team(String),
     TeamQuiet(String),
+    QuietTeams,
 }
 
 // ---- configuration ----
@@ -194,6 +236,9 @@ pub struct Config {
     pub poll_interval_ms: f64,
     /// The inner session the panel opens, focuses and follows agents in.
     pub guest_session: String,
+    /// The layout a team's session is created from: a name in the layout
+    /// directory of the guest pane's client, or a path.
+    pub team_layout: String,
     /// The inner session's normal theme, and the one it wears while the
     /// panel has the keyboard. Both or neither.
     pub home_theme: Option<String>,
@@ -219,6 +264,7 @@ impl Default for Config {
             pipe_name: "zellij-noc.registry".to_string(),
             poll_interval_ms: 1000.0,
             guest_session: DEFAULT_GUEST_SESSION.to_string(),
+            team_layout: crate::guest::INNER_LAYOUT.to_string(),
             home_theme: None,
             away_theme: None,
             away_key: DEFAULT_AWAY_KEY.to_string(),
@@ -303,6 +349,9 @@ impl Config {
         }
         if let Some(v) = get("guest_session") {
             config.guest_session = v.to_string();
+        }
+        if let Some(v) = get("team_layout") {
+            config.team_layout = v.to_string();
         }
         config.home_theme = get("home_theme").map(str::to_string);
         config.away_theme = get("away_theme").map(str::to_string);
@@ -396,6 +445,26 @@ pub struct ZellijNoc {
     pub pending_stop: Option<PendingStop>,
     pub pending_rename: Option<PendingRename>,
     pub pending_team: Option<PendingTeam>,
+    /// The session the user was asked whether to end.
+    pub pending_end: Option<String>,
+    /// The running inner sessions: the teams' by team name, then the inner
+    /// session itself.
+    pub sessions: Vec<SessionRow>,
+    pub session_index: usize,
+    pub focus: Focus,
+    /// The list the details are about: the one that last had the keys.
+    pub source: Focus,
+    /// The Sessions section is open (`S`); closed, it is its title alone.
+    pub show_sessions: bool,
+    /// How far the details are scrolled down and sideways, and how far
+    /// they can be, as of the last time they were drawn.
+    pub detail_scroll: usize,
+    pub detail_shift: usize,
+    pub detail_max_scroll: usize,
+    pub detail_max_shift: usize,
+    /// The rows of details last drawn, and what they were about.
+    pub detail_rows: usize,
+    pub detail_of: String,
     pub search: Option<Search>,
     /// The list holds search results: every match is a row, Quiet agents
     /// are not folded into sections, and none is too old to show.
@@ -419,6 +488,8 @@ pub struct ZellijNoc {
     folded_teams: BTreeSet<String>,
     /// Teams whose Quiet row is open.
     open_team_quiet: BTreeSet<String>,
+    /// The row that holds the teams with no agent at work is open.
+    quiet_teams_open: bool,
     stopped: BTreeSet<String>,
 }
 
@@ -431,6 +502,7 @@ impl ZellijNoc {
             teams: Vec::new(),
             folded_teams: BTreeSet::new(),
             open_team_quiet: BTreeSet::new(),
+            quiet_teams_open: false,
             agents: Vec::new(),
             items: Vec::new(),
             selected_index: 0,
@@ -444,6 +516,18 @@ impl ZellijNoc {
             pending_stop: None,
             pending_rename: None,
             pending_team: None,
+            pending_end: None,
+            sessions: Vec::new(),
+            session_index: 0,
+            focus: Focus::Agents,
+            source: Focus::Agents,
+            show_sessions: true,
+            detail_scroll: 0,
+            detail_shift: 0,
+            detail_max_scroll: 0,
+            detail_max_shift: 0,
+            detail_rows: 0,
+            detail_of: String::new(),
             search: None,
             flat: false,
             show_details: true,
@@ -543,16 +627,37 @@ impl ZellijNoc {
                 name => members.entry(name).or_default().push(index),
             }
         }
-        let mut groups: Vec<(String, Vec<usize>)> = members
+        // A team with an agent that is not Quiet is at work. The others
+        // rest: they go last, behind one row.
+        type Group = (String, Vec<usize>);
+        let (mut groups, resting): (Vec<Group>, Vec<Group>) = members
             .into_iter()
             .map(|(name, indexes)| (name.to_string(), indexes))
-            .collect();
+            .partition(|(_, indexes)| {
+                indexes
+                    .iter()
+                    .any(|&i| self.agents[i].group() != AgentGroup::Quiet)
+            });
         if !unteamed.is_empty() {
             groups.push((String::new(), unteamed));
         }
+        let at_work = groups.len();
+        let resting_count = resting.len();
+        let quiet_teams_open = self.quiet_teams_open;
+        groups.extend(resting);
         let mut items = Vec::new();
         let mut teams = Vec::new();
         for (team, (name, indexes)) in groups.into_iter().enumerate() {
+            if team == at_work {
+                items.push(ListItem::QuietTeams {
+                    count: resting_count,
+                    expanded: quiet_teams_open,
+                });
+            }
+            if team >= at_work && !quiet_teams_open {
+                teams.push(name);
+                continue;
+            }
             let count_of = |group: AgentGroup| {
                 indexes
                     .iter()
@@ -643,6 +748,7 @@ impl ZellijNoc {
             ListItem::TeamQuiet { team, .. } => {
                 Some(SelectionKey::TeamQuiet(self.team_name(*team).to_string()))
             }
+            ListItem::QuietTeams { .. } => Some(SelectionKey::QuietTeams),
         }
     }
 
@@ -658,6 +764,7 @@ impl ZellijNoc {
             (ListItem::TeamQuiet { team, .. }, SelectionKey::TeamQuiet(want)) => {
                 self.team_name(*team) == want
             }
+            (ListItem::QuietTeams { .. }, SelectionKey::QuietTeams) => true,
             _ => false,
         })
     }
@@ -672,10 +779,26 @@ impl ZellijNoc {
         self.items.get(self.selected_index).copied()
     }
 
+    /// The team of the selected row: a team heading's, its Quiet row's, or
+    /// the selected agent's. Empty for no team; `None` on a status section
+    /// or with nothing selected.
+    pub fn selected_team(&self) -> Option<String> {
+        match self.selected_item()? {
+            ListItem::Agent(i) => self.agents.get(i).map(|a| a.team_name().to_string()),
+            ListItem::Team { team, .. } | ListItem::TeamQuiet { team, .. } => {
+                Some(self.team_name(team).to_string())
+            }
+            ListItem::Section { .. } | ListItem::QuietTeams { .. } => None,
+        }
+    }
+
     pub fn selected_agent(&self) -> Option<&Agent> {
         match self.selected_item()? {
             ListItem::Agent(i) => self.agents.get(i),
-            ListItem::Section { .. } | ListItem::Team { .. } | ListItem::TeamQuiet { .. } => None,
+            ListItem::Section { .. }
+            | ListItem::Team { .. }
+            | ListItem::TeamQuiet { .. }
+            | ListItem::QuietTeams { .. } => None,
         }
     }
 
@@ -693,6 +816,8 @@ impl ZellijNoc {
         if self.by_team() && self.position_of(&target).is_none() {
             let agent = &self.agents[index];
             let team = agent.team_name().to_string();
+            // Its team may be among those at rest.
+            self.quiet_teams_open = true;
             self.folded_teams.remove(&team);
             if agent.group() == AgentGroup::Quiet && !agent.is_lead() {
                 self.open_team_quiet.insert(team);
@@ -741,6 +866,10 @@ impl ZellijNoc {
                 }
                 SelectionKey::TeamQuiet(name)
             }
+            Some(ListItem::QuietTeams { .. }) => {
+                self.quiet_teams_open = !self.quiet_teams_open;
+                SelectionKey::QuietTeams
+            }
             _ => return false,
         };
         self.rebuild_items();
@@ -775,6 +904,10 @@ impl ZellijNoc {
                 let name = self.team_name(team).to_string();
                 self.open_team_quiet.remove(&name);
                 SelectionKey::TeamQuiet(name)
+            }
+            Some(ListItem::QuietTeams { .. }) => {
+                self.quiet_teams_open = false;
+                SelectionKey::QuietTeams
             }
             Some(ListItem::Agent(i)) => {
                 let Some(agent) = self.agents.get(i) else {
@@ -859,11 +992,201 @@ impl ZellijNoc {
         self.notice = None;
     }
 
+    // ---- sessions ----
+
+    /// The running inner sessions, as Zellij lists them, and the one on
+    /// show. Team sessions come first, by team name, then the inner session
+    /// itself. The selection stays on the session it was on while the
+    /// section has the keys, and otherwise sits on the session on show.
+    pub fn set_sessions(&mut self, names: &[String], on_show: &str) -> bool {
+        let inner = self.config.guest_session.clone();
+        let mut names: Vec<&String> = names.iter().collect();
+        names.sort_by(|a, b| (**a == inner, a.as_str()).cmp(&(**b == inner, b.as_str())));
+        names.dedup();
+        let rows: Vec<SessionRow> = names
+            .into_iter()
+            .map(|name| SessionRow {
+                name: name.clone(),
+                on_show: name == on_show,
+            })
+            .collect();
+        let selected = self.selected_session().map(|row| row.name.clone());
+        let changed = rows != self.sessions;
+        self.sessions = rows;
+        let keep = (self.focus == Focus::Sessions)
+            .then_some(selected)
+            .flatten()
+            .and_then(|name| self.sessions.iter().position(|row| row.name == name));
+        let on_show = self.sessions.iter().position(|row| row.on_show);
+        let index = keep.or(on_show).unwrap_or(0);
+        let moved = index != self.session_index;
+        self.session_index = index;
+        if self.sessions.is_empty() {
+            self.leave(Focus::Sessions);
+        }
+        changed || moved
+    }
+
+    /// Whether the Sessions section lists its sessions: it is open, and there
+    /// are sessions to list.
+    pub fn sessions_shown(&self) -> bool {
+        self.show_sessions && !self.sessions.is_empty()
+    }
+
+    /// The list the details are about, and whose selected row is
+    /// highlighted: the one that has the keys, or had them before Details.
+    pub fn list_focus(&self) -> Focus {
+        match self.focus {
+            Focus::Details => self.source,
+            list => list,
+        }
+    }
+
+    /// A section that closed or went away gives the keys up: to the list
+    /// the details were about, or to the agents.
+    fn leave(&mut self, section: Focus) {
+        if self.source == section {
+            self.source = Focus::Agents;
+        }
+        if self.focus == section {
+            self.focus = self.source;
+        }
+    }
+
+    pub fn selected_session(&self) -> Option<&SessionRow> {
+        self.sessions.get(self.session_index)
+    }
+
+    /// The session the details are about, if they are about one.
+    pub fn focused_session(&self) -> Option<&SessionRow> {
+        (self.list_focus() == Focus::Sessions)
+            .then(|| self.selected_session())
+            .flatten()
+    }
+
+    /// The team a session belongs to; empty for the inner session.
+    pub fn session_team<'a>(&self, name: &'a str) -> &'a str {
+        if name == self.config.guest_session {
+            ""
+        } else {
+            crate::guest::team_label(name)
+        }
+    }
+
+    /// What a session is called: its team, or `no-team`.
+    pub fn session_label<'a>(&self, name: &'a str) -> &'a str {
+        match self.session_team(name) {
+            "" => crate::guest::NO_TEAM,
+            team => team,
+        }
+    }
+
+    /// The agents of a session's team, counted by what they need. `None`
+    /// while the list holds search results, which are not every agent.
+    pub fn session_counts(&self, name: &str) -> Option<SessionCounts> {
+        if self.flat {
+            return None;
+        }
+        let team = self.session_team(name);
+        let mut counts = SessionCounts::default();
+        for agent in self.agents.iter().filter(|a| a.team_name() == team) {
+            counts.agents += 1;
+            match agent.group() {
+                AgentGroup::Blocked => counts.blocked += 1,
+                AgentGroup::Working => counts.working += 1,
+                AgentGroup::Review => counts.review += 1,
+                AgentGroup::Quiet => {}
+            }
+        }
+        Some(counts)
+    }
+
+    /// `Tab` (`lists`): give the keys to the other list, Agents or Sessions.
+    /// `Shift Tab`: give them to the details of the list that has them, or
+    /// back to that list. So the details are reached without passing through
+    /// the other list, which would change what they are about.
+    pub fn toggle_focus(&mut self, lists: bool) {
+        self.pending_g = false;
+        let target = if !lists {
+            match self.focus {
+                Focus::Details => self.source,
+                _ if self.show_details => Focus::Details,
+                _ => {
+                    self.set_notice("details are closed; D opens them");
+                    return;
+                }
+            }
+        } else if self.list_focus() == Focus::Sessions {
+            Focus::Agents
+        } else if self.sessions_shown() {
+            Focus::Sessions
+        } else if self.show_sessions {
+            self.set_notice("no session is listed yet");
+            return;
+        } else {
+            self.set_notice("sessions are closed; S opens them");
+            return;
+        };
+        if target != Focus::Details {
+            self.source = target;
+        }
+        self.focus = target;
+        self.show_help = false;
+        self.notice = None;
+    }
+
+    /// Give the keys to the agents, and make the details about them.
+    pub fn focus_agents(&mut self) {
+        self.source = Focus::Agents;
+        self.focus = Focus::Agents;
+        self.pending_g = false;
+    }
+
+    /// `S`: close the Sessions section to its title, or open it again.
+    pub fn toggle_sessions(&mut self) {
+        self.show_sessions = !self.show_sessions;
+        self.show_help = false;
+        if !self.show_sessions {
+            self.leave(Focus::Sessions);
+        }
+    }
+
+    /// The details moved down by `delta` rows, within what there is.
+    pub fn scroll_details(&mut self, delta: isize) {
+        self.detail_scroll = self
+            .detail_scroll
+            .saturating_add_signed(delta)
+            .min(self.detail_max_scroll);
+        self.notice = None;
+        self.pending_g = false;
+    }
+
+    /// The details moved sideways by `delta` columns, within their width.
+    pub fn shift_details(&mut self, delta: isize) {
+        self.detail_shift = self
+            .detail_shift
+            .saturating_add_signed(delta)
+            .min(self.detail_max_shift);
+        self.notice = None;
+        self.pending_g = false;
+    }
+
+    pub fn move_session(&mut self, delta: isize) {
+        let last = self.sessions.len().saturating_sub(1);
+        self.session_index = self.session_index.saturating_add_signed(delta).min(last);
+        self.notice = None;
+        self.pending_g = false;
+    }
+
     // ---- toggles and prompts ----
 
+    /// `d`: close the Details section to its title, or open it again.
     pub fn toggle_details(&mut self) {
         self.show_details = !self.show_details;
         self.show_help = false;
+        if !self.show_details {
+            self.leave(Focus::Details);
+        }
     }
 
     pub fn toggle_help(&mut self) {
@@ -1045,6 +1368,10 @@ mod tests {
                     app.team_title(*team),
                     if *expanded { "open" } else { "shut" }
                 ),
+                ListItem::QuietTeams { count, expanded } => format!(
+                    "[quiet teams {count} {}]",
+                    if *expanded { "open" } else { "shut" }
+                ),
             })
             .collect()
     }
@@ -1195,6 +1522,75 @@ mod tests {
         assert!(app.select_agent("q1"));
         assert_eq!(row_ids(&app)[7..9], ["[billing quiet 1 open]", "q1"]);
         assert!(!app.select_agent("old"));
+    }
+
+    #[test]
+    fn teams_with_no_agent_at_work_rest_behind_one_row() {
+        let agents = |auth_state: &str, auth_bucket: &str| {
+            format!(
+                r#"[
+            {{"id":"solo","name":"Solo","display_state":"working","bucket":"working","last_activity_at":"2026-09-24T11:59:00Z"}},
+            {{"id":"w1","name":"Worker","team":"billing","display_state":"working","bucket":"working","last_activity_at":"2026-09-24T11:58:00Z"}},
+            {{"id":"a1","name":"Auth one","team":"auth","display_state":"{auth_state}","bucket":"{auth_bucket}","ended_at":"2026-09-01T08:00:00Z"}},
+            {{"id":"alead","name":"Auth lead","team":"auth","lead":true,"display_state":"idle","bucket":"quiet","ended_at":"2026-09-01T08:00:00Z"}},
+            {{"id":"z1","name":"Zed","team":"zed","display_state":"idle","bucket":"quiet","ended_at":"2026-09-24T07:00:00Z"}}]"#
+            )
+        };
+        let mut app = panel();
+        app.toggle_group_by();
+        app.apply_snapshot(list(&agents("idle", "quiet")), Transport::Poll);
+        // The teams at work, the agents in no team, then one row for the
+        // teams whose agents are all Quiet, however old.
+        assert_eq!(
+            row_ids(&app),
+            [
+                "<billing 1 open 0/1/0>",
+                "w1",
+                "<no team 1 open 0/1/0>",
+                "solo",
+                "[quiet teams 2 shut]",
+            ]
+        );
+        // It opens like a section, onto the teams' own headings.
+        app.selected_index = 4;
+        assert!(app.toggle_selected_section());
+        assert_eq!(
+            row_ids(&app)[4..],
+            [
+                "[quiet teams 2 open]",
+                "<auth 2 open 0/0/0>",
+                "alead",
+                "[auth quiet 1 shut]",
+                "<zed 1 open 0/0/0>",
+                "[zed quiet 1 shut]",
+            ]
+        );
+        assert_eq!(app.selected_index, 4);
+        // `h` on the row closes it; an agent of a resting team opens it.
+        app.collapse_selected();
+        assert_eq!(row_ids(&app)[4], "[quiet teams 2 shut]");
+        assert!(app.select_agent("z1"));
+        assert_eq!(
+            row_ids(&app)[8..],
+            ["<zed 1 open 0/0/0>", "[zed quiet 1 open]", "z1"]
+        );
+        // One of its agents wakes: the team is at work again, all of it.
+        app.apply_snapshot(list(&agents("working", "working")), Transport::Poll);
+        assert_eq!(
+            row_ids(&app)[..5],
+            [
+                "<auth 2 open 0/1/0>",
+                "alead",
+                "a1",
+                "<billing 1 open 0/1/0>",
+                "w1",
+            ]
+        );
+        assert!(row_ids(&app).contains(&"[quiet teams 1 open]".to_string()));
+        // No resting team: no row.
+        let mut app = team_panel();
+        assert!(!row_ids(&app).iter().any(|row| row.contains("quiet teams")));
+        app.selected_index = 0;
     }
 
     #[test]

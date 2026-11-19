@@ -32,7 +32,7 @@ CI runs the first five on every push and pull request
 |---|---|---|
 | `noc` binary | the release, installed with Homebrew (or `install.sh`) | `go/bin/noc` from this checkout |
 | Plugin | the release URL in `~/.config/zellij/layouts/noc-host.kdl` | `zellij/target/…/zellij-noc.wasm` |
-| Sessions | `noc`, `noc-host` | `noc-dev`, `noc-dev-host` |
+| Sessions | `noc`, `noc-host`, a `noc--<team>` per team | `noc-dev`, `noc-dev-host`, a `noc-dev--<team>` per team |
 | Zellij config | `~/.config/zellij/` | `zellij/target/dev/noc-dev/` |
 | noc state | the platform default | `~/.local/state/noc-dev`, `~/.cache/noc-dev` |
 
@@ -44,32 +44,37 @@ release.
 
 ```sh
 make dev              # build both, then start (or attach to) the dev pair
+make dev-mine         # the same, with your config.kdl and themes around the new layouts
 make dev-installed    # the same, with your installed Zellij configuration
-make dev-stop         # end both dev sessions and the dev server
+make dev-stop         # end the dev sessions (teams' too) and the dev server
 zellij/dev.sh status
 ```
 
-The two start commands differ only in where the Zellij configuration comes
-from:
+The three start commands differ only in where the Zellij configuration
+comes from:
 
-| | `make dev` | `make dev-installed` |
-|---|---|---|
-| Tests | the new plugin with the new configuration files | the new plugin with the configuration you use every day |
-| `config.kdl` | a plain one, with nothing of yours | yours |
-| Layouts | `zellij/config/layouts/` | your installed `noc-host.kdl` and `noc-inner.kdl` |
-| Theme | the shipped `noc-blue` pair | yours |
-| Other files | none of yours | yours, linked |
+| | `make dev` | `make dev-mine` | `make dev-installed` |
+|---|---|---|---|
+| Tests | the new plugin with the new configuration files | the same, with your own keys and options | the new plugin with the configuration you use every day |
+| `config.kdl` | a plain one, with nothing of yours | yours | yours |
+| Layouts | `zellij/config/layouts/` | `zellij/config/layouts/` | your installed `noc-host.kdl` and `noc-inner.kdl` |
+| Theme | the shipped `noc-blue` pair | the pair the shipped layouts name, from your `themes/` | yours |
+| Other files | none of yours | yours, linked | yours, linked |
 
-Both replace the plugin location, `noc_bin` and the session names, and both
+`make dev-mine` is the one for a change to the layouts themselves: it is
+what your setup will be once the new files are installed.
+
+All three replace the plugin location, `noc_bin` and the session names, and both
 use the dev registry. `make dev-installed` needs noc's files in your Zellij
 configuration (`make zellij-install-config`) and stops with a message when
-they are not there. Only one of the two runs at a time: stop the pair to
+they are not there. Only one of the three runs at a time: stop the pair to
 switch.
 
 `zellij/dev.sh` renders the chosen files into
 `zellij/target/dev/noc-dev/` with these substitutions: the plugin location
 becomes the local build, the session names become `noc-dev` and
-`noc-dev-host`, and `noc_bin` becomes a wrapper that runs `go/bin/noc` with
+`noc-dev-host`, `team_layout` names the rendered `noc-inner.kdl` by its
+path, and `noc_bin` becomes a wrapper that runs `go/bin/noc` with
 its own state and runtime directories. It then starts Zellij with
 `--config-dir` pointing there. Because `make dev` renders the shipped files,
 what you test is what users copy. It never writes to your own Zellij
@@ -127,6 +132,42 @@ It needs the plugin's permissions already granted for the build path (run
    the files in `zellij/config/`.
 3. If it is a design decision, record it in `docs/DECISIONS.md`.
 4. Run the checks above.
+
+## A beta of the Zellij frontend
+
+To use a branch's plugin and layouts in daily use before they are released,
+publish them as the beta:
+
+```sh
+packaging/beta.sh
+```
+
+It builds the plugin from `HEAD` and replaces the pre-release `beta-latest`
+with it, and moves the tag `beta-latest` to a commit that is `HEAD` with
+the two layouts loading that plugin. The tag is not `v…`, so the release
+workflow does not run and the Homebrew formula is untouched; a pre-release
+is not "latest", so nobody on a release is told to upgrade. The binary is
+not part of a beta: it runs with the released `noc`.
+
+To install it:
+
+```sh
+sha=$(git ls-remote https://github.com/ahparikh/noc refs/tags/beta-latest | cut -f1)
+curl -fsSL "https://raw.githubusercontent.com/ahparikh/noc/$sha/zellij/install-config.sh" |
+  NOC_REF="$sha" NOC_REPLACE_INNER=1 bash
+```
+
+The commit is named, not the tag, because GitHub serves a moved tag's old
+files for some minutes. `NOC_REPLACE_INNER=1` installs the beta's inner
+layout whatever is there: the file an earlier beta shipped cannot be
+fetched again to tell whether yours was edited. The plugin's location is
+the same for every beta, and Zellij keeps what it downloaded from a
+location, so the copy it kept has to go before the pair is started again:
+the files with all-digit names in Zellij's cache directory
+(`~/Library/Caches/org.Zellij-Contributors.Zellij` on macOS,
+`~/.cache/zellij` on Linux) are the plugins it downloaded. Its permission
+is per location, so it is asked for once. To go back, install the release
+(`install-config.sh` with no `NOC_REF`).
 
 ## Releasing
 

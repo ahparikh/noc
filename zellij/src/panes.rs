@@ -35,6 +35,8 @@ pub struct ScanPane {
     /// Only for the inner session's panes: the tab's stable id and its name.
     pub tab_id: Option<u32>,
     pub tab_name: String,
+    /// The Zellij session attached inside this pane, as Zellij reports it.
+    pub nested_session: Option<String>,
 }
 
 impl Default for ScanPane {
@@ -57,6 +59,7 @@ impl Default for ScanPane {
             tab_position: 0,
             tab_id: None,
             tab_name: String::new(),
+            nested_session: None,
         }
     }
 }
@@ -81,6 +84,7 @@ impl ScanPane {
             tab_position,
             tab_id: None,
             tab_name: String::new(),
+            nested_session: info.nested_session_name.clone(),
         }
     }
 }
@@ -323,8 +327,8 @@ pub fn agent_in_pane<'a>(
         .map(|(_, agent)| agent)
 }
 
-/// A validated binding naming another running session (not this one, not the
-/// nested inner session).
+/// A validated binding naming another running session (not this one, not a
+/// session of the nested inner session).
 pub fn other_running_session(
     agent: &Agent,
     current: Option<&str>,
@@ -335,7 +339,7 @@ pub fn other_running_session(
         let session = b.session.as_str();
         (!session.is_empty()
             && Some(session) != current
-            && Some(session) != guest
+            && !guest.is_some_and(|guest| crate::guest::is_inner_session(guest, session))
             && live_sessions.iter().any(|s| s == session))
         .then(|| session.to_string())
     })

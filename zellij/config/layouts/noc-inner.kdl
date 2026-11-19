@@ -2,11 +2,15 @@
 // pair, and only then.
 //
 // Copy to ~/.config/zellij/layouts/noc-inner.kdl. The guest pane of
-// noc-host.kdl creates the inner session ("noc") with this layout. Sessions
-// you start any other way never read this file, so the options below do not
-// change them.
+// noc-host.kdl creates the inner session ("noc") with this layout, and the
+// sidebar creates each team's own session ("noc--<team>") with it the first
+// time something of that team is opened. Sessions you start any other way
+// never read this file, so the options below do not change them.
 
-// The first tab. This is Zellij's default layout; change it freely.
+// The first tab, and the frame of every tab opened later. This is Zellij's
+// default layout; change it freely. The tab bar starts with the session's
+// name, which says whose session you are looking at: "Zellij (noc)" for the
+// agents in no team, "Zellij (noc--<team>)" for a team.
 layout {
     pane size=1 borderless=true {
         plugin location="tab-bar"
@@ -22,6 +26,11 @@ layout {
 // the session is created: to apply a change, end the pair (`zellij kill-session noc`) and
 // start it again.
 
+// The session starts locked: every key goes to the program in the pane, an
+// agent as a rule, and none is taken by Zellij until you unlock it (Ctrl g
+// by default). Delete the line to start in Zellij's normal mode.
+default_mode "locked"
+
 // The tab bar's "[ N running ]" box with the other sessions and the inbox.
 // The sidebar already lists what needs you.
 session_indicator false
@@ -35,9 +44,10 @@ attention {
 
 ui {
     pane_frames {
-        // "Zellij (noc)" in the tab bar becomes "Zellij", and the session
-        // name leaves the focused pane's frame.
-        hide_session_name true
+        // The session's name stays on show, whatever config.kdl says: it
+        // is what tells one team's session from another's. The tab bar
+        // starts "Zellij (noc--<team>)".
+        hide_session_name false
     }
 }
 
@@ -50,10 +60,10 @@ ui {
 keybinds {
     shared {
         bind "Ctrl Alt Shift F11" {
-            MessagePlugin "https://github.com/ahparikh/noc/releases/download/v0.2.1/zellij-noc.wasm" { floating true; role "relay"; name "zellij-noc.relay"; payload "theme noc-blue-away"; };
+            MessagePlugin "https://github.com/ahparikh/noc/releases/download/v0.3.0/zellij-noc.wasm" { floating true; role "relay"; name "zellij-noc.relay"; payload "theme noc-blue-away"; };
         }
         bind "Ctrl Alt Shift F12" {
-            MessagePlugin "https://github.com/ahparikh/noc/releases/download/v0.2.1/zellij-noc.wasm" { floating true; role "relay"; name "zellij-noc.relay"; payload "theme noc-blue"; };
+            MessagePlugin "https://github.com/ahparikh/noc/releases/download/v0.3.0/zellij-noc.wasm" { floating true; role "relay"; name "zellij-noc.relay"; payload "theme noc-blue"; };
         }
     }
 }

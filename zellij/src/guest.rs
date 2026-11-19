@@ -1,12 +1,15 @@
-//! The inner ("guest") session: the `relay` role that runs inside it, sends
-//! the panel its panes, tabs and focus as they change and switches its
-//! theme; and the panel's side: asking the relay to watch, driving the
-//! inner session over the Zellij CLI, and the keyboard signals typed into it.
+//! The inner ("guest") sessions, one session per team: the `relay` role that
+//! runs inside each, sends the panel its panes, tabs and focus as they
+//! change, switches its theme and moves its client to another session; and the
+//! panel's side: asking the relay of the session on show to watch, driving that
+//! session over the Zellij CLI, moving between sessions, and the keyboard signals
+//! typed into the guest pane.
 
 use crate::app::{is_plain_name, Config, PaneTitles};
 use crate::model::{parse_terminal_pane_id, Agent};
 use crate::panes::{
-    agent_named_by_pane_command, compact_error, manifest_panes, LaunchedPane, ScanPane,
+    agent_named_by_pane_command, compact_error, is_default_tab_name, manifest_panes, LaunchedPane,
+    ScanPane,
 };
 use crate::{ctx, now_secs, State, KEY, PIPE_GUEST, PIPE_RELAY};
 use serde::{Deserialize, Serialize};
@@ -26,6 +29,40 @@ pub const RELAY_WATCH_SECS: f64 = 10.0;
 pub const CTX_WATCH: &str = "guest-watch";
 pub const CTX_RELAY_PUSH: &str = "relay-push";
 pub const CTX_OPEN: &str = "guest-open";
+pub const CTX_SWITCH: &str = "guest-switch";
+pub const CTX_END: &str = "end-session";
+/// How often the panel reads which inner sessions are running.
+pub const SESSIONS_READ_SECS: f64 = 1.0;
+/// How long a move to another session may take before the panel stops waiting
+/// for it.
+pub const SWITCH_SECS: f64 = 5.0;
+/// How long the panel waits for Zellij to say the client is in the new session
+/// before it asks that session's relay anyway.
+pub const SWITCH_LANDING_SECS: f64 = 1.0;
+/// How often the panel asks Zellij where the client is while it waits. It
+/// must differ from the panel's tick: the two timers are told apart by
+/// their length.
+pub const SWITCH_POLL_SECS: f64 = 0.03;
+/// How long after the client landed in a session that was just created the
+/// panel waits before it starts that session's relay: `zellij pipe` would wait
+/// for ever on a relay started before the session has a tab to hold it.
+pub const SWITCH_SETTLE_SECS: f64 = 0.25;
+/// While a move is under way: how often the panel asks the new session's
+/// relay, and how long it waits for one request before it sends another.
+pub const SWITCH_WATCH_SECS: f64 = 0.1;
+pub const SWITCH_WATCH_LOST_SECS: f64 = 1.0;
+/// How long after the guest pane's client exited the panel decides whether
+/// the user detached. Shorter than the pause of the guest pane's loop before
+/// it attaches again, and long enough for an ended session to be gone.
+pub const CLIENT_EXIT_SECS: f64 = 0.5;
+/// How long a watch request may run before the panel sends another.
+pub const GUEST_WATCH_LOST_SECS: f64 = 5.0;
+/// What joins the inner session's name and a team's name in a session's name.
+pub const TEAM_SEPARATOR: &str = "--";
+/// What the tab bar calls the session of the agents in no team.
+pub const NO_TEAM: &str = "no-team";
+/// The layout a session is created from, as the guest pane's loop names it.
+pub const INNER_LAYOUT: &str = "noc-inner";
 pub const CTX_HOST_ACTION: &str = "host-action";
 pub const KEY_GUEST_AGENT: &str = "zellij-noc-guest-agent";
 
@@ -38,6 +75,33 @@ const RUN_SCRIPT: &str = "guest=$1; host=$2; shift 2\nzellij --session \"$guest\
 
 #[derive(Debug, Default)]
 pub struct GuestState {
+    /// The session on show: the inner session the guest pane's client is in,
+    /// as far as the panel knows. Everything below is about this session.
+    pub session: String,
+    /// What the panel knew about the sessions that are not on show.
+    pub sessions: BTreeMap<String, InnerSession>,
+    /// A move to `session` was asked for and its relay has not answered yet.
+    pub switching: bool,
+    pub switched_at: Option<f64>,
+    /// When the running sessions were last read for the Sessions section.
+    pub sessions_read: Option<f64>,
+    /// The agent to open once the session on show has been read.
+    pub pending_open: Option<String>,
+    /// Zellij has said that the client is in `session` since the move began.
+    pub landed: bool,
+    /// The move is to a session that was not running: it is being created,
+    /// and its relay is not asked before `settle_until`.
+    pub fresh: bool,
+    pub settle_until: Option<f64>,
+    /// The session Zellij last said is attached in the guest pane; none
+    /// once that client has exited.
+    pub shown: Option<String>,
+    /// The session the guest pane's client was in when it exited, and when
+    /// the panel saw that, until it is known why.
+    pub client_exit: Option<(String, f64)>,
+    /// The tab a session was created with, when the panel created the session to
+    /// open an agent in it: closed once the agent's tab is there.
+    pub spare_tab: Option<u32>,
     pub snapshot: Option<GuestSnapshot>,
     /// A watch request is running.
     pub in_flight: bool,
@@ -60,6 +124,15 @@ pub struct GuestState {
     pub failing_since: Option<f64>,
 }
 
+/// A session that is not on show, as the panel last saw it.
+#[derive(Debug, Default)]
+pub struct InnerSession {
+    pub snapshot: Option<GuestSnapshot>,
+    pub launched: BTreeMap<String, LaunchedPane>,
+    pub named_tabs: BTreeMap<u32, TabName>,
+    pub titles: BTreeMap<u32, (String, String)>,
+}
+
 /// A tab name the panel gave, or found to be an agent's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TabName {
@@ -75,6 +148,8 @@ pub struct TabName {
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct GuestSnapshot {
+    /// The session the relay was asked to watch as: its own.
+    pub session: String,
     pub clients: usize,
     pub focused: Option<u32>,
     pub panes: Vec<ScanPane>,
@@ -85,6 +160,8 @@ pub struct GuestSnapshot {
 pub struct RelayState {
     /// The session whose panel asked to watch, and when it last asked.
     pub host: Option<String>,
+    /// This session's name, as the panel addressed it.
+    pub session: String,
     pub watched_at: f64,
     pub panes: Vec<ScanPane>,
     pub tabs: Vec<TabInfo>,
@@ -107,6 +184,7 @@ pub fn parse_guest_snapshot(text: &str) -> Option<GuestSnapshot> {
 /// The relay's snapshot: the session's terminal panes, each with its tab's
 /// id and name, and the pane the first client has the keyboard in.
 pub fn relay_snapshot(
+    session: &str,
     panes: &[ScanPane],
     tabs: &[TabInfo],
     clients: &[ClientInfo],
@@ -128,23 +206,142 @@ pub fn relay_snapshot(
         PaneId::Plugin(_) => None,
     });
     GuestSnapshot {
+        session: session.to_string(),
         clients: clients.len(),
         focused,
         panes,
     }
 }
 
-/// The host session a `watch <session>` message names.
-pub fn watch_host(payload: &str) -> Option<String> {
-    let name = payload.trim().strip_prefix("watch ")?.trim();
-    is_plain_name(name).then(|| name.to_string())
+/// The host session and the relay's own session that a `watch <host>
+/// <session>` message names.
+pub fn watch_host(payload: &str) -> Option<(String, String)> {
+    let mut names = payload.trim().strip_prefix("watch ")?.split_whitespace();
+    let (host, session) = (names.next()?, names.next()?);
+    (names.next().is_none() && is_plain_name(host) && is_plain_name(session))
+        .then(|| (host.to_string(), session.to_string()))
 }
 
-/// The panel's request to the relay: watch the inner session for the panel
-/// in `host`. `zellij pipe` starts the relay when it is not running; the
-/// configuration is the one the relay bindings load it with, so there is
-/// one relay.
+/// The session a `switch <session> <layout>` message asks the relay to move its
+/// client to, and the layout to create it from when it is not running. The
+/// layout is a file name or a path, so it may hold anything but control
+/// characters.
+pub fn switch_request(payload: &str) -> Option<(String, String)> {
+    let rest = payload.trim().strip_prefix("switch ")?.trim();
+    let (name, layout) = rest.split_once(char::is_whitespace)?;
+    let layout = layout.trim();
+    (is_plain_name(name) && !layout.is_empty() && !layout.chars().any(char::is_control))
+        .then(|| (name.to_string(), layout.to_string()))
+}
+
+/// The session of a team: the inner session itself for the agents in no team
+/// (and for a name that could not be part of a session's), and otherwise the
+/// session `<inner>--<team>`.
+pub fn team_session(guest: &str, team: &str) -> String {
+    if team.is_empty() || !is_plain_name(team) {
+        guest.to_string()
+    } else {
+        format!("{guest}{TEAM_SEPARATOR}{team}")
+    }
+}
+
+/// Whether a session is one of the sessions of the inner session `guest`.
+pub fn is_inner_session(guest: &str, session: &str) -> bool {
+    session == guest
+        || session
+            .strip_prefix(guest)
+            .and_then(|rest| rest.strip_prefix(TEAM_SEPARATOR))
+            .is_some_and(|team| !team.is_empty())
+}
+
+/// What the tab bar calls a session: its team, or `no-team`.
+pub fn team_label(session: &str) -> &str {
+    match session.split_once(TEAM_SEPARATOR) {
+        Some((_, team)) if !team.is_empty() => team,
+        _ => NO_TEAM,
+    }
+}
+
+/// The only tab of a session that was just created, if nothing has been done
+/// in it: one tab, with one pane that was not started with a command.
+pub fn untouched_tab(snapshot: &GuestSnapshot) -> Option<u32> {
+    let [pane] = snapshot.panes.as_slice() else {
+        return None;
+    };
+    (pane.terminal_command.is_none() && !pane.exited && is_default_tab_name(&pane.tab_name))
+        .then_some(pane.tab_id)
+        .flatten()
+}
+
+/// What to do about the tab a session was created with, now that the session
+/// looks like `snapshot`: `Some(true)` to close it (the agent's tab is
+/// there and nothing was done in the spare one), `Some(false)` to leave it
+/// for good, `None` to look again at the next snapshot.
+pub fn spare_tab_verdict(snapshot: &GuestSnapshot, spare: u32) -> Option<bool> {
+    let in_spare: Vec<&ScanPane> = snapshot
+        .panes
+        .iter()
+        .filter(|p| p.tab_id == Some(spare))
+        .collect();
+    let [pane] = in_spare.as_slice() else {
+        // Gone, or panes were added to it.
+        return Some(false);
+    };
+    if pane.terminal_command.is_some() || pane.exited || !is_default_tab_name(&pane.tab_name) {
+        return Some(false);
+    }
+    snapshot
+        .panes
+        .iter()
+        .any(|p| p.tab_id.is_some_and(|tab| tab != spare))
+        .then_some(true)
+}
+
+pub fn close_tab_args(tab: u32) -> Vec<String> {
+    strings(&["action", "close-tab-by-id", &tab.to_string()])
+}
+
+/// The session an agent opens in: a session that already holds a live pane of
+/// it (the one on show first), and otherwise its team's session.
+pub fn agent_session(
+    agent: &Agent,
+    guest: &str,
+    session: &str,
+    snapshot: Option<&GuestSnapshot>,
+    launched: &BTreeMap<String, LaunchedPane>,
+    sessions: &BTreeMap<String, InnerSession>,
+    noc_bin: &str,
+) -> String {
+    if snapshot.is_some_and(|s| guest_agent_pane(agent, s, launched, session, noc_bin).is_some()) {
+        return session.to_string();
+    }
+    sessions
+        .iter()
+        .find(|(name, other)| {
+            other.snapshot.as_ref().is_some_and(|s| {
+                guest_agent_pane(agent, s, &other.launched, name, noc_bin).is_some()
+            })
+        })
+        .map(|(name, _)| name.clone())
+        .unwrap_or_else(|| team_session(guest, agent.team_name()))
+}
+
+/// The panel's request to a session's relay: watch this session for the panel
+/// in `host`.
 pub fn watch_command(guest: &str, plugin_url: &str, host: &str) -> Vec<String> {
+    relay_command(guest, plugin_url, &format!("watch {host} {guest}"))
+}
+
+/// The panel's request to the relay of the session on show: move the client
+/// to the session `target`, creating it from `layout` when it is not running.
+pub fn switch_command(guest: &str, plugin_url: &str, target: &str, layout: &str) -> Vec<String> {
+    relay_command(guest, plugin_url, &format!("switch {target} {layout}"))
+}
+
+/// A message to the relay of the session `guest`. `zellij pipe` starts the
+/// relay when it is not running; the configuration is the one the relay
+/// bindings load it with, so there is one relay in a session.
+fn relay_command(guest: &str, plugin_url: &str, message: &str) -> Vec<String> {
     strings(&[
         "zellij",
         "--session",
@@ -157,7 +354,7 @@ pub fn watch_command(guest: &str, plugin_url: &str, host: &str) -> Vec<String> {
         "--name",
         PIPE_RELAY,
         "--",
-        &format!("watch {host}"),
+        message,
     ])
 }
 
@@ -480,7 +677,20 @@ impl State {
     /// `GUEST_WATCH_SECS`, or every `GUEST_RETRY_SECS` while there is no
     /// usable answer. Returns whether the panel needs a redraw.
     pub fn watch_guest(&mut self) -> bool {
-        if !self.permissions_granted || self.guest.in_flight {
+        let now = now_secs();
+        // A request that never came back is given up on: `zellij pipe`
+        // waits for as long as the plugin it started does not answer.
+        let patience = if self.guest.switching {
+            SWITCH_WATCH_LOST_SECS
+        } else {
+            GUEST_WATCH_LOST_SECS
+        };
+        let lost = self.guest.last_watch.is_none_or(|t| now - t > patience);
+        if !self.permissions_granted || (self.guest.in_flight && !lost) {
+            return false;
+        }
+        if self.guest.settle_until.is_some_and(|t| now < t) {
+            // A session that is being created has no tab yet for its relay.
             return false;
         }
         // The relay is this plugin, so the panel must know where it was
@@ -488,18 +698,42 @@ impl State {
         let (Some(url), Some(host)) = (self.panel_url.clone(), self.session_name.clone()) else {
             return false;
         };
-        let now = now_secs();
+        let mut redraw = false;
+        if self.guest.switching {
+            let waited = self.guest.switched_at.map_or(0.0, |t| now - t);
+            if waited > SWITCH_SECS {
+                // The move did not happen: stop waiting, and show the session
+                // the client is in.
+                self.guest.switching = false;
+                if self.guest.pending_open.take().is_some() {
+                    self.app.set_notice(format!(
+                        "session {:?} did not open",
+                        team_label(&self.guest.session)
+                    ));
+                    redraw = true;
+                }
+                redraw |= self.follow_shown_session();
+            } else if !self.guest.landed && waited < SWITCH_LANDING_SECS {
+                // The client is on its way. A relay started in a session that
+                // is still being created may never answer.
+                return redraw;
+            }
+        }
         let healthy = self.guest.snapshot.is_some() && self.guest.failing_since.is_none();
-        let every = if healthy {
+        let every = if self.guest.switching {
+            // Until the new session answers with its client.
+            SWITCH_WATCH_SECS
+        } else if healthy {
             GUEST_WATCH_SECS
         } else {
             GUEST_RETRY_SECS
         };
         if self.guest.last_watch.is_some_and(|t| now - t < every) {
-            return false;
+            return redraw;
         }
         // The last request reached the inner session and nothing came back.
-        let unanswered = self.guest.watch_ok
+        let unanswered = !self.guest.switching
+            && self.guest.watch_ok
             && self
                 .guest
                 .last_watch
@@ -507,20 +741,294 @@ impl State {
         self.guest.in_flight = true;
         self.guest.last_watch = Some(now);
         run(
-            &watch_command(&self.config.guest_session, &url, &host),
+            &watch_command(&self.guest.session, &url, &host),
             ctx(CTX_WATCH),
         );
-        unanswered && self.on_guest_unreadable("is not answering")
+        redraw | (unanswered && self.on_guest_unreadable("is not answering"))
     }
 
-    /// The watch request ran: it fails when the inner session is not there.
+    /// The watch request ran: it fails when the session is not there.
     pub fn on_guest_watch(&mut self, exit: Option<i32>) -> bool {
         self.guest.in_flight = false;
         self.guest.watch_ok = exit == Some(0);
-        if self.guest.watch_ok {
+        if self.guest.watch_ok || self.guest.switching {
+            // A session being created is not there yet.
             return false;
         }
         self.on_guest_unreadable("is not running")
+    }
+
+    /// Ask Zellij which session is attached in the guest pane right now,
+    /// and act on it (`follow_shown_session`). A `PaneUpdate` says so too, but
+    /// Zellij does not send one when only that changes.
+    pub fn read_shown_session(&mut self) -> bool {
+        let Some(guest) = self.guest_pane() else {
+            return false;
+        };
+        if let Some(info) = get_pane_info(PaneId::Terminal(guest.id)) {
+            if let Some(pane) = self
+                .panes
+                .iter_mut()
+                .find(|p| !p.is_plugin && p.id == guest.id)
+            {
+                pane.nested_session = info.nested_session_name.clone();
+            }
+            match info.nested_session_name {
+                Some(name) => self.guest.shown = Some(name),
+                // The client that was in the guest pane has exited.
+                None => {
+                    if let Some(left) = self.guest.shown.take() {
+                        self.guest.client_exit = Some((left, now_secs()));
+                    }
+                }
+            }
+        }
+        self.settle_client_exit();
+        self.follow_shown_session()
+    }
+
+    /// The guest pane's client exited a while ago and none has taken its
+    /// place yet. If the session it was in is still running, the user detached
+    /// from it, and one detach leaves both sessions: the host's client is
+    /// detached too. If the session is gone, it ended, and the guest pane's
+    /// loop is about to show the inner session: nothing to do.
+    fn settle_client_exit(&mut self) {
+        let Some((left, at)) = self.guest.client_exit.clone() else {
+            return;
+        };
+        if self.guest.shown.is_some() {
+            // A client is there: it only moved, or it is attached again.
+            self.guest.client_exit = None;
+            return;
+        }
+        if now_secs() - at < CLIENT_EXIT_SECS {
+            return;
+        }
+        self.guest.client_exit = None;
+        let running =
+            get_session_list().is_ok_and(|list| list.live_sessions.iter().any(|s| s.name == left));
+        if running && is_inner_session(&self.config.guest_session, &left) {
+            detach();
+        }
+    }
+
+    /// While the client is on its way to another session: look for it, and
+    /// look again shortly.
+    pub fn on_switch_poll(&mut self) -> bool {
+        if !self.guest.switching {
+            return false;
+        }
+        let redraw = if self.guest.landed {
+            // It is there: ask the session's relay until it says so too.
+            self.watch_guest()
+        } else {
+            self.read_shown_session()
+        };
+        if self.guest.switching {
+            set_timeout(SWITCH_POLL_SECS);
+        }
+        redraw
+    }
+
+    /// Zellij says which session is attached in the guest pane. While a
+    /// move is under way that tells the panel the client has landed, so the
+    /// new session can be read at once. Otherwise, when it is a session other
+    /// than the one the panel took to be on show (that session ended and
+    /// Zellij moved the client back, or the user moved it), the panel shows
+    /// that one.
+    pub fn follow_shown_session(&mut self) -> bool {
+        let Some(shown) = self.guest_pane().and_then(|pane| pane.nested_session) else {
+            return false;
+        };
+        if !is_inner_session(&self.config.guest_session, &shown) {
+            return false;
+        }
+        if self.guest.switching {
+            if shown == self.guest.session && !self.guest.landed {
+                self.guest.landed = true;
+                self.guest.last_watch = None;
+                if self.guest.fresh {
+                    self.guest.settle_until = Some(now_secs() + SWITCH_SETTLE_SECS);
+                }
+                self.watch_guest();
+            }
+            return false;
+        }
+        if shown == self.guest.session {
+            return false;
+        }
+        self.adopt_session(shown);
+        self.watch_guest();
+        true
+    }
+
+    /// Make `target` the session on show in the panel's books: what it knew of
+    /// the session it leaves is put away, and what it knew of the new one is
+    /// taken out again. The session is read anew before anything is done there.
+    fn adopt_session(&mut self, target: String) {
+        let left = InnerSession {
+            snapshot: self.guest.snapshot.take(),
+            launched: std::mem::take(&mut self.guest.launched),
+            named_tabs: std::mem::take(&mut self.guest.named_tabs),
+            titles: std::mem::take(&mut self.guest.titles),
+        };
+        let previous = std::mem::replace(&mut self.guest.session, target);
+        self.guest.sessions.insert(previous, left);
+        if let Some(known) = self.guest.sessions.remove(&self.guest.session) {
+            self.guest.launched = known.launched;
+            self.guest.named_tabs = known.named_tabs;
+            self.guest.titles = known.titles;
+        }
+        // A request to the session it leaves no longer holds the next one up.
+        self.guest.in_flight = false;
+        self.guest.last_watch = None;
+        self.guest.last_push = None;
+        self.guest.watch_ok = false;
+        self.guest.client_seen = false;
+        self.guest.failing_since = None;
+        self.guest.landed = false;
+        self.guest.fresh = false;
+        self.guest.settle_until = None;
+        self.guest.spare_tab = None;
+        self.app.guest_problem = None;
+        self.followed_agent = None;
+        // The Sessions section marks the new one at once, and is read anew
+        // on the next tick: the session may have just been created.
+        let mut names: Vec<String> = self.app.sessions.iter().map(|s| s.name.clone()).collect();
+        if !names.contains(&self.guest.session) {
+            names.push(self.guest.session.clone());
+        }
+        self.app.set_sessions(&names, &self.guest.session);
+        self.guest.sessions_read = None;
+    }
+
+    /// Show another session in the guest pane: ask the relay of the session on
+    /// show to move its client there, which creates the session when it is not
+    /// running. False, with a notice, when that cannot be asked yet.
+    pub fn show_session(&mut self, target: &str) -> bool {
+        if target == self.guest.session {
+            return true;
+        }
+        let (true, Some(url)) = (self.permissions_granted, self.panel_url.clone()) else {
+            self.app
+                .set_notice("the plugin location is not known yet; try again");
+            return false;
+        };
+        run(
+            &switch_command(&self.guest.session, &url, target, &self.config.team_layout),
+            ctx(CTX_SWITCH),
+        );
+        let running = get_session_list()
+            .is_ok_and(|list| list.live_sessions.iter().any(|s| s.name == target));
+        self.adopt_session(target.to_string());
+        self.guest.fresh = !running;
+        self.guest.switching = true;
+        self.guest.switched_at = Some(now_secs());
+        self.guest.pending_open = None;
+        set_timeout(SWITCH_POLL_SECS);
+        true
+    }
+
+    /// The request to move ran: it fails when the session the panel took to be
+    /// on show is not running.
+    pub fn on_guest_switch(&mut self, exit: Option<i32>, stderr: &[u8]) -> bool {
+        if exit == Some(0) {
+            return false;
+        }
+        self.guest.switching = false;
+        self.guest.pending_open = None;
+        let detail = compact_error(&String::from_utf8_lossy(stderr));
+        self.app
+            .set_notice(format!("could not change sessions: {detail}"));
+        self.follow_shown_session();
+        true
+    }
+
+    /// `o`: show the session of the selected team, or of the selected agent,
+    /// and give it the keyboard.
+    pub fn show_selected_team(&mut self) {
+        let Some(team) = self.app.selected_team() else {
+            self.app.set_notice("no team or agent is selected");
+            return;
+        };
+        let session = team_session(&self.config.guest_session, &team);
+        self.show_and_focus(&session);
+    }
+
+    /// Show a session and give it the keyboard.
+    pub fn show_and_focus(&mut self, session: &str) {
+        if self.show_session(session) {
+            self.app.focus_agents();
+            self.list_sessions();
+            if self.panel_has_keyboard() && !self.host_action(&["focus-previous-pane"]) {
+                focus_previous_pane();
+            }
+        }
+    }
+
+    /// Read which inner sessions are running, for the Sessions section:
+    /// the pair's own among the sessions Zellij lists, and always the one
+    /// on show, which Zellij may not list yet. Returns whether they changed.
+    pub fn list_sessions(&mut self) -> bool {
+        self.guest.sessions_read = Some(now_secs());
+        let mut names: Vec<String> = get_session_list()
+            .map(|list| {
+                list.live_sessions
+                    .iter()
+                    .map(|s| s.name.clone())
+                    .filter(|name| is_inner_session(&self.config.guest_session, name))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !names.contains(&self.guest.session) {
+            names.push(self.guest.session.clone());
+        }
+        self.app.set_sessions(&names, &self.guest.session)
+    }
+
+    /// On a tick: read the running sessions when that is due.
+    pub fn list_sessions_if_due(&mut self) -> bool {
+        let due = self
+            .guest
+            .sessions_read
+            .is_none_or(|t| now_secs() - t >= SESSIONS_READ_SECS);
+        due && self.permissions_granted && self.list_sessions()
+    }
+
+    /// `x` in the Sessions section, confirmed: end a team's session.
+    pub fn end_session(&mut self, name: &str) {
+        if !self.permissions_granted
+            || name == self.config.guest_session
+            || !is_inner_session(&self.config.guest_session, name)
+        {
+            return;
+        }
+        let mut context = ctx(CTX_END);
+        context.insert(crate::KEY_TITLE.to_string(), name.to_string());
+        run_command(&["zellij", "kill-session", name], context);
+    }
+
+    pub fn on_end_session(
+        &mut self,
+        exit: Option<i32>,
+        stderr: &[u8],
+        context: &BTreeMap<String, String>,
+    ) -> bool {
+        let name = context
+            .get(crate::KEY_TITLE)
+            .map(String::as_str)
+            .unwrap_or_default();
+        let label = self.app.session_label(name).to_string();
+        if exit == Some(0) {
+            self.app.set_notice(format!("ended {label}"));
+            self.guest.sessions.remove(name);
+        } else {
+            let detail = compact_error(&String::from_utf8_lossy(stderr));
+            self.app
+                .set_notice(format!("could not end {label}: {detail}"));
+        }
+        self.list_sessions();
+        true
     }
 
     /// The relay sent a snapshot.
@@ -528,6 +1036,11 @@ impl State {
         let Some(mut snapshot) = parse_guest_snapshot(payload) else {
             return false;
         };
+        if snapshot.session != self.guest.session {
+            // From the relay of a session that is no longer on show.
+            return false;
+        }
+        let session = self.guest.session.clone();
         self.guest.last_push = Some(now_secs());
         if self.config.pane_titles != PaneTitles::Show {
             restore_titles(&mut snapshot, &mut self.guest.titles);
@@ -545,7 +1058,7 @@ impl State {
                             pane,
                             launched,
                             &config.noc_bin,
-                            Some(&config.guest_session),
+                            Some(&session),
                         );
                         pane_name(pane, agent, host, shell)
                     })
@@ -555,11 +1068,7 @@ impl State {
             };
             for (pane, name) in renames {
                 run(
-                    &guest_run_command(
-                        &self.config.guest_session,
-                        "",
-                        &rename_pane_args(pane, &name),
-                    ),
+                    &guest_run_command(&session, "", &rename_pane_args(pane, &name)),
                     ctx(CTX_HOST_ACTION),
                 );
             }
@@ -572,27 +1081,70 @@ impl State {
         let attached = snapshot.clients > 0;
         let newly_attached = attached && !self.guest.client_seen;
         self.guest.client_seen = attached;
+        // The client has arrived in the session it was moved to.
+        let arrived = attached && self.guest.switching;
+        if attached {
+            self.guest.switching = false;
+        }
         for (tab, name) in tab_renames(
             &self.app.agents,
             &snapshot,
             &self.guest.launched,
-            &self.config.guest_session,
+            &session,
             &self.config.noc_bin,
             &mut self.guest.named_tabs,
         ) {
             // No host session name: the keyboard stays where it is.
             run(
-                &guest_run_command(&self.config.guest_session, "", &rename_tab_args(tab, &name)),
+                &guest_run_command(&session, "", &rename_tab_args(tab, &name)),
                 ctx(CTX_HOST_ACTION),
             );
         }
+        if arrived && self.guest.pending_open.is_some() && session != self.config.guest_session {
+            // A team's session with nothing in it but the tab it was created
+            // with: that tab is not wanted once the agent has its own.
+            self.guest.spare_tab = untouched_tab(&snapshot);
+        } else if let Some(spare) = self.guest.spare_tab {
+            if let Some(close) = spare_tab_verdict(&snapshot, spare) {
+                self.guest.spare_tab = None;
+                if close {
+                    run(
+                        &guest_run_command(&session, "", &close_tab_args(spare)),
+                        ctx(CTX_HOST_ACTION),
+                    );
+                }
+            }
+        }
         self.guest.snapshot = Some(snapshot);
-        if newly_attached && self.guest_has_keyboard() != Some(false) {
-            // A client just attached in the guest pane and the keyboard is
-            // there: tell it so.
-            self.write_to_guest(&FOCUS_FRAME);
+        if newly_attached {
+            match (self.guest_has_keyboard(), arrived) {
+                // The keyboard is in the panel. A session the client was just
+                // moved to has not heard so: it still wears its home theme.
+                (Some(false), true) => {
+                    let bytes = keyboard_signal(&self.config, false);
+                    self.write_to_guest(&bytes);
+                }
+                (Some(false), false) => {}
+                // The keyboard is in the guest pane: tell the client so.
+                (_, true) => {
+                    let bytes = keyboard_signal(&self.config, true);
+                    self.write_to_guest(&bytes);
+                }
+                (_, false) => self.write_to_guest(&FOCUS_FRAME),
+            }
         }
         redraw |= self.follow_guest_focus();
+        if attached {
+            if let Some(agent) = self
+                .guest
+                .pending_open
+                .take()
+                .and_then(|id| self.app.agents.iter().find(|a| a.id == id).cloned())
+            {
+                self.guest_open_agent(&agent);
+                redraw = true;
+            }
+        }
         redraw
     }
 
@@ -603,10 +1155,7 @@ impl State {
         if now - since < GUEST_MISSING_SECS || self.app.guest_problem.is_some() {
             return false;
         }
-        self.app.guest_problem = Some(format!(
-            "inner session {:?} {what}",
-            self.config.guest_session
-        ));
+        self.app.guest_problem = Some(format!("inner session {:?} {what}", self.guest.session));
         true
     }
 
@@ -631,7 +1180,7 @@ impl State {
             pane,
             &self.guest.launched,
             &self.config.noc_bin,
-            Some(&self.config.guest_session),
+            Some(&self.guest.session),
         ) else {
             return false;
         };
@@ -650,7 +1199,7 @@ impl State {
             context.insert(KEY_GUEST_AGENT.to_string(), id.to_string());
         }
         run(
-            &guest_run_command(&self.config.guest_session, &host, &args),
+            &guest_run_command(&self.guest.session, &host, &args),
             context,
         );
     }
@@ -713,7 +1262,24 @@ impl State {
     }
 
     pub fn guest_open_agent(&mut self, agent: &Agent) {
-        let guest = self.config.guest_session.clone();
+        let target = agent_session(
+            agent,
+            &self.config.guest_session,
+            &self.guest.session,
+            self.guest.snapshot.as_ref(),
+            &self.guest.launched,
+            &self.guest.sessions,
+            &self.config.noc_bin,
+        );
+        if target != self.guest.session && !self.show_session(&target) {
+            return;
+        }
+        if self.guest.switching {
+            // The session is read before anything is focused or opened there.
+            self.guest.pending_open = Some(agent.id.clone());
+            return;
+        }
+        let guest = self.guest.session.clone();
         let found = self.guest.snapshot.as_ref().and_then(|s| {
             guest_agent_pane(agent, s, &self.guest.launched, &guest, &self.config.noc_bin)
         });
@@ -763,12 +1329,23 @@ impl State {
             return;
         }
         let payload = message.payload.as_deref().unwrap_or_default();
-        if let Some(host) = watch_host(payload) {
+        if let Some((host, session)) = watch_host(payload) {
             self.relay.host = Some(host);
+            self.relay.session = session;
             self.relay.watched_at = now_secs();
             // Every request is answered, changed or not.
             self.relay.sent = None;
             list_clients();
+            return;
+        }
+        if let Some((session, layout)) = switch_request(payload) {
+            // Moves this session's client. A session that is not running is
+            // created from the layout; one that is, is left as it is.
+            switch_session_with_layout(
+                Some(&session),
+                LayoutInfo::File(layout, Default::default()),
+                None,
+            );
             return;
         }
         if let Some(name) = relay_theme(payload, &self.config) {
@@ -831,7 +1408,7 @@ impl State {
                 pane.pane_command = Some(command.join(" "));
             }
         }
-        let snapshot = relay_snapshot(&panes, &self.relay.tabs, clients);
+        let snapshot = relay_snapshot(&self.relay.session, &panes, &self.relay.tabs, clients);
         let Ok(snapshot) = serde_json::to_string(&snapshot) else {
             return;
         };
@@ -878,6 +1455,7 @@ mod tests {
             ..ScanPane::default()
         };
         let snapshot = |panes: Vec<ScanPane>| GuestSnapshot {
+            session: "inner".to_string(),
             clients: 1,
             focused: None,
             panes,
@@ -973,6 +1551,7 @@ mod tests {
             parse_agent(&format!(r#"{{"id":"{id}","name":"{name}"}}"#)).unwrap()
         };
         let snapshot = |tabs: &[(u32, &str, &str)]| GuestSnapshot {
+            session: "inner".to_string(),
             clients: 1,
             focused: None,
             panes: tabs
@@ -1056,6 +1635,7 @@ mod tests {
             parse_agent(r#"{"id":"n1","name":"By hand","native_short_id":"2f5ac2d2"}"#).unwrap(),
         ];
         let by_hand = GuestSnapshot {
+            session: "inner".to_string(),
             clients: 1,
             focused: Some(0),
             panes: vec![ScanPane {
@@ -1127,10 +1707,12 @@ mod tests {
         let tabs = [tab(0, 0, "Tab #1"), tab(1, 7, "work")];
         let client = |pane| ClientInfo::new(1, pane, "zsh".to_string(), true);
         let snapshot = relay_snapshot(
+            "inner--auth",
             &panes,
             &tabs,
             &[client(PaneId::Terminal(3)), client(PaneId::Terminal(0))],
         );
+        assert_eq!(snapshot.session, "inner--auth");
         assert_eq!(snapshot.clients, 2);
         assert_eq!(snapshot.focused, Some(3), "the first client's pane");
         let seen: Vec<_> = snapshot
@@ -1152,17 +1734,179 @@ mod tests {
         assert_eq!(parse_guest_snapshot(&sent), Some(snapshot));
         // The keyboard in a plugin pane, or nobody attached: no focus.
         assert_eq!(
-            relay_snapshot(&panes, &tabs, &[client(PaneId::Plugin(1))]).focused,
+            relay_snapshot("inner", &panes, &tabs, &[client(PaneId::Plugin(1))]).focused,
             None
         );
-        let nobody = relay_snapshot(&panes, &tabs, &[]);
+        let nobody = relay_snapshot("inner", &panes, &tabs, &[]);
         assert_eq!((nobody.clients, nobody.focused), (0, None));
 
-        assert_eq!(watch_host("watch noc-host").as_deref(), Some("noc-host"));
-        assert_eq!(watch_host("  watch   a.b_c "), Some("a.b_c".to_string()));
-        for bad in ["watch", "watch ", "watch a b", "watch a;b", "theme x", ""] {
+        // A watch request names the panel's session, then the relay's own.
+        let names = |host: &str, session: &str| Some((host.to_string(), session.to_string()));
+        assert_eq!(watch_host("watch noc-host noc"), names("noc-host", "noc"));
+        assert_eq!(
+            watch_host("  watch   a.b_c   noc--auth "),
+            names("a.b_c", "noc--auth")
+        );
+        for bad in [
+            "watch",
+            "watch ",
+            "watch a",
+            "watch a b c",
+            "watch a;b c",
+            "theme x",
+            "",
+        ] {
             assert_eq!(watch_host(bad), None, "{bad:?}");
         }
+    }
+
+    #[test]
+    fn a_team_has_a_session_and_the_agents_in_no_team_share_the_inner_session() {
+        assert_eq!(team_session("noc", "auth"), "noc--auth");
+        assert_eq!(team_session("noc", ""), "noc");
+        // A name that could not be part of a session's: the default session.
+        assert_eq!(team_session("noc", "a b"), "noc");
+        for session in ["noc", "noc--auth", "noc--a--b"] {
+            assert!(is_inner_session("noc", session), "{session}");
+        }
+        // The dev pair's sessions are not sessions of the daily pair.
+        for other in ["noc-host", "noc-dev", "noc-dev--auth", "noc--", "work", ""] {
+            assert!(!is_inner_session("noc", other), "{other}");
+        }
+        assert_eq!(team_label("noc--auth"), "auth");
+        assert_eq!(team_label("noc-dev--auth"), "auth");
+        assert_eq!(team_label("noc"), "no-team");
+        assert_eq!(team_label("noc--"), "no-team");
+        assert_eq!(team_label(""), "no-team");
+
+        // A request names the session, then the layout to make it from.
+        let request = |session: &str, layout: &str| Some((session.to_string(), layout.to_string()));
+        assert_eq!(
+            switch_request("switch noc--auth noc-inner"),
+            request("noc--auth", "noc-inner")
+        );
+        assert_eq!(
+            switch_request("  switch   noc   /my layouts/noc-inner "),
+            request("noc", "/my layouts/noc-inner")
+        );
+        for bad in [
+            "switch",
+            "switch ",
+            "switch a",
+            "switch a;b c",
+            "switch a x\u{1b}y",
+            "watch a b",
+            "",
+        ] {
+            assert_eq!(switch_request(bad), None, "{bad:?}");
+        }
+        assert_eq!(
+            switch_command("noc", "file:/p/zellij-noc.wasm", "noc--auth", "noc-inner")[4..],
+            [
+                "--plugin",
+                "file:/p/zellij-noc.wasm",
+                "--plugin-configuration",
+                "role=relay",
+                "--name",
+                "zellij-noc.relay",
+                "--",
+                "switch noc--auth noc-inner"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_tab_a_new_session_came_with_is_closed_once_the_agent_has_its_own() {
+        let pane = |id: u32, tab: u32, name: &str, command: Option<&str>| ScanPane {
+            id,
+            tab_id: Some(tab),
+            tab_name: name.to_string(),
+            terminal_command: command.map(str::to_string),
+            ..ScanPane::default()
+        };
+        let session = |panes: Vec<ScanPane>| GuestSnapshot {
+            session: "noc--auth".to_string(),
+            clients: 1,
+            focused: None,
+            panes,
+        };
+        let shell = pane(0, 0, "Tab #1", None);
+        let agent = pane(1, 1, "Auth lead", Some("noc attach a1"));
+        // A session as its layout made it: one tab, one shell.
+        assert_eq!(untouched_tab(&session(vec![shell.clone()])), Some(0));
+        assert_eq!(untouched_tab(&session(vec![])), None);
+        assert_eq!(
+            untouched_tab(&session(vec![shell.clone(), agent.clone()])),
+            None
+        );
+        assert_eq!(
+            untouched_tab(&session(vec![pane(0, 0, "mine", None)])),
+            None
+        );
+        assert_eq!(untouched_tab(&session(vec![agent.clone()])), None);
+
+        // The agent's tab is not there yet: wait.
+        assert_eq!(spare_tab_verdict(&session(vec![shell.clone()]), 0), None);
+        // It is: the spare tab goes.
+        assert_eq!(
+            spare_tab_verdict(&session(vec![shell.clone(), agent.clone()]), 0),
+            Some(true)
+        );
+        // Something was done in the spare tab, or it is gone: it stays.
+        let split = session(vec![
+            shell.clone(),
+            pane(2, 0, "Tab #1", None),
+            agent.clone(),
+        ]);
+        assert_eq!(spare_tab_verdict(&split, 0), Some(false));
+        let named = session(vec![pane(0, 0, "notes", None), agent.clone()]);
+        assert_eq!(spare_tab_verdict(&named, 0), Some(false));
+        assert_eq!(spare_tab_verdict(&session(vec![agent]), 0), Some(false));
+        assert_eq!(close_tab_args(3), ["action", "close-tab-by-id", "3"]);
+    }
+
+    #[test]
+    fn an_agent_opens_where_it_is_open_and_otherwise_in_its_teams_session() {
+        let agent = |json: &str| parse_agent(json).unwrap();
+        let teamed = agent(r#"{"id":"a1","team":"auth"}"#);
+        let alone = agent(r#"{"id":"a2"}"#);
+        let holding = |id: &str| GuestSnapshot {
+            session: String::new(),
+            clients: 1,
+            focused: None,
+            panes: vec![ScanPane {
+                id: 4,
+                terminal_command: Some(format!("noc attach {id}")),
+                ..ScanPane::default()
+            }],
+        };
+        let none = BTreeMap::new();
+        let session = |agent: &Agent, on_show: &str, snapshot: Option<&GuestSnapshot>, sessions| {
+            agent_session(agent, "noc", on_show, snapshot, &none, sessions, "noc")
+        };
+        let no_sessions = BTreeMap::new();
+        // Not open anywhere: the team's session, or the inner session.
+        assert_eq!(session(&teamed, "noc", None, &no_sessions), "noc--auth");
+        assert_eq!(session(&alone, "noc--auth", None, &no_sessions), "noc");
+        // Open in the session on show, whatever its team says now.
+        assert_eq!(
+            session(&teamed, "noc", Some(&holding("a1")), &no_sessions),
+            "noc"
+        );
+        // Open in a session that is not on show: it is found there.
+        let elsewhere: BTreeMap<String, InnerSession> = [(
+            "noc--billing".to_string(),
+            InnerSession {
+                snapshot: Some(holding("a1")),
+                ..InnerSession::default()
+            },
+        )]
+        .into();
+        assert_eq!(
+            session(&teamed, "noc", Some(&holding("a2")), &elsewhere),
+            "noc--billing"
+        );
+        assert_eq!(session(&alone, "noc--auth", None, &elsewhere), "noc");
     }
 
     fn config(pairs: &[(&str, &str)]) -> Config {
@@ -1340,7 +2084,7 @@ mod tests {
                 "--name",
                 "zellij-noc.relay",
                 "--",
-                "watch outer"
+                "watch outer inner"
             ]
         );
         assert_eq!(

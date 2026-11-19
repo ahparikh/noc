@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # dev.sh: run a development copy of the noc pair, isolated from daily use.
 #
-# usage: dev.sh [--fake|--installed] [start]   start the dev pair, or attach
-#        dev.sh [--fake|--installed] render    write the dev config, print its directory
+# usage: dev.sh [--fake|--installed|--mine] [start]   start the dev pair, or attach
+#        dev.sh [--fake|--installed|--mine] render    write the dev config, print its directory
 #        dev.sh stop                           end both dev sessions and the dev server
 #        dev.sh status                         show the dev sessions and server
 #
@@ -10,7 +10,8 @@
 # The dev pair instead uses this checkout's build of both, under different
 # session names, with its own Zellij config directory and its own noc state:
 #
-#   sessions   $NOC_DEV_NAME (inner, default "noc-dev") and $NOC_DEV_NAME-host
+#   sessions   $NOC_DEV_NAME (inner, default "noc-dev"), $NOC_DEV_NAME-host,
+#              and one $NOC_DEV_NAME--<team> per team whose session was opened
 #   plugin     zellij/target/wasm32-wasip1/release/zellij-noc.wasm
 #   noc        go/bin/noc through a wrapper that points it at a separate
 #              state and runtime directory (--fake: e2e/fake-noc instead)
@@ -22,11 +23,14 @@
 #
 #     (default)     this checkout's zellij/config/: the new plugin with the
 #                   new configuration files, on a plain Zellij config.
+#     --mine        your config.kdl, themes and other files, with this
+#                   checkout's two layouts: your keys and options around
+#                   the new plugin and the new layouts.
 #     --installed   your installed configuration ($ZELLIJ_CONFIG_DIR or
 #                   ~/.config/zellij: config.kdl, layouts, themes): the new
 #                   plugin with the configuration you use every day.
 #
-# In both, the plugin location, `noc_bin` and the session names are replaced.
+# In all three, the plugin location, `noc_bin` and the session names are replaced.
 # Nothing here writes to ~/.config/zellij or touches the daily noc registry.
 set -euo pipefail
 
@@ -43,6 +47,10 @@ case "${1:-}" in
 	;;
 --installed)
 	MODE=installed
+	shift
+	;;
+--mine)
+	MODE=mine
 	shift
 	;;
 esac
@@ -93,7 +101,7 @@ render() {
 		chmod +x "$noc"
 	fi
 
-	# The links first. With --installed, `themes` is a link to the user's own
+	# The links first. With --installed and --mine, `themes` is a link to the user's own
 	# themes directory, and removing a file through it would remove theirs.
 	find "$OUT" -maxdepth 2 -type l -delete
 	rm -f "$OUT/config.kdl" "$OUT/layouts/$HOST.kdl" "$OUT/layouts/noc-inner.kdl"
@@ -101,11 +109,11 @@ render() {
 		rm -f "$OUT/themes/noc-blue.kdl"
 		rmdir "$OUT/themes" 2>/dev/null || true
 	fi
-	if [ "$MODE" = installed ]; then
-		render_installed
-	else
-		render_shipped
-	fi
+	case "$MODE" in
+	installed) render_installed ;;
+	mine) render_mine ;;
+	*) render_shipped ;;
+	esac
 	printf '%s\n' "$MODE" >"$OUT/mode"
 
 	grep -q "plugin location=\"file:$WASM\"" "$OUT/layouts/$HOST.kdl" || die "could not point the plugin at $WASM"
@@ -124,20 +132,25 @@ local_plugin() {
 # host_layout <noc-host.kdl> <noc executable>: the host layout with the dev
 # session names, the inner session reading the dev config directory, and the
 # plugin loading this checkout's build, running the dev noc and naming the
-# dev inner session. The three settings are replaced where they are set and
-# added where they are not.
+# dev inner session, with its sessions made from the dev copy of the inner
+# layout. The four settings are replaced where they are set and added where
+# they are not.
 host_layout() {
 	sed \
 		-e "s|inner=noc; host=noc-host;|inner=$INNER; host=$HOST; export ZELLIJ_CONFIG_DIR='$OUT';|" \
 		-e '/^[[:space:]]*noc_bin[[:space:]]/d' \
 		-e '/^[[:space:]]*guest_session[[:space:]]/d' \
+		-e '/^[[:space:]]*team_layout[[:space:]]/d' \
 		-e '/^[[:space:]]*update_check[[:space:]]/d' \
 		"$1" | local_plugin |
-		awk -v noc="$2" -v inner="$INNER" -v check="$UPDATE_CHECK" '
+		awk -v noc="$2" -v inner="$INNER" -v check="$UPDATE_CHECK" -v layout="$OUT/layouts/noc-inner" '
 			{ print }
 			/^[ \t]*plugin[ \t]+location=.*zellij-noc\.wasm.*\{[ \t]*$/ {
 				printf "                noc_bin \"%s\"\n", noc
 				printf "                guest_session \"%s\"\n", inner
+				# A client that moves to a new session looks for its layout
+				# in the default config directory, not in this one.
+				printf "                team_layout \"%s\"\n", layout
 				printf "                update_check \"%s\"\n", check
 			}'
 }
@@ -182,6 +195,30 @@ render_installed() {
 	done
 	grep -q 'plugin[[:space:]][[:space:]]*location="[^"]*zellij-noc\.wasm"' "$USER_CONFIG/layouts/noc-host.kdl" ||
 		die "$USER_CONFIG/layouts/noc-host.kdl does not load zellij-noc.wasm (run: make zellij-install-config)"
+	link_user_config
+	host_layout "$USER_CONFIG/layouts/noc-host.kdl" "$noc" >"$OUT/layouts/$HOST.kdl"
+	local_plugin <"$USER_CONFIG/layouts/noc-inner.kdl" >"$OUT/layouts/noc-inner.kdl"
+}
+
+# Your config.kdl, themes and other files, so your own keys and options, with
+# this checkout's two layouts: the new plugin and the new layouts as they
+# would be in your setup once installed.
+render_mine() {
+	[ -f "$USER_CONFIG/config.kdl" ] || die "missing $USER_CONFIG/config.kdl"
+	link_user_config
+	# The shipped layouts name the shipped theme pair.
+	if [ ! -e "$USER_CONFIG/themes" ]; then
+		mkdir -p "$OUT/themes"
+		cp "$ROOT/config/themes/noc-blue.kdl" "$OUT/themes/noc-blue.kdl"
+	fi
+	host_layout "$ROOT/config/layouts/noc-host.kdl" "$noc" >"$OUT/layouts/$HOST.kdl"
+	local_plugin <"$ROOT/config/layouts/noc-inner.kdl" >"$OUT/layouts/noc-inner.kdl"
+}
+
+# link_user_config: everything in your Zellij configuration is linked into
+# the dev directory, except the two noc layouts.
+link_user_config() {
+	local entry
 	for entry in "$USER_CONFIG"/* "$USER_CONFIG"/layouts/*; do
 		[ -e "$entry" ] || continue
 		case "$entry" in
@@ -190,8 +227,6 @@ render_installed() {
 		*) ln -s "$entry" "$OUT/${entry##*/}" ;;
 		esac
 	done
-	host_layout "$USER_CONFIG/layouts/noc-host.kdl" "$noc" >"$OUT/layouts/$HOST.kdl"
-	local_plugin <"$USER_CONFIG/layouts/noc-inner.kdl" >"$OUT/layouts/noc-inner.kdl"
 }
 
 # The dev registry server. A fresh start replaces a running one, so the
@@ -219,9 +254,19 @@ cmd_start() {
 		zellij --config-dir "$OUT" attach --create "$HOST" options --default-layout "$HOST"
 }
 
+# sessions: the inner session and every team's session beside it, running or not.
+sessions() {
+	echo "$INNER"
+	{ z list-sessions --no-formatting --short 2>/dev/null || true; } |
+		awk -v p="$INNER--" 'index($1, p) == 1 && length($1) > length(p) { print $1 }'
+}
+
 cmd_stop() {
+	local session
 	z delete-session --force "$HOST" >/dev/null 2>&1 || true
-	z delete-session --force "$INNER" >/dev/null 2>&1 || true
+	for session in $(sessions); do
+		z delete-session --force "$session" >/dev/null 2>&1 || true
+	done
 	# The sidebar's registry watcher would otherwise last until the
 	# registry next changes, which the fake one never does.
 	pkill -f -- "zellij-noc-registry-watch=$HOST\$" 2>/dev/null || true
@@ -233,7 +278,7 @@ cmd_stop() {
 cmd_status() {
 	local name
 	[ ! -f "$OUT/mode" ] || echo "== configuration: $(cat "$OUT/mode")"
-	for name in "$HOST" "$INNER"; do
+	for name in "$HOST" $(sessions); do
 		if alive "$name"; then
 			echo "== $name"
 			z --session "$name" action list-clients 2>&1 || true

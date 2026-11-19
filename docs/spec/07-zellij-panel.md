@@ -1190,7 +1190,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   (ZR-033), and while it is open one row a session, at most 5. The rows
   are windowed starting at
   `min(selected - 2 (saturating), sessions - 5 (saturating))` so the
-  selected one stays in view. A row is ` ❯ ` (U+276F, accent colour, bold) for the session on show, whose
+  selected one stays in view. A row is ` → ` (U+2192, accent colour, bold) for the session on show, whose
   label is bold too, or three spaces; the session's label, which is
   its team or `no-team`, cut to 16 columns (ZR-020) and padded to the
   widest label shown; then two spaces and what the team's agents need: the
@@ -1947,7 +1947,7 @@ they were before the section scrolled:
 │ ⠹ Billing fix                      2m│
 │  … (blank to the next section) …     │
 │▾ Sessions ───────────────────────── 2│  muted
-│ ❯ auth     2 working                 │  ❯ the session on show
+│ → auth     2 working                 │  → the session on show
 │   no-team  1 working                 │
 │▾ Details ────────────────────────────│  muted
 │Auth lead                             │

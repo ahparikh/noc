@@ -1189,9 +1189,9 @@ fn session_summary(app: &ZellijNoc, name: &str) -> String {
     }
 }
 
-/// What marks the session on show in its row: an angle, as a prompt has,
+/// What marks the session on show in its row: an arrow,
 /// in the accent colour.
-pub const ON_SHOW_MARK: &str = " \u{276f} ";
+pub const ON_SHOW_MARK: &str = " \u{2192} ";
 
 /// The widest a session's name is drawn in its row.
 const SESSION_LABEL_WIDTH: usize = 16;
@@ -1959,7 +1959,7 @@ mod tests {
         assert_eq!(text[list + 1].trim_end(), "   auth     no agents");
         assert_eq!(
             text[list + 2].trim_end(),
-            " \u{276f} billing  1 blocked \u{b7} 1 working \u{b7} 1\u{2026}"
+            " \u{2192} billing  1 blocked \u{b7} 1 working \u{b7} 1\u{2026}"
         );
         assert_eq!(text[list + 3].trim_end(), "   no-team  1 working");
         // The section ends with its count, as the list does.
@@ -1988,7 +1988,7 @@ mod tests {
         let text = plain(&panel(&mut app, &Theme::default(), 40, 38));
         let list = at(&text, "Sessions");
         assert_eq!(text[list], counted("\u{25be} Sessions", "1"));
-        assert_eq!(text[list + 1].trim_end(), " \u{276f} no-team  1 working");
+        assert_eq!(text[list + 1].trim_end(), " \u{2192} no-team  1 working");
         assert!(text[list + 2].contains("Details"));
         // A short pane has no room for the section.
         let text = plain(&panel(&mut app, &Theme::default(), 14, 38));
@@ -2001,7 +2001,7 @@ mod tests {
         let list = at(&text, "Sessions");
         let shown: Vec<&str> = text[list + 1..list + 6].iter().map(|l| l.trim()).collect();
         assert_eq!(shown[0], "t4  no agents");
-        assert_eq!(shown[3], "\u{276f} t7  no agents");
+        assert_eq!(shown[3], "\u{2192} t7  no agents");
         assert_eq!(text[list], counted("\u{25be} Sessions", "9"));
         assert!(text[list + 6].contains("Details"));
     }

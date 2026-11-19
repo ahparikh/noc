@@ -660,7 +660,7 @@ teams in Zellij is in [11-teams.md](11-teams.md).
   | 39 | and gives it the keyboard | host focus becomes the guest pane |
   | 40 | when the session on show ends, the guest pane shows the inner session | after `kill-session <session>`, the inner session has 1 client within 10 s |
   | 41 | and the team's session is made again when its agent is opened | after `Second agent` is opened again, the session has 1 client within 10 s; the host session's client was not detached, or the keys would not have reached the panel |
-  | 42 | the sidebar lists the running sessions, the one on show marked | the Sessions title row ends `2`, and under it is `❯ auth` |
+  | 42 | the sidebar lists the running sessions, the one on show marked | the Sessions title row ends `2`, and under it is `→ auth` |
   | 43 | Enter on a session's row shows that session | after `Tab`, `G` and `Enter` in the panel, the inner session has 1 client within 10 s |
   | 44 | and hands it the keyboard | host focus becomes the guest pane |
   | 45 | x on a team session's row ends it, once confirmed | after `Tab`, `gg`, `x` and `y`, the team's session is not running within 10 s |

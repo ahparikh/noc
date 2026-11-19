@@ -178,7 +178,7 @@ sessions still running are found again at the next start.
 The sidebar has three sections, each under its title: **Agents**, the
 list, with each agent's age at the right edge of its row; **Sessions**,
 every inner session that is running; and **Details**, about the row
-selected in whichever list you were last in. In Sessions `❯` marks the
+selected in whichever list you were last in. In Sessions `→` marks the
 session you are looking at, and each row says what its team's agents need
 (`auth  1 blocked · 2 working`, or `quiet`).
 

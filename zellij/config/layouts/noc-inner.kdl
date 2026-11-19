@@ -42,6 +42,15 @@ attention {
     enabled false
 }
 
+ui {
+    pane_frames {
+        // The session's name stays on show, whatever config.kdl says: it
+        // is what tells one team's session from another's. The tab bar
+        // starts "Zellij (noc--<team>)".
+        hide_session_name false
+    }
+}
+
 // Typed by the sidebar, never by you: switch this session's theme when the
 // keyboard leaves it for the sidebar and when it comes back. The two themes
 // named here must be the home_theme and away_theme of layouts/noc-host.kdl;

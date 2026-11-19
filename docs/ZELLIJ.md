@@ -326,7 +326,7 @@ option in `layouts/noc-inner.kdl`, outside its `layout` block. Any option
 `config.kdl` accepts works there, and it overrides `config.kdl` for the
 inner session alone. Sessions started any other way never read the file.
 
-As shipped it sets three:
+As shipped it sets four:
 
 ```kdl
 default_mode "locked"              // keys go to the program in the pane until you unlock (Ctrl g)
@@ -335,6 +335,12 @@ session_indicator false            // no "[ N running ]" box in the tab bar
 
 attention {
     enabled false                  // no pane status markers, inbox or notifications
+}
+
+ui {
+    pane_frames {
+        hide_session_name false    // the tab bar names the session, whatever config.kdl says
+    }
 }
 
 ```

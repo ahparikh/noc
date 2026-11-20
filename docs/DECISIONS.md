@@ -1142,6 +1142,24 @@ start.
 **Consequence:** a stopped agent stays in the registry as a quiet,
 resumable row.
 
+### D-086: respawning an agent is a provider command
+
+`noc respawn <agent-id>` runs `claude respawn <short-id>` for a live Claude
+background session: Claude restarts the session's process on the binary
+installed now and keeps the conversation. It follows the rules of stop
+(D-043): it runs in the CLI process, a session in a terminal and a Codex
+thread are refused, and the registry learns the outcome through
+reconciliation. In the sidebar it is `r`, asked `y`/`n`; refresh moved to
+`R`.
+
+**Why:** a background session keeps running the Claude version it was
+started with, so upgrading Claude leaves every existing session behind, and
+they are the sessions that live longest. The provider has a command for
+exactly this, and `noc` already knows which sessions it applies to.
+**Consequence:** one command acts on one agent; `claude respawn --all` is
+not exposed. The confirmation is there because a respawn restarts a process
+that may be in the middle of a turn.
+
 ### D-050: background Claude sessions carry no hook pane bindings
 
 Hooks for a Claude background session record no frontend binding, and

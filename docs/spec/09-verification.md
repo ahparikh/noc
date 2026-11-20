@@ -56,7 +56,7 @@ the code. Regenerate them with `cd go && go test ./... -list '^Test'` and
 | Package or module | Tests | Covers |
 |---|---|---|
 | `go/pkg/api/v1` | 4 | display-state and bucket derivation tables |
-| `go/internal/attach` | 7 | attach plans from the registry and the Claude roster, concurrent-use refusal, stop plan |
+| `go/internal/attach` | 8 | attach plans from the registry and the Claude roster, concurrent-use refusal, stop and respawn plans |
 | `go/internal/buildinfo` | 1 | version string |
 | `go/internal/cli` | 29 | single binary, `ls` ordering and filters, rendering, events, watch, status, background server lifecycle, restart, hook spooling while the server is down, attach and stop |
 | `go/internal/config` | 4 | path resolution, overrides, private directory creation |
@@ -77,7 +77,7 @@ the code. Regenerate them with `cd go && go test ./... -list '^Test'` and
 | `go/internal/workspace` | 3 | main checkout, linked worktree, directory fallback |
 | `zellij/src/model.rs` | 14 | parsing, schema rejection, sorting, buckets, ages |
 | `zellij/src/app.rs` | 20 | selection, hidden stopped agents, sections, navigation, configuration |
-| `zellij/src/panel.rs` | 18 | key dispatch, modifiers, stop confirmation, rename mode, the keys of each section |
+| `zellij/src/panel.rs` | 19 | key dispatch, modifiers, stop and respawn confirmation, rename mode, the keys of each section |
 | `zellij/src/view.rs` | 24 | rendering bounds, spinner, sections, help, Unicode width, empty and error states, the three titled sections |
 | `zellij/src/panes.rs` | 13 | pane recognition, attach commands, tab names, focus, pipe decoding |
 | `zellij/src/guest.rs` | 14 | inner-session pane parsing and focus, relay theme names, keyboard signals, team sessions |

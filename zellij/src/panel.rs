@@ -11,8 +11,8 @@ use crate::panes::{
     compact_error, focused_pane, is_server_unavailable, other_running_session, tab_panes, ScanPane,
 };
 use crate::{
-    ctx, now_secs, Role, State, CTX_RENAME, CTX_STOP, CTX_TEAM_JOIN, CTX_TEAM_LEAVE, GRAB_WINDOW,
-    KEY_AGENT, KEY_TITLE,
+    ctx, now_secs, Role, State, CTX_RENAME, CTX_RESPAWN, CTX_STOP, CTX_TEAM_JOIN, CTX_TEAM_LEAVE,
+    GRAB_WINDOW, KEY_AGENT, KEY_TITLE,
 };
 use std::collections::BTreeMap;
 use zellij_tile::prelude::*;
@@ -50,6 +50,11 @@ pub enum Intent {
         agent_id: String,
         title: String,
     },
+    /// Restart a background session on the provider binary installed now.
+    Respawn {
+        agent_id: String,
+        title: String,
+    },
     Rename {
         agent_id: String,
         name: String,
@@ -66,36 +71,52 @@ pub enum Intent {
     },
 }
 
-/// Decide what a stoppable selection does: a confirmation or a refusal.
-fn request_stop(app: &mut ZellijNoc) {
+/// What the provider can do to a running background session from here.
+#[derive(Clone, Copy)]
+enum Lifecycle {
+    Stop,
+    Respawn,
+}
+
+/// Decide what the selection does with `x` or `r`: a confirmation or a
+/// refusal. Both act only on a running Claude background session.
+fn request_lifecycle(app: &mut ZellijNoc, act: Lifecycle) {
+    let stop = matches!(act, Lifecycle::Stop);
     let Some(agent) = app.selected_agent() else {
         app.set_notice("no agent is selected");
         return;
     };
     if agent.group() == AgentGroup::Quiet {
-        app.set_notice("not running; nothing to stop");
+        app.set_notice(if stop {
+            "not running; nothing to stop"
+        } else {
+            "not running; nothing to respawn"
+        });
         return;
     }
-    let confirm = match (agent.provider.as_str(), agent.source_kind.as_str()) {
-        ("claude", "background") => {
-            if agent.native_short_id.trim().is_empty() {
-                Err("no background id to stop")
-            } else {
-                Ok(())
-            }
-        }
-        ("claude", _) => Err("stop it with /exit in its terminal"),
-        ("codex", _) => Err("can't stop Codex agents yet"),
-        _ => Err("can't stop this agent"),
+    let refusal = match (agent.provider.as_str(), agent.source_kind.as_str()) {
+        ("claude", "background") if !agent.native_short_id.trim().is_empty() => None,
+        ("claude", "background") if stop => Some("no background id to stop"),
+        ("claude", "background") => Some("no background id to respawn"),
+        ("claude", _) if stop => Some("stop it with /exit in its terminal"),
+        ("claude", _) => Some("only background sessions respawn"),
+        ("codex", _) if stop => Some("can't stop Codex agents yet"),
+        ("codex", _) => Some("can't respawn Codex agents"),
+        _ if stop => Some("can't stop this agent"),
+        _ => Some("can't respawn this agent"),
     };
-    match confirm {
-        Ok(()) => {
-            app.pending_stop = Some(PendingStop {
-                agent_id: agent.id.clone(),
-                title: agent.title(),
-            });
-        }
-        Err(notice) => app.set_notice(notice),
+    if let Some(notice) = refusal {
+        app.set_notice(notice);
+        return;
+    }
+    let pending = Some(PendingStop {
+        agent_id: agent.id.clone(),
+        title: agent.title(),
+    });
+    if stop {
+        app.pending_stop = pending;
+    } else {
+        app.pending_respawn = pending;
     }
 }
 
@@ -295,7 +316,7 @@ fn handle_session_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> Option<Opti
         BareKey::Esc if !app.show_info && !app.show_help && app.search.is_none() => {
             app.focus_agents()
         }
-        BareKey::Char('p' | 's' | 'w' | 'd' | 'n' | 't' | 'T' | ' ') => {
+        BareKey::Char('p' | 's' | 'w' | 'd' | 'n' | 'r' | 't' | 'T' | ' ') => {
             app.pending_g = false;
             app.set_notice("that key is for an agent; Tab goes back to them");
         }
@@ -378,6 +399,20 @@ pub fn process_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> (bool, Option<
         app.set_notice("stop cancelled");
         return (true, None);
     }
+    if let Some(respawn) = app.pending_respawn.take() {
+        if key.bare_key == BareKey::Char('y') && modifiers.is_empty() {
+            app.set_notice(format!("respawning {}\u{2026}", respawn.title));
+            return (
+                true,
+                Some(Intent::Respawn {
+                    agent_id: respawn.agent_id,
+                    title: respawn.title,
+                }),
+            );
+        }
+        app.set_notice("respawn cancelled");
+        return (true, None);
+    }
     if let Some(name) = app.pending_end.take() {
         if key.bare_key == BareKey::Char('y') && modifiers.is_empty() {
             app.set_notice(format!("ending {}\u{2026}", app.session_label(&name)));
@@ -454,9 +489,10 @@ pub fn process_key(app: &mut ZellijNoc, key: &KeyWithModifier) -> (bool, Option<
         BareKey::Char('w') => intent = Some(Intent::Worktree),
         BareKey::Char('o') => intent = Some(Intent::TeamSession),
         BareKey::Char('d') => intent = Some(Intent::Details),
-        BareKey::Char('r') => intent = Some(Intent::Refresh),
+        BareKey::Char('R') => intent = Some(Intent::Refresh),
         BareKey::Char('u') => intent = Some(Intent::CheckUpdate),
-        BareKey::Char('x') => request_stop(app),
+        BareKey::Char('x') => request_lifecycle(app, Lifecycle::Stop),
+        BareKey::Char('r') => request_lifecycle(app, Lifecycle::Respawn),
         BareKey::Char('n') => {
             let began = app.begin_rename();
             if !began {
@@ -544,6 +580,15 @@ impl State {
                 context.insert(KEY_TITLE.to_string(), title);
                 run_command(
                     &[self.config.noc_bin.as_str(), "stop", agent_id.as_str()],
+                    context,
+                );
+            }
+            Intent::Respawn { agent_id, title } => {
+                let mut context = ctx(CTX_RESPAWN);
+                context.insert(KEY_AGENT.to_string(), agent_id.clone());
+                context.insert(KEY_TITLE.to_string(), title);
+                run_command(
+                    &[self.config.noc_bin.as_str(), "respawn", agent_id.as_str()],
                     context,
                 );
             }
@@ -678,6 +723,29 @@ impl State {
             let detail = compact_error(&lossy(stderr));
             self.app.set_notice(if detail.is_empty() {
                 format!("could not stop {title}")
+            } else {
+                detail
+            });
+        }
+        true
+    }
+
+    /// The agent stays in the list: a respawn keeps the session, so the
+    /// next snapshot shows it again as the provider reports it.
+    pub fn on_respawn_result(
+        &mut self,
+        exit: Option<i32>,
+        stderr: &[u8],
+        context: &BTreeMap<String, String>,
+    ) -> bool {
+        let title = context.get(KEY_TITLE).cloned().unwrap_or_default();
+        if exit == Some(0) {
+            self.app.set_notice(format!("respawned {title}"));
+            self.refresh();
+        } else {
+            let detail = compact_error(&lossy(stderr));
+            self.app.set_notice(if detail.is_empty() {
+                format!("could not respawn {title}")
             } else {
                 detail
             });
@@ -1298,12 +1366,13 @@ mod tests {
             Some("ending it would end the pair; quit it from inside")
         );
         // An agent's keys are refused; the panel's own still work.
-        for c in ['p', 's', 'w', 'd', 'n', 't', 'T'] {
+        for c in ['p', 's', 'w', 'd', 'n', 'r', 't', 'T'] {
             let (_, intent) = process_key(&mut app, &key(c));
             assert!(intent.is_none(), "{c}");
             assert!(app.pending_rename.is_none() && app.pending_team.is_none());
+            assert!(app.pending_respawn.is_none());
         }
-        let (_, intent) = process_key(&mut app, &key('r'));
+        let (_, intent) = process_key(&mut app, &key('R'));
         assert_eq!(intent, Some(Intent::Refresh));
         process_key(&mut app, &key('v'));
         assert_eq!(app.group_by, crate::app::GroupBy::Team);
@@ -1358,6 +1427,49 @@ mod tests {
         // Esc gives the keys back to that list.
         process_key(&mut app, &bare(BareKey::Esc));
         assert_eq!(app.focus, Focus::Agents);
+    }
+
+    #[test]
+    fn respawn_policy_and_confirmation() {
+        let mut app = app();
+        for (id, notice) in [
+            ("nobg", "no background id to respawn"),
+            ("cli", "only background sessions respawn"),
+            ("cx", "can't respawn Codex agents"),
+            ("other", "can't respawn this agent"),
+            ("q", "not running; nothing to respawn"),
+        ] {
+            select(&mut app, id);
+            let (_, intent) = process_key(&mut app, &key('r'));
+            assert!(intent.is_none(), "{id}");
+            assert_eq!(app.notice.as_deref(), Some(notice), "{id}");
+            assert!(app.pending_respawn.is_none(), "{id}");
+        }
+        select(&mut app, "bg");
+        let (_, intent) = process_key(&mut app, &key('r'));
+        assert!(intent.is_none() && app.pending_stop.is_none());
+        assert_eq!(app.pending_respawn.as_ref().unwrap().title, "Stoppable");
+        for cancel in [key('n'), bare(BareKey::Esc), key('Y'), key('r')] {
+            app.pending_respawn = Some(PendingStop {
+                agent_id: "bg".into(),
+                title: "Stoppable".into(),
+            });
+            let (redraw, intent) = process_key(&mut app, &cancel);
+            assert!(redraw && intent.is_none());
+            assert_eq!(app.notice.as_deref(), Some("respawn cancelled"));
+            assert!(app.pending_respawn.is_none());
+        }
+        process_key(&mut app, &key('r'));
+        let (_, intent) = process_key(&mut app, &key('y'));
+        assert_eq!(
+            intent,
+            Some(Intent::Respawn {
+                agent_id: "bg".into(),
+                title: "Stoppable".into(),
+            })
+        );
+        assert_eq!(app.notice.as_deref(), Some("respawning Stoppable\u{2026}"));
+        assert!(app.pending_respawn.is_none());
     }
 
     #[test]
@@ -1701,7 +1813,7 @@ mod tests {
             ('s', Intent::Pane { stacked: true }),
             ('w', Intent::Worktree),
             ('d', Intent::Details),
-            ('r', Intent::Refresh),
+            ('R', Intent::Refresh),
         ] {
             assert_eq!(process_key(&mut app, &key(c)).1, Some(want), "{c}");
         }

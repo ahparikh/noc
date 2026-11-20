@@ -56,6 +56,7 @@ Usage:
   noc attach [--force] <agent-id>
   noc rename [--clear] <agent-id> [name]
   noc stop <agent-id>
+  noc respawn <agent-id>
   noc forget <agent-id> [<agent-id>...]
   noc events [--json] [--provider claude|codex] [--limit count] [agent-id]
   noc watch [--json] [--all] [--team name|none]
@@ -106,7 +107,9 @@ func RunWithIO(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 	case "rename", "name":
 		return runRename(ctx, rest, stdout, stderr)
 	case "stop":
-		return runStop(ctx, rest, stdout, stderr)
+		return runLifecycle(ctx, "stop", attach.StopPlan, rest, stdout, stderr)
+	case "respawn":
+		return runLifecycle(ctx, "respawn", attach.RespawnPlan, rest, stdout, stderr)
 	case "forget":
 		return runForget(ctx, rest, stdout, stderr)
 	case "events":
@@ -1123,25 +1126,27 @@ func runAttach(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 	return printError(stderr, fmt.Errorf("attach %s agent: %w", agent.Provider, err))
 }
 
-func runStop(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+// runLifecycle runs `noc stop` and `noc respawn`: one provider command on one
+// agent, planned by the given planner.
+func runLifecycle(ctx context.Context, verb string, planFor func(apiv1.Agent, string) (attach.Plan, error), args []string, stdout, stderr io.Writer) int {
 	paths, err := config.ResolvePaths()
 	if err != nil {
 		return printError(stderr, err)
 	}
-	fs := newFlagSet("noc stop", stderr)
+	fs := newFlagSet("noc "+verb, stderr)
 	socket := fs.String("socket", paths.SocketPath, "server socket")
 	if code, stop := parseFlags(fs, args); stop {
 		return code
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: noc stop <agent-id>")
+		fmt.Fprintf(stderr, "usage: noc %s <agent-id>\n", verb)
 		return 2
 	}
 	agent, err := lookupAgent(ctx, *socket, fs.Arg(0))
 	if err != nil {
 		return printServerError(stderr, err)
 	}
-	plan, err := attach.StopPlan(agent, providerBinaries().Claude)
+	plan, err := planFor(agent, providerBinaries().Claude)
 	if err != nil {
 		return printError(stderr, err)
 	}
@@ -1160,7 +1165,7 @@ func runStop(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if errors.As(err, &exitErr) && exitErr.ExitCode() > 0 {
 		return exitErr.ExitCode()
 	}
-	return printError(stderr, fmt.Errorf("stop %s agent: %w", agent.Provider, err))
+	return printError(stderr, fmt.Errorf("%s %s agent: %w", verb, agent.Provider, err))
 }
 
 // ---- server ---------------------------------------------------------------

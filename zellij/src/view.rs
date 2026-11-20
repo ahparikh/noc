@@ -555,6 +555,12 @@ fn status_line(app: &ZellijNoc, theme: &Theme, cols: usize, marked: bool) -> Lin
             Style::fg(theme.attention),
         );
     }
+    if let Some(respawn) = &app.pending_respawn {
+        return Line::plain(
+            &format!("Respawn {}?  y / n", respawn.title),
+            Style::fg(theme.attention),
+        );
+    }
     if let Some(name) = &app.pending_end {
         return Line::plain(
             &format!("End session {}?  y / n", app.session_label(name)),
@@ -732,8 +738,8 @@ fn help_lines(theme: &Theme) -> Vec<Line> {
         "d           details window",
         "n           rename agent",
         "t / T       join / leave a team",
-        "x           stop agent (asks y/n)",
-        "r           refresh",
+        "x / r       stop / respawn (ask y/n)",
+        "R           refresh",
         "/           search (also older:14d)",
         "u           check for a new release",
         "i           status and version",
@@ -2198,7 +2204,8 @@ mod tests {
         assert_eq!(text[12].trim_end(), "S           close / open sessions");
         assert_eq!(text[15].trim_end(), "n           rename agent");
         assert_eq!(text[16].trim_end(), "t / T       join / leave a team");
-        assert_eq!(text[17].trim_end(), "x           stop agent (asks y/n)");
+        assert_eq!(text[17].trim_end(), "x / r       stop / respawn (ask y/n)");
+        assert_eq!(text[18].trim_end(), "R           refresh");
         assert_eq!(text[19].trim_end(), "/           search (also older:14d)");
         assert_eq!(text[20].trim_end(), "u           check for a new release");
         assert_eq!(text[21].trim_end(), "i           status and version");
@@ -2268,6 +2275,13 @@ mod tests {
         let text = plain(&render(&mut app, &Theme::default(), 30, 38));
         assert_eq!(status(&text), "Stop Auth migration?  y / n");
         app.pending_stop = None;
+        app.pending_respawn = Some(PendingStop {
+            agent_id: "b1".into(),
+            title: "Auth migration".into(),
+        });
+        let text = plain(&render(&mut app, &Theme::default(), 30, 38));
+        assert_eq!(status(&text), "Respawn Auth migration?  y / n");
+        app.pending_respawn = None;
         app.begin_rename();
         let text = plain(&render(&mut app, &Theme::default(), 30, 38));
         assert_eq!(status(&text), "Rename: Auth migration\u{258f}");

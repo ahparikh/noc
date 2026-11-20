@@ -8,7 +8,7 @@ specifies the manual server process lifecycle (foreground and `--bg` modes, the
 readiness pipe, the PID record, duplicate-instance rejection, stale-record
 handling, `server stop`, `server restart`, `server status`), the resolution of
 every configuration path and environment override, and the provider-command
-planning that `noc attach`, `noc stop`, and `noc rename` perform in the
+planning that `noc attach`, `noc stop`, `noc respawn`, and `noc rename` perform in the
 CLI process, the team commands, `noc spawn`, which starts a provider
 session from the CLI process, `noc whoami`, and the installation of the noc
 skill (`noc setup skill`). Server internals (registry, discovery, HTTP routing) are covered
@@ -51,6 +51,7 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
 | `noc attach [--force] [--socket path] <agent-id>` | — | Open the provider's terminal UI on an agent | yes (lookup only) | ATT-001..ATT-017 |
 | `noc rename [--clear] [--socket path] <agent-id> [name...]` | `name` | Set/clear the user name; push to provider where supported | yes | CLI-027..CLI-029 |
 | `noc stop [--socket path] <agent-id>` | — | Stop a Claude background session via the provider | yes (lookup only) | ATT-018..ATT-021 |
+| `noc respawn [--socket path] <agent-id>` | — | Restart a Claude background session on the Claude binary installed now, via the provider | yes (lookup only) | ATT-022 |
 | `noc forget [--socket path] <agent-id>...` | — | Delete registry rows | yes | CLI-030 |
 | `noc events [--json] [--provider p] [--limit n] [--socket path] [agent-id]` | — | Bounded event diagnostics | yes | CLI-020, CLI-021 |
 | `noc watch [--json] [--all] [--team name\|none] [--socket path]` | — | Stream registry changes | yes (streaming) | CLI-022..CLI-026, CLI-040 |
@@ -99,6 +100,7 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
     noc attach [--force] <agent-id>
     noc rename [--clear] <agent-id> [name]
     noc stop <agent-id>
+    noc respawn <agent-id>
     noc forget <agent-id> [<agent-id>...]
     noc events [--json] [--provider claude|codex] [--limit count] [agent-id]
     noc watch [--json] [--all] [--team name|none]
@@ -141,7 +143,7 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
   - Flag parsing stops at the first non-flag argument; flags after a positional are positionals. E.g. `noc attach <id> --force` has two positionals and is a usage error; `noc rename <id> --clear` names the agent `--clear`.
   - `-h`, `-help`, `--help` MUST print `Usage of <flagset name>:` and the flag defaults to stderr and exit **0**.
   - An undefined flag or bad value MUST print `flag provided but not defined: -x` (or the flag package's value error) plus usage to stderr and exit **2**.
-  - Flag-set names (shown in usage) are `noc ls`, `noc search`, `noc show`, `noc attach`, `noc stop`, `noc forget`, `noc rename`, `noc events`, `noc watch`, `noc teams`, `noc team <verb>` (the verb as typed), `noc spawn`, `noc whoami`, `noc doctor`, `noc setup`, `noc setup skill`, `noc server`, `noc server status`, `noc server restart`, `noc server stop`, `noc hook ingest`. Note `ls` uses the flag-set name `noc ls` even when invoked as `list`, and `rename` uses `noc rename` even when invoked as `name`.
+  - Flag-set names (shown in usage) are `noc ls`, `noc search`, `noc show`, `noc attach`, `noc stop`, `noc respawn`, `noc forget`, `noc rename`, `noc events`, `noc watch`, `noc teams`, `noc team <verb>` (the verb as typed), `noc spawn`, `noc whoami`, `noc doctor`, `noc setup`, `noc setup skill`, `noc server`, `noc server status`, `noc server restart`, `noc server stop`, `noc hook ingest`. Note `ls` uses the flag-set name `noc ls` even when invoked as `list`, and `rename` uses `noc rename` even when invoked as `name`.
 - **Source:** `go/internal/cli/run.go` (newFlagSet, parseFlags); the same pattern is used by every `run*` function
 - **Verified by:** `go/internal/cli/run_test.go` TestValidationPaths (`ls -h`, an undefined flag, `server restart --bg`); `go/internal/cli/server_lifecycle_unix_test.go` TestBackgroundServerLifecycle (restart accepts launch flags and `--timeout`); one-dash spelling and flag-after-positional for `rename` UNTESTED.
 
@@ -154,9 +156,9 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
   | 1 | Runtime failure: server unreachable, API error, path resolution failure, provider command could not be found/started, lifecycle errors, attach/stop refusals, doctor/setup reports with failures, a `setup skill` result with an error or a `setup skill --check` that finds a provider's skill not current (CLI-050), `whoami` outside an agent noc knows, any `forget` or `team set`/`team clear` ID failed, `team lead` for an agent outside the team, any `spawn` failure after validation (CLI-047) | `printError`, `printServerError`, `printServerLifecycleError` |
   | 2 | Usage error: unknown command, unknown `server` or `team` subcommand, flag parse error, wrong positional count, invalid flag value caught by validation (including an invalid team name), a `team` command with no agent ID run outside an agent | all |
   | N ≥ 0 | `attach`: the exit status of the provider child process when it exited normally | ATT-013 |
-  | N > 0 | `stop`: the provider child's nonzero exit status | ATT-021 |
+  | N > 0 | `stop`, `respawn`: the provider child's nonzero exit status | ATT-021, ATT-022 |
   | 130 | `attach`: the child was killed by a signal (`ExitCode() < 0`) **and** the CLI context was cancelled | ATT-013 |
-- **Source:** `go/internal/cli/run.go` (printServerError, printError, printServerLifecycleError, runAttach, runStop)
+- **Source:** `go/internal/cli/run.go` (printServerError, printError, printServerLifecycleError, runAttach, runLifecycle)
 - **Verified by:** `go/internal/cli/run_test.go` TestValidationPaths (2), TestServerDownShowsConnectionHint (1), TestAttachCodexRunsResume and TestAttachClaudeDecisionTable (child status 7); 130 UNTESTED.
 
 #### CLI-008 Output streams and error formatting
@@ -180,12 +182,12 @@ Neighbours read for observable behaviour: `go/internal/localapi/client.go`,
 - **Verified by:** UNTESTED
 
 #### CLI-011 Agent reference resolution
-- **Behavior:** Every `<agent-id>` positional (`show`, `attach`, `stop`, `rename`, `forget`, `events`, `team`) MUST be sent verbatim (URL path-escaped) to the server and MUST be matched **only as an exact, full noc agent ID** (a UUID string; SQL `WHERE id = ?`). There is no prefix matching, no matching by name, user name, short ID, or native session ID, and therefore no ambiguity error. A non-matching ID MUST yield HTTP 404 `agent_not_found` → stderr `noc: noc server: agent was not found`, exit 1. An empty string ID yields HTTP 400 → `noc: noc server: an agent ID is required`, exit 1. In particular a leading prefix of a real ID (e.g. the first 8 characters, as frontends often display) MUST NOT resolve: `noc show <8-char-prefix>` → `noc: noc server: agent was not found`, exit 1. The CLI performs no client-side resolution (no list-then-match) before the request, and neither `Store.Get` nor `Store.Forget` uses `LIKE` or prefix comparison.
+- **Behavior:** Every `<agent-id>` positional (`show`, `attach`, `stop`, `respawn`, `rename`, `forget`, `events`, `team`) MUST be sent verbatim (URL path-escaped) to the server and MUST be matched **only as an exact, full noc agent ID** (a UUID string; SQL `WHERE id = ?`). There is no prefix matching, no matching by name, user name, short ID, or native session ID, and therefore no ambiguity error. A non-matching ID MUST yield HTTP 404 `agent_not_found` → stderr `noc: noc server: agent was not found`, exit 1. An empty string ID yields HTTP 400 → `noc: noc server: an agent ID is required`, exit 1. In particular a leading prefix of a real ID (e.g. the first 8 characters, as frontends often display) MUST NOT resolve: `noc show <8-char-prefix>` → `noc: noc server: agent was not found`, exit 1. The CLI performs no client-side resolution (no list-then-match) before the request, and neither `Store.Get` nor `Store.Forget` uses `LIKE` or prefix comparison.
 - **Source:** `go/internal/localapi/client.go` (GetAgent); `go/internal/localapi/server.go` (handleAgent); `go/internal/storage/sqlite/store.go` (Get, Forget)
 - **Verified by:** `go/internal/localapi/server_test.go` TestClientAndServerOverUnixSocket; `go/internal/cli/run_test.go` TestRunningServerProcessesHookAndExposesPreview (`show nope`, `forget nope`); prefix rejection UNTESTED.
 
 #### CLI-012 `--socket` on every client command
-- **Behavior:** `ls`, `search`, `show`, `attach`, `stop`, `forget`, `rename`, `events`, `watch`, `teams`, `team`, `spawn`, `whoami`, `doctor`, `server status`, `server stop`, `server restart`, `server` and `hook ingest` MUST accept `--socket <path>` (string) defaulting to the resolved `SocketPath` (CFG-003). Every command that needs paths MUST call `config.ResolvePaths()` before parsing flags; a resolution error MUST print `noc: <err>` and exit 1 (for `hook ingest`, exit 0 silently). `setup` does not resolve paths; `setup skill` resolves only the skill files (CLI-049) and takes no `--socket`.
+- **Behavior:** `ls`, `search`, `show`, `attach`, `stop`, `respawn`, `forget`, `rename`, `events`, `watch`, `teams`, `team`, `spawn`, `whoami`, `doctor`, `server status`, `server stop`, `server restart`, `server` and `hook ingest` MUST accept `--socket <path>` (string) defaulting to the resolved `SocketPath` (CFG-003). Every command that needs paths MUST call `config.ResolvePaths()` before parsing flags; a resolution error MUST print `noc: <err>` and exit 1 (for `hook ingest`, exit 0 silently). `setup` does not resolve paths; `setup skill` resolves only the skill files (CLI-049) and takes no `--socket`.
 - **Source:** `go/internal/cli/run.go` (every `run*` function)
 - **Verified by:** indirectly by every test that sets `NOC_SOCKET` (`go/internal/cli/run_test.go`)
 
@@ -805,7 +807,7 @@ and filters by team, and starts new agents that join one.
 | `NOC_SOCKET` | `ResolvePaths` | Socket path (default for every `--socket`) | `<runtime>/noc.sock` |
 | `NOC_DATABASE` | `ResolvePaths` | DB path (default for every `--database`) | `<state>/noc.db` |
 | `HOME` (via `os.UserHomeDir`) | `ResolvePaths` | Required even when all overrides are set | error if unresolvable |
-| `NOC_CLAUDE_BIN` | `attach`, `stop` (and server adapters) | Claude executable (trimmed) | `claude` on `PATH` |
+| `NOC_CLAUDE_BIN` | `attach`, `stop`, `respawn` (and server adapters) | Claude executable (trimmed) | `claude` on `PATH` |
 | `NOC_CODEX_BIN` | `attach` (and server adapters) | Codex executable (trimmed) | `codex` on `PATH` |
 | `NOC_INTERNAL_SERVER_READY_FD` | `server` | Readiness fd; set by `--bg` parent; unset by child | absent → foreground |
 | `NOC_AGENT_ID` | set for `attach` children | Agent ID exported to the provider process | — |
@@ -864,7 +866,7 @@ and filters by team, and starts new agents that join one.
 
 #### CFG-009 Provider executables in the CLI
 - **Behavior:** `attach` MUST start from `{Claude: "claude", Codex: "codex"}` and replace each with `strings.TrimSpace(NOC_CLAUDE_BIN)` / `strings.TrimSpace(NOC_CODEX_BIN)` when non-empty. `stop` honours only `NOC_CLAUDE_BIN`, and so does `spawn`. The final program is resolved with `exec.LookPath` (a value containing `/` is used as a path). The roster read in `attach` uses the configured name directly (Go resolves it on `PATH`); the one in `spawn` uses the resolved path.
-- **Source:** `go/internal/attach/plan.go` (DefaultBinaries); `go/internal/cli/run.go` (providerBinaries, runAttach, runStop); `go/internal/cli/teams.go` (runSpawn)
+- **Source:** `go/internal/attach/plan.go` (DefaultBinaries); `go/internal/cli/run.go` (providerBinaries, runAttach, runLifecycle); `go/internal/cli/teams.go` (runSpawn)
 - **Decision:** D-025
 - **Verified by:** `go/internal/cli/run_test.go` TestAttachCodexRunsResume (`NOC_CODEX_BIN`), TestAttachClaudeDecisionTable (`NOC_CLAUDE_BIN`); `go/internal/cli/teams_test.go` TestSpawnStartsClaudeInTheBackground (`NOC_CLAUDE_BIN` for `spawn`)
 
@@ -972,7 +974,7 @@ After a plan is chosen (rows 4, 7–9, 11, 12) the common tail applies: executab
 - **Verified by:** `go/internal/cli/run_test.go` TestAttachCodexRunsResume, TestAttachClaudeDecisionTable (child exit 7 → 7); 130 and signal death UNTESTED.
 
 #### ATT-014 Provider plan modes are the only branching keys
-- **Behavior:** `attach.Plan` MUST carry `Program`, `Arguments`, `Directory`, and `Mode` ∈ {`attach`, `resume`, `background-resume`, `stop`}; the CLI branches only on `Mode` (`background-resume` → ATT-010/011; `resume` → ATT-007 guard).
+- **Behavior:** `attach.Plan` MUST carry `Program`, `Arguments`, `Directory`, and `Mode` ∈ {`attach`, `resume`, `background-resume`, `stop`, `respawn`}; the CLI branches only on `Mode` (`background-resume` → ATT-010/011; `resume` → ATT-007 guard).
 - **Source:** `go/internal/attach/plan.go` (Plan, Mode)
 - **Verified by:** `go/internal/attach/plan_test.go` TestPlanForAgentUsesNativeProviderEntryPoints; `go/internal/attach/claude_roster_test.go` TestPlanClaudeWithRosterKeepsBackgroundSessionsInTheBackground
 
@@ -1006,7 +1008,7 @@ After a plan is chosen (rows 4, 7–9, 11, 12) the common tail applies: executab
 
 #### ATT-018 `stop` arguments and lookup
 - **Behavior:** Flags: `--socket`. Exactly one positional; else `usage: noc stop <agent-id>`, exit 2. Agent lookup as ATT-002 (3 s).
-- **Source:** `go/internal/cli/run.go` (runStop, lookupAgent)
+- **Source:** `go/internal/cli/run.go` (runLifecycle, lookupAgent)
 - **Decision:** D-043
 - **Verified by:** `go/internal/cli/run_test.go` TestValidationPaths (usage); MANUAL M-7.
 
@@ -1018,15 +1020,23 @@ After a plan is chosen (rows 4, 7–9, 11, 12) the common tail applies: executab
 
 #### ATT-020 Stop execution
 - **Behavior:** MUST `exec.LookPath` the program (failure → `noc: find <provider> executable "<program>": <err>`, exit 1) and run it with stdout/stderr connected to the CLI's, **no stdin**, the CLI's cwd, and the CLI's environment unchanged (no `NOC_AGENT_ID`), cancelled with the CLI context.
-- **Source:** `go/internal/cli/run.go` (runStop)
+- **Source:** `go/internal/cli/run.go` (runLifecycle)
 - **Decision:** D-043
 - **Verified by:** UNTESTED; MANUAL M-7.
 
 #### ATT-021 Stop exit status
 - **Behavior:** Child success → exit 0 with no noc output (the provider's own output passes through). Child exit code > 0 → that code. Any other failure (start failure, signal death) → `noc: stop <provider> agent: <err>`, exit 1.
-- **Source:** `go/internal/cli/run.go` (runStop)
+- **Source:** `go/internal/cli/run.go` (runLifecycle)
 - **Decision:** D-043
 - **Verified by:** UNTESTED
+
+### Respawn
+
+#### ATT-022 `respawn`
+- **Behavior:** `noc respawn <agent-id>` MUST behave as `stop` does (ATT-018..ATT-021) with these differences. Usage: `usage: noc respawn <agent-id>`. `RespawnPlan` follows the stop table and its precedence, producing `{Program: <claude>, Arguments: ["respawn", <trimmed short id>], Mode: "respawn"}`, with these refusals in place of the stop ones: codex → `respawning Codex agents is not supported yet`; other provider → `provider "<p>" does not support respawning agents`; not a background session → `only background Claude sessions can be respawned; restart this one from its terminal`; blank short ID → `Claude session has no background session ID to respawn`. `agent is not running` and `Claude executable is not configured` are the same. A failure that is not the child's exit status prints `noc: respawn <provider> agent: <err>`. `claude respawn --all` is never used: one command acts on one agent.
+- **Source:** `go/internal/attach/stop.go` (RespawnPlan); `go/internal/cli/run.go` (runLifecycle)
+- **Decision:** D-086
+- **Verified by:** `go/internal/attach/stop_test.go` TestRespawnPlanRespawnsOnlyLiveClaudeBackgroundSessions; `go/internal/cli/run_test.go` TestValidationPaths (usage), TestAttachClaudeDecisionTable (refusal for a non-background session); running `claude respawn` UNTESTED
 
 ## 03 · Design choices (local)
 
@@ -1051,6 +1061,7 @@ After a plan is chosen (rows 4, 7–9, 11, 12) the common tail applies: executab
 - **`setup skill` is separate from `setup`.** Hooks are what make the registry work and are safe to install silently; a skill changes what agents do, so it is a step the user takes on purpose. Plain `noc setup` never writes a skill.
 - **`noc teams` is computed in the CLI** from the agent list, like the bucket filter, so the server has no team route.
 - **Stop is Claude-background only** because a terminal session is ended with `/exit` and Codex has no equivalent stop; D-043 in `docs/DECISIONS.md` records the product decision.
+- **Respawn shares stop's planner and runner** (ATT-022): both are one provider command on one live background session, so the rules cannot drift apart. D-086 records why it exists.
 
 ## 03 · Verification procedures
 
@@ -1126,6 +1137,7 @@ case "$1" in
   --bg) cp "$FAKE_ROSTER_AFTER" "$FAKE_ROSTER"; echo restored ;;
   attach) echo "attached $2"; exit "${FAKE_ATTACH_EXIT:-0}" ;;
   stop) echo "stopped $2" ;;
+  respawn) echo "respawned $2" ;;
 esac
 EOF
 chmod +x "$T/fake-claude"
@@ -1143,6 +1155,7 @@ SID=11111111-2222-3333-4444-555555555555
 | f | as c, `FAKE_ATTACH_EXIT=7` | `$M attach $ID` | exit 7 |
 | g | — | `$M attach $ID --force` | `usage: noc attach [--force] <agent-id>`, exit 2 |
 | h | — | `$M stop $ID` | `noc: only background Claude sessions can be stopped; end this one from its terminal with /exit`, exit 1 |
+| i | — | `$M respawn $ID` | `noc: only background Claude sessions can be respawned; restart this one from its terminal`, exit 1 |
 
 Then `$M forget $ID nope` → stdout `forgot <ID>`, stderr `noc: noc server: agent was not found`, exit 1. Finally `$M server stop` and `trash "$T"` (or remove it manually).
 
@@ -1151,7 +1164,7 @@ Then `$M forget $ID nope` → stdout `forgot <ID>`, stderr `noc: noc server: age
 - No CLI-level tests for: flag defaults; `ls` table layout; `watch` human streaming, `watch --json` output and termination; `rename` wording per provider-sync result; `doctor`/`setup` human rendering; the 3 s/10 s request timeouts.
 - Lifecycle branches without tests: a corrupt record met during foreground PID acquisition; `EPERM` handling; stop with a missing PID file but a reachable socket; stop timeout; the parent's readiness `error:`/EOF/45 s timeout/context-cancel branches; restart of a record without `mode`; the restart start-failure message; unsupported platforms. No test pins that restart does **not** inherit the old server's flags (LIFE-020): the lifecycle test passes `--discovery=false` to restart explicitly, so a change in either direction would go unnoticed.
 - `runAttach`: untested are `--force` over a running interactive roster entry, the output written when the background restore fails, a workspace path that is not a directory, the roster timeout, and the 130 mapping.
-- `runStop`: only the refusal path is exercised through the CLI; executing `claude stop` and propagating its exit status are untested. `StopPlan` itself is unit-tested.
+- `runLifecycle` (`stop`, `respawn`): only the refusal path is exercised through the CLI; executing `claude stop` or `claude respawn` and propagating its exit status are untested. `StopPlan` and `RespawnPlan` themselves are unit-tested.
 - Teams: the exact `team` usage text; the `TEAM` column in the `search` and `watch` tables; `watch --team` on a live stream; the `Parent:` line of `show`; a bare `team:` search term.
 - `runSpawn`: only a fake Claude is used, so the real `claude --bg` output, the ignored `--session-id`, the untrusted-directory refusal, and `CLAUDE_CODE_SESSION_ID` in a real session are untested (observed by hand on Claude Code 2.1.325); also untested are the 60 s start deadline, the health check when the server is down, a registration that fails after the session started, and `--dir` naming a file.
 - Skill: `go/internal/skill` has no tests of its own; through the CLI test the untested parts are the home-directory defaults, the directory mode, a skill directory that holds other files, and read and write failures (CLI-048..CLI-050). Whether either provider actually loads the installed file is not tested, and for Codex not verified at all (CLI-049). `whoami` is tested only with `NOC_AGENT_ID` (CLI-052).

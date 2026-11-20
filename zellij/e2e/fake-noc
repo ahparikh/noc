@@ -59,6 +59,9 @@ rename)
 stop)
 	echo "stopped $2"
 	;;
+respawn)
+	echo "respawned $2"
+	;;
 attach)
 	case "${2:-}" in
 	agent-*)

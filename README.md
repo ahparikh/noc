@@ -55,6 +55,7 @@ noc show <id>
 noc attach <id>             # open the provider's own UI on an agent
 noc rename <id> <name>
 noc stop <id>
+noc respawn <id>            # restart a background Claude agent on the Claude installed now
 noc spawn --team auth "fix the login tests"   # start a background Claude agent
 noc team set auth <id>...   # put existing agents in a team
 noc teams                   # each team, its lead, and what needs you
@@ -156,7 +157,7 @@ plugin: press `Alt m` to move to it and answer `y`.
 | `Alt d` | Detach. Both sessions keep running; the start line attaches again |
 
 In the sidebar: `j`/`k` move, `Enter` opens the agent in a tab of your
-session, `/` searches, `n` renames, `x` stops, `u` checks for a newer
+session, `/` searches, `n` renames, `x` stops, `r` respawns, `u` checks for a newer
 release, `?` lists every key. To end
 both sessions, quit your session or run `zellij kill-session noc`.
 

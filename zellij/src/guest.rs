@@ -1069,8 +1069,8 @@ impl State {
                 return;
             }
         }
-        // Otherwise the loop is past its wait (Enter was pressed there, or
-        // the layout is an older one): the session is on its way all the same.
+        // Otherwise the loop is past its wait (Enter was pressed there):
+        // the session is on its way all the same.
         self.guest.started = true;
         let running = self.session_is_running(&self.guest.session.clone());
         self.await_session(running);

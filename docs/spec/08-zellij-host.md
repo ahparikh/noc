@@ -259,7 +259,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
   - a session is attached in it (ZT-003): the start is made, and nothing else is done (the panel was loaded anew beside a running pair);
   - otherwise it reads the pane's running command with `get_pane_running_command`, and tries again on the next tick when that fails or is empty;
   - the command's program is `sh` (the loop of ZX-007 is waiting): it MUST type one line feed into the guest pane (byte `10`, as in ZX-015), once;
-  - the command is anything else (the loop is past its wait: Enter was pressed in the pane, or the layout is an older one without the wait): it types nothing, since a line typed then would reach the inner session.
+  - the command is anything else (the loop is past its wait: Enter was pressed in the pane): it types nothing, since a line typed then would reach the inner session.
 
   In the last two cases the start is made and the inner session comes up as a session the client is moved to does (ZT-003), taken as newly created unless Zellij lists it as running. Until the start is made the panel MUST NOT ask a relay to watch (ZX-020). So the host session is running, with the plugin fetched and its permissions granted, before the inner session exists, and both the inner session at start and a team's session later are waited for in one way.
 - **Source:** `zellij/src/guest.rs` (`start_guest`, `guest_is_waiting`, `await_session`); `zellij/src/main.rs` (`on_panel_tick`)

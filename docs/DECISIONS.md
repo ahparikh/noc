@@ -974,8 +974,8 @@ for its panes is the same on every machine. A typed line needs no file, no timeo
 pane (which Zellij gives no size), and Enter does the same by hand.
 **Consequence:** the inner session does not start until the permission
 prompt is answered; the guest pane says so after two seconds. The sidebar
-types the line only while it sees the loop waiting, so a host layout
-without the wait still works and nothing is typed into a running session.
+types the line only while it sees the loop waiting, so nothing is typed
+into a running session when Enter was pressed in the pane first.
 The inner layout may load a plugin again without the clash of D-081.
 
 ### D-042: names are two-way and the most recent rename wins

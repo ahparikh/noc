@@ -900,7 +900,7 @@ status, Quiet agents already fold by age.
 ### D-084: the inner sessions are locked by the relay, not by `default_mode`
 
 A new inner session starts in Zellij's locked mode because its relay locks
-it once (`action switch-mode locked`) when it first sees a client, asked to
+it once (`switch_to_input_mode`) when it first sees a client, asked to
 by the panel's `inner_mode "locked"`. The inner layout does not set
 `default_mode "locked"`.
 

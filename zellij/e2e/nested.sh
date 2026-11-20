@@ -301,6 +301,11 @@ check "the agent has a tab in its team's session" \
 	wait_for 10 sh -c "env -u ZELLIJ -u ZELLIJ_SESSION_NAME zellij --session '$TEAM_SESSION' action list-tabs | grep -q 'Second agent'"
 session_is_all_agents() { [ "$(session_tab_count "$TEAM_SESSION")" = 1 ]; }
 check "the tab the session was created with is closed" wait_for 10 session_is_all_agents
+keys C-t
+sleep 0.3
+keys n
+sleep 1
+check "the team's session starts locked too" session_is_all_agents
 check "the inner session keeps running, with no client" \
 	sh -c "$(declare -f z alive clients); alive '$INNER' && [ \"\$(clients '$INNER')\" = 0 ]"
 check "the keyboard is in the session" host_focus_is "$GUEST"

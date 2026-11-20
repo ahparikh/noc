@@ -338,10 +338,10 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 - **Verified by:** `zellij/src/guest.rs` `the_relay_sends_terminals_with_their_tab_and_the_first_clients_focus`, `builds_inner_session_commands`; `zellij/e2e/nested.sh` "Enter opens the agent in a new inner tab named after it" and every later check that depends on the panel seeing the inner session; the one-at-a-time sending and the `10.0` s limit UNTESTED
 
 ### ZX-040 A new session starts locked
-- **Behavior:** With `inner_mode "locked"` every watch request ends with `locked` (ZX-020). At the first `ListClients` event that shows at least one client, within `10.0` s of a watch request, whose latest watch request ended with `locked`, the relay MUST run `zellij --session <its own session> action switch-mode locked` with context `relay-lock`, and never again while it runs. A relay is started when its session is first watched or first told to switch theme, and lives as long as the session, so this locks a session once, when it is created: what the user does with `Ctrl g` afterwards stands, also when the host session is started again around a session that kept running. A relay started in a session that was already running (the plugin's location changed) locks it once too. The session's default mode stays Normal, so unlocked it types every key Zellij does not bind into the pane (behaviour 16). Between a session's first frame and the lock, about as long as the first watch request takes, the session is unlocked.
-- **Source:** `zellij/src/guest.rs` (`watch_host`, `watch_command`, `lock_command`, `relay_pipe`, `relay_push`); `zellij/src/app.rs` (`Config::from_map`)
+- **Behavior:** With `inner_mode "locked"` every watch request ends with `locked` (ZX-020). At the first `ListClients` event that shows at least one client, within `10.0` s of a watch request, whose latest watch request ended with `locked`, and after its permissions were granted (a watch request can arrive before that, and Zellij drops what a plugin runs until then; the relay asks for the clients again when they are granted), the relay MUST call `switch_to_input_mode` with `Locked`, and never again while it runs. A relay is started when its session is first watched or first told to switch theme, and lives as long as the session, so this locks a session once, when it is created: what the user does with `Ctrl g` afterwards stands, also when the host session is started again around a session that kept running. A relay started in a session that was already running (the plugin's location changed) locks it once too. The session's default mode stays Normal, so unlocked it types every key Zellij does not bind into the pane (behaviour 16). Between a session's first frame and the lock, about as long as the first watch request takes (ZX-020; half a second or so, and `5.0` s more if that request is lost), the session is unlocked.
+- **Source:** `zellij/src/guest.rs` (`watch_host`, `watch_command`, `relay_pipe`, `relay_push`, `update_relay`); `zellij/src/app.rs` (`Config::from_map`)
 - **Decision:** D-084
-- **Verified by:** `zellij/src/guest.rs` `the_relay_sends_terminals_with_their_tab_and_the_first_clients_focus`, `builds_inner_session_commands`; `zellij/src/app.rs` `parses_bounded_poll_configuration`; `zellij/e2e/nested.sh` "the inner session starts locked", "unlocked, the inner session still types into its pane"; a team's session and the once-only rule UNTESTED
+- **Verified by:** `zellij/src/guest.rs` `the_relay_sends_terminals_with_their_tab_and_the_first_clients_focus`, `builds_inner_session_commands`; `zellij/src/app.rs` `parses_bounded_poll_configuration`; `zellij/e2e/nested.sh` "the inner session starts locked", "unlocked, the inner session still types into its pane", "the team's session starts locked too"; the once-only rule UNTESTED
 
 ### ZX-019 Switching the theme
 - **Behavior:** On a `zellij-noc.relay` message that is neither a watch request (ZX-039) nor a session request (ZT-002) the relay MUST resolve a theme name from the trimmed payload: `away` → its own `away_theme` setting, `home` → its own `home_theme` setting, `theme <name>` → `<name>` trimmed. If the setting is unset, the payload has another form or is absent, or the name is not plain (ZH-018), it MUST do nothing. Otherwise it MUST call `reconfigure` with the text `theme "<name>"` and without writing the configuration to disk. Other pipe names are ignored.
@@ -353,7 +353,7 @@ pane, tab, focus and theme state stays in the plugin (D-036).
 The panel does not read the inner session itself. The relay there (ZX-039) sends a snapshot whenever something changes, and the panel keeps asking it to.
 
 ### ZX-020 Asking the relay to watch
-- **Behavior:** With permissions granted, no watch request in flight, and both its own plugin location (from its entry in a `PaneUpdate`) and the host session's name known, the panel MUST, on a tick, run `zellij --session <session> pipe --plugin <location> --plugin-configuration role=relay --name zellij-noc.relay -- "watch <host session> <session>"`, with ` locked` added to the message when `inner_mode` is `locked` (ZX-040), with context `zellij-noc=guest-watch`, where `<session>` is the session on show, when at least `2.0` s have passed since the last request started, or at least `0.75` s while it has no snapshot or a failure period (ZX-022) is running. A request that has not come back after `5.0` s is given up on, and the next one is sent. While the client is being moved to another session the timing is that of ZT-003. `zellij pipe` starts the relay when it is not running. Every request is answered with a snapshot, so the requests also bring the panel up to date with anything no event announced. A successful `p`, `s`, `Enter` or `w` (ZX-031) makes the next tick ask at once.
+- **Behavior:** With permissions granted, no watch request in flight, and both its own plugin location (from its entry in a `PaneUpdate`) and the host session's name known, the panel MUST, on a tick, run `zellij --session <session> pipe --plugin <location> --plugin-configuration role=relay --name zellij-noc.relay -- "watch <host session> <session>"`, with ` locked` added to the message when `inner_mode` is `locked` (ZX-040), with context `zellij-noc=guest-watch`, where `<session>` is the session on show, when at least `2.0` s have passed since the last request started, or at least `0.75` s while it has no snapshot or a failure period (ZX-022) is running. A request that has not come back after `5.0` s is given up on, and the next one is sent. While the client is being moved to another session the timing is that of ZT-003. Before its first request the panel MUST wait until Zellij names a session in the guest pane (ZT-003) and `1.0` s more, or `3.0` s when none is named: a request sent to a session that is still being created is lost for those `5.0` s (behaviour 13), and Zellij names the session well before it has a tab. `zellij pipe` starts the relay when it is not running. Every request is answered with a snapshot, so the requests also bring the panel up to date with anything no event announced. A successful `p`, `s`, `Enter` or `w` (ZX-031) makes the next tick ask at once.
 - **Source:** `zellij/src/guest.rs` (`watch_guest`, `watch_command`, `on_guest_open`)
 - **Verified by:** `zellij/src/guest.rs` `builds_inner_session_commands`; timing UNTESTED
 
@@ -622,7 +622,7 @@ teams in Zellij is in [11-teams.md](11-teams.md).
 - **Verified by:** MANUAL: `make zellij-e2e` on a machine with no grant
 
 ### ZE-013 The checks
-- **Behavior:** The harness runs 57 checks in order, printing `ok    <name>` or `FAIL  <name>` for each:
+- **Behavior:** The harness runs 58 checks in order, printing `ok    <name>` or `FAIL  <name>` for each:
 
   | # | Check name | Asserts |
   |---|---|---|
@@ -658,31 +658,32 @@ teams in Zellij is in [11-teams.md](11-teams.md).
   | 30 | the tab bar names the team's session | screen row 1 contains `Zellij (<inner>--auth)` |
   | 31 | the agent has a tab in its team's session | the session has a tab `Second agent` within 10 s |
   | 32 | the tab the session was created with is closed | the session has 1 tab within 10 s |
-  | 33 | the inner session keeps running, with no client | it is listed, not `EXITED`, with 0 clients |
-  | 34 | the keyboard is in the session | host focus is the guest pane |
-  | 35 | an agent in no team opens in the inner session | after `E2E agent` is searched for and opened, the inner session has 1 client within 10 s |
-  | 36 | whose tab bar names it | screen row 1 contains `Zellij (<inner>)` |
-  | 37 | the team's session keeps its tab | the session still has 1 tab |
-  | 38 | the agent that was already open there got no second tab | the inner tab count is that of check 15 |
-  | 39 | a team with no agent at work is listed under Quiet teams | with the list grouped by team, the screen shows `▸ Quiet teams  1`: the team's one agent is Quiet |
-  | 40 | o on a team heading shows the team's session | with that row opened (`G`, `Enter`) and the team's heading under it selected (`j`), after `o` the session has 1 client within 10 s |
-  | 41 | and gives it the keyboard | host focus becomes the guest pane |
-  | 42 | when the session on show ends, the guest pane shows the inner session | after `kill-session <session>`, the inner session has 1 client within 10 s |
-  | 43 | and the team's session is made again when its agent is opened | after `Second agent` is opened again, the session has 1 client within 10 s; the host session's client was not detached, or the keys would not have reached the panel |
-  | 44 | the sidebar lists the running sessions, the one on show marked | the Sessions title row ends `2`, and under it is `→ auth` |
-  | 45 | Enter on a session's row shows that session | after `Tab`, `G` and `Enter` in the panel, the inner session has 1 client within 10 s |
-  | 46 | and hands it the keyboard | host focus becomes the guest pane |
-  | 47 | x on a team session's row ends it, once confirmed | after `Tab`, `gg`, `x` and `y`, the team's session is not running within 10 s |
-  | 48 | and the section lists the inner session alone | the Sessions title row ends `1` |
-  | 49 | detaching the inner session's client detaches the host too | after `Ctrl g` (the inner session starts locked, ZX-040), `Ctrl o` and `d` typed into the inner session, host client count is 0 within 8 s |
-  | 50 | and the guest pane attaches to the inner session again | the inner session has 1 client within 8 s; the pair is then attached again |
-  | 51 | Alt-d detaches the host client | host client count is 0 |
-  | 52 | both sessions keep running | both listed and not `EXITED` |
-  | 53 | the inner client stays attached in the guest pane | inner client count is 1 |
-  | 54 | starting again attaches to the running pair | host client count is 1 within 10 s |
-  | 55 | the sidebar keeps the keyboard after a detach and re-attach | `Alt m`, then `3` s later (longer than the grab window) host focus is still the panel |
-  | 56 | and the inner session wears the away theme | row 1 colour equals the away reading of check 9 |
-  | 57 | ending the inner session ends the host session | after `kill-session <inner>`, the host is gone within 10 s (skipped with `--keep`) |
+  | 33 | the team's session starts locked too | after `Ctrl t` and `n` typed into it, its tab count is still 1 |
+  | 34 | the inner session keeps running, with no client | it is listed, not `EXITED`, with 0 clients |
+  | 35 | the keyboard is in the session | host focus is the guest pane |
+  | 36 | an agent in no team opens in the inner session | after `E2E agent` is searched for and opened, the inner session has 1 client within 10 s |
+  | 37 | whose tab bar names it | screen row 1 contains `Zellij (<inner>)` |
+  | 38 | the team's session keeps its tab | the session still has 1 tab |
+  | 39 | the agent that was already open there got no second tab | the inner tab count is that of check 15 |
+  | 40 | a team with no agent at work is listed under Quiet teams | with the list grouped by team, the screen shows `▸ Quiet teams  1`: the team's one agent is Quiet |
+  | 41 | o on a team heading shows the team's session | with that row opened (`G`, `Enter`) and the team's heading under it selected (`j`), after `o` the session has 1 client within 10 s |
+  | 42 | and gives it the keyboard | host focus becomes the guest pane |
+  | 43 | when the session on show ends, the guest pane shows the inner session | after `kill-session <session>`, the inner session has 1 client within 10 s |
+  | 44 | and the team's session is made again when its agent is opened | after `Second agent` is opened again, the session has 1 client within 10 s; the host session's client was not detached, or the keys would not have reached the panel |
+  | 45 | the sidebar lists the running sessions, the one on show marked | the Sessions title row ends `2`, and under it is `→ auth` |
+  | 46 | Enter on a session's row shows that session | after `Tab`, `G` and `Enter` in the panel, the inner session has 1 client within 10 s |
+  | 47 | and hands it the keyboard | host focus becomes the guest pane |
+  | 48 | x on a team session's row ends it, once confirmed | after `Tab`, `gg`, `x` and `y`, the team's session is not running within 10 s |
+  | 49 | and the section lists the inner session alone | the Sessions title row ends `1` |
+  | 50 | detaching the inner session's client detaches the host too | after `Ctrl g` (the inner session starts locked, ZX-040), `Ctrl o` and `d` typed into the inner session, host client count is 0 within 8 s |
+  | 51 | and the guest pane attaches to the inner session again | the inner session has 1 client within 8 s; the pair is then attached again |
+  | 52 | Alt-d detaches the host client | host client count is 0 |
+  | 53 | both sessions keep running | both listed and not `EXITED` |
+  | 54 | the inner client stays attached in the guest pane | inner client count is 1 |
+  | 55 | starting again attaches to the running pair | host client count is 1 within 10 s |
+  | 56 | the sidebar keeps the keyboard after a detach and re-attach | `Alt m`, then `3` s later (longer than the grab window) host focus is still the panel |
+  | 57 | and the inner session wears the away theme | row 1 colour equals the away reading of check 9 |
+  | 58 | ending the inner session ends the host session | after `kill-session <inner>`, the host is gone within 10 s (skipped with `--keep`) |
 
   It ends with `nested: all checks passed` and exit `0`, or `nested: <N> check(s) failed` and exit `1`.
 - **Source:** `zellij/e2e/nested.sh`
@@ -763,9 +764,12 @@ confirmed by running it.
 16. A key that the current mode does not bind is typed into the focused pane
     only in Locked mode and in the session's default mode; in any other mode
     it does nothing. So in a session with `default_mode "locked"`, Normal
-    mode types nothing. `zellij --session <name> action switch-mode locked`
-    puts the attached client in Locked mode and leaves the default mode as
-    it is.
+    mode types nothing. A plugin's `switch_to_input_mode` puts the
+    session's client in Locked mode and leaves the default mode as it is,
+    also from a relay that `zellij pipe --plugin` started. `zellij --session
+    <name> action switch-mode locked` does the same when nothing else is
+    connected, but run while a `zellij pipe` to that session is still
+    waiting it exits `0` and changes no mode.
 
 ## Design choices
 

@@ -28,7 +28,6 @@ pub const GUEST_MISSING_SECS: f64 = 5.0;
 pub const RELAY_WATCH_SECS: f64 = 10.0;
 pub const CTX_WATCH: &str = "guest-watch";
 pub const CTX_RELAY_PUSH: &str = "relay-push";
-pub const CTX_RELAY_LOCK: &str = "relay-lock";
 /// What ends a watch request that asks the relay to lock its session.
 pub const WATCH_LOCKED: &str = "locked";
 pub const CTX_OPEN: &str = "guest-open";
@@ -50,6 +49,14 @@ pub const SWITCH_POLL_SECS: f64 = 0.03;
 /// panel waits before it starts that session's relay: `zellij pipe` would wait
 /// for ever on a relay started before the session has a tab to hold it.
 pub const SWITCH_SETTLE_SECS: f64 = 0.25;
+/// How long the panel waits, before its first request, for Zellij to say that
+/// a client is in the guest pane: the inner session is being created until
+/// then, and a request sent before that is lost for `GUEST_WATCH_LOST_SECS`.
+pub const GUEST_ARRIVAL_SECS: f64 = 3.0;
+/// How long after that client is first seen the panel waits before its first
+/// request. Zellij names the client's session as soon as it attaches, which
+/// for a session it is creating is well before the session has a tab.
+pub const GUEST_SETTLE_SECS: f64 = 1.0;
 /// While a move is under way: how often the panel asks the new session's
 /// relay, and how long it waits for one request before it sends another.
 pub const SWITCH_WATCH_SECS: f64 = 0.1;
@@ -96,6 +103,9 @@ pub struct GuestState {
     /// and its relay is not asked before `settle_until`.
     pub fresh: bool,
     pub settle_until: Option<f64>,
+    /// When the panel first had a request to send and no client to send it
+    /// to: the pair is starting.
+    pub waiting_since: Option<f64>,
     /// The session Zellij last said is attached in the guest pane; none
     /// once that client has exited.
     pub shown: Option<String>,
@@ -349,18 +359,6 @@ pub fn watch_command(guest: &str, plugin_url: &str, host: &str, lock: bool) -> V
         format!("watch {host} {guest}")
     };
     relay_command(guest, plugin_url, &message)
-}
-
-/// The relay's command that puts its own session in Zellij's locked mode.
-pub fn lock_command(session: &str) -> Vec<String> {
-    strings(&[
-        "zellij",
-        "--session",
-        session,
-        "action",
-        "switch-mode",
-        "locked",
-    ])
 }
 
 /// The panel's request to the relay of the session on show: move the client
@@ -724,6 +722,13 @@ impl State {
             // A session that is being created has no tab yet for its relay.
             return false;
         }
+        if !self.guest.switching && self.guest.last_watch.is_none() && self.guest.shown.is_none() {
+            // The pair is starting and the guest pane has no client yet.
+            let since = *self.guest.waiting_since.get_or_insert(now);
+            if now - since < GUEST_ARRIVAL_SECS {
+                return false;
+            }
+        }
         // The relay is this plugin, so the panel must know where it was
         // loaded from, and the relay must know which session to answer.
         let (Some(url), Some(host)) = (self.panel_url.clone(), self.session_name.clone()) else {
@@ -805,7 +810,13 @@ impl State {
                 pane.nested_session = info.nested_session_name.clone();
             }
             match info.nested_session_name {
-                Some(name) => self.guest.shown = Some(name),
+                Some(name) => {
+                    if self.guest.shown.is_none() && self.guest.last_watch.is_none() {
+                        // The first client: its session may be an instant old.
+                        self.guest.settle_until = Some(now_secs() + GUEST_SETTLE_SECS);
+                    }
+                    self.guest.shown = Some(name);
+                }
                 // The client that was in the guest pane has exited.
                 None => {
                     if let Some(left) = self.guest.shown.take() {
@@ -1388,7 +1399,13 @@ impl State {
     /// Relay role: Zellij's events in the inner session.
     pub fn update_relay(&mut self, event: Event) {
         match event {
-            Event::PermissionRequestResult(_) => hide_self(),
+            Event::PermissionRequestResult(status) => {
+                hide_self();
+                // What it ran before this was dropped: a watch request can
+                // arrive first. Now it can lock the session.
+                self.permissions_granted = status == PermissionStatus::Granted;
+                self.relay_changed();
+            }
             Event::PaneUpdate(manifest) => {
                 self.relay.panes = manifest_panes(&manifest);
                 self.relay_changed();
@@ -1434,10 +1451,13 @@ impl State {
         }
         // A relay starts with its session, so the first client it sees is in
         // a session that was just created: it starts locked when the panel
-        // asks for that. Once only, so the user's own Ctrl g stands.
-        if self.relay.lock && !self.relay.locked && !clients.is_empty() {
+        // asks for that. Once only, so the user's own Ctrl g stands. `action
+        // switch-mode` from the command line would not do: run while the
+        // panel's request is still connected, it changes nobody's mode.
+        if self.permissions_granted && self.relay.lock && !self.relay.locked && !clients.is_empty()
+        {
             self.relay.locked = true;
-            run(&lock_command(&self.relay.session), ctx(CTX_RELAY_LOCK));
+            switch_to_input_mode(&InputMode::Locked);
         }
         // Zellij's pane records do not say what runs in a pane; it answers
         // when asked, pane by pane.
@@ -2136,17 +2156,6 @@ mod tests {
         assert_eq!(
             watch_command("inner", "file:/p/zellij-noc.wasm", "outer", true).last(),
             Some(&"watch outer inner locked".to_string())
-        );
-        assert_eq!(
-            lock_command("inner"),
-            [
-                "zellij",
-                "--session",
-                "inner",
-                "action",
-                "switch-mode",
-                "locked"
-            ]
         );
         assert_eq!(
             push_command("outer", "{}"),

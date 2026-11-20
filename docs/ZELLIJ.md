@@ -150,7 +150,8 @@ In the sidebar (after `Alt m`):
 | `t` | Put the agent in a team: type a name (`Tab` completes to an existing team), `Enter` joins it, making the team if it is new |
 | `T` | Take the agent out of its team |
 | `x` | Stop the agent (asks `y`/`n`) |
-| `r` | Refresh |
+| `r` | Respawn the agent (asks `y`/`n`): restart a Claude background session so it runs the Claude version installed now, with its conversation kept |
+| `R` | Refresh |
 | `/` | Search (below) |
 | `u` | Check now for a newer plugin release |
 | `i` | Open or close the status box (also: click the status line) |
@@ -441,8 +442,8 @@ bind "Alt t" { FocusPreviousPane; Write 27 116; }   // ESC t
   When the client exited because you detached, the sidebar detaches the
   host too.
 - **The registry is read through the CLI only**: `noc ls --json --all`,
-  `noc search --json` and `noc show --json`. Opening an agent runs `noc attach <id>`; rename and stop
-  run `noc rename` and `noc stop`. The sidebar shows only what those
+  `noc search --json` and `noc show --json`. Opening an agent runs `noc attach <id>`; rename, stop and respawn
+  run `noc rename`, `noc stop` and `noc respawn`. The sidebar shows only what those
   commands print: nothing in it comes from anywhere but noc.
 - **The registry says when it changed.** The sidebar keeps one `noc watch`
   running and reads the registry the moment it reports a change. It also

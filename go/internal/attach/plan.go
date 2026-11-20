@@ -18,6 +18,7 @@ const (
 	ModeResume           Mode = "resume"
 	ModeBackgroundResume Mode = "background-resume"
 	ModeStop             Mode = "stop"
+	ModeRespawn          Mode = "respawn"
 )
 
 // Plan describes one provider command to run.

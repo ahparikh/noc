@@ -50,6 +50,7 @@ environment lacks the interactive `PATH` should set them.
 | Lifecycle hooks in `settings.json` | Low-latency events and interactive sessions |
 | `claude attach <short-id>`, `claude --bg --resume <session-id>` | `noc attach` |
 | `claude stop <short-id>` | `noc stop` |
+| `claude respawn <short-id>` | `noc respawn`: restart a background session on the Claude binary installed now |
 | `claude --bg --permission-mode auto <prompt>`, then `claude agents --json --all` | `noc spawn`: start a background session, then find its session ID by the job ID Claude printed |
 | `CLAUDE_CODE_SESSION_ID` in the environment of a session's commands | Which agent a `noc` command is run by |
 

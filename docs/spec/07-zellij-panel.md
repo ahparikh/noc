@@ -7,7 +7,7 @@ sorted and folded into Quiet time sections, the exact rendering of every line
 (status line and status box, group headings, agent rows, section rows, inline
 details, help, empty states, footer, floating details window), the in-panel
 key bindings and the intents they raise (open, pane, stack, worktree shell,
-details window, refresh, stop, rename), and what the panel does with the
+details window, refresh, stop, respawn, rename), and what the panel does with the
 results of `noc stop`, `noc rename`, `noc team set` and `noc team clear`.
 
 The plugin has one deployment: the panel is a sidebar in an outer "host"
@@ -356,7 +356,7 @@ Public API fields that are not modelled are silently ignored, e.g.
   |---|---|---|---|
   | `noc_bin` | `noc` | non-empty trimmed | argv[0] of every `noc` command |
   | `icons` | (unicode) | exactly `nerd` → Nerd icons | ZM-013 |
-  | `transport` | `poll` | exactly `pipe` → pipe | the words for the connection (ZR-003); `r` is a no-op in pipe |
+  | `transport` | `poll` | exactly `pipe` → pipe | the words for the connection (ZR-003); `R` is a no-op in pipe |
   | `pipe_name` | `zellij-noc.registry` | non-empty trimmed | `◌  waiting for {pipe_name}` |
   | `poll_interval_ms` | 1000 | `f64`, finite, clamped to 250..60000; otherwise the default | registry polling cadence |
   | `guest_session` | `noc` | non-empty trimmed | the inner session agents are opened, focused and followed in |
@@ -825,8 +825,8 @@ Public API fields that are not modelled are silently ignored, e.g.
   d           details window
   n           rename agent
   t / T       join / leave a team
-  x           stop agent (asks y/n)
-  r           refresh
+  x / r       stop / respawn (ask y/n)
+  R           refresh
   /           search (also older:14d)
   u           check for a new release
   i           status and version
@@ -1295,6 +1295,8 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 | other `Ctrl-…`, any `Alt`/`Super`/multi-modifier key | — | ignored, no redraw |
 | `y` | stop pending | run `noc stop` (ZK-018) |
 | any other unmodified key | stop pending | cancel stop, notice `stop cancelled` |
+| `y` | respawn pending | run `noc respawn` (ZK-038) |
+| any other unmodified key | respawn pending | cancel respawn, notice `respawn cancelled` |
 | `j`, `Down` | — | next row |
 | `k`, `Up` | — | previous row |
 | `g` `g` | — | first row |
@@ -1318,8 +1320,9 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 | `Shift Tab` | — | give the keys to the Details section, or back to its list (ZK-035) |
 | `S` | — | close the Sessions section to its title, or open it (ZK-035) |
 | `d` | agent row | floating details window (ZK-013) |
-| `r` | poll transport | refresh now (ZK-014) |
+| `R` | poll transport | refresh now (ZK-014) |
 | `x` | stoppable agent row | ask `Stop {title}?  y / n` (ZK-016) |
+| `r` | stoppable agent row | ask `Respawn {title}?  y / n` (ZK-038) |
 | `n` | agent row | start inline rename (ZK-020) |
 | `t` | agent row | open the team prompt (ZK-030) |
 | `T` | agent row in a team | take the agent out of its team (ZK-033) |
@@ -1470,8 +1473,8 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 - **Source:** `zellij/src/panel.rs` (open_details_window)
 - **Verified by:** `E2E: zellij/e2e/nested.sh` ("d opens the floating details window"); notices `UNTESTED`
 
-#### ZK-014 `r`: refresh
-- **Behavior:** `r` MUST cancel a pending `g` and run
+#### ZK-014 `R`: refresh
+- **Behavior:** `R` MUST cancel a pending `g` and run
   `[noc_bin, "ls", "--json", "--all"]` immediately, unless the transport is
   `pipe`, permissions are not granted, or a registry command is already in
   flight — in which case it silently does nothing (no notice). A refresh
@@ -1537,8 +1540,8 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
   | `x` | on a team's session, ask `End session {label}?  y / n` on the status line; on the inner session, the notice `ending it would end the pair; quit it from inside` |
   | `h`, `Left` | give the keys back to Agents |
   | `Esc` | give the keys back to Agents, unless the status box or help is open or a search is in effect, which `Esc` closes first (ZK-007) |
-  | `p`, `s`, `w`, `d`, `n`, `t`, `T`, `Space` | the notice `that key is for an agent; Tab goes back to them`; nothing else |
-  | any other key | as in the Agents section: `v`, `/`, `?`, `D`, `i`, `r`, `u`, `Ctrl-d`/`Ctrl-u` and the rest |
+  | `p`, `s`, `w`, `d`, `n`, `r`, `t`, `T`, `Space` | the notice `that key is for an agent; Tab goes back to them`; nothing else |
+  | any other key | as in the Agents section: `v`, `/`, `?`, `D`, `i`, `R`, `u`, `Ctrl-d`/`Ctrl-u` and the rest |
 
   While the end confirmation is pending, `y` with no modifiers MUST raise
   the EndSession intent with the notice `ending {label}…`; any other key
@@ -1584,7 +1587,7 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
   | `codex` | any | notice `can't stop Codex agents yet` |
   | other | any | notice `can't stop this agent` |
 
-- **Source:** `zellij/src/panel.rs` (request_stop)
+- **Source:** `zellij/src/panel.rs` (request_lifecycle)
 - **Decision:** D-043
 - **Verified by:** `zellij/src/panel.rs` stop_policy_and_confirmation
 
@@ -1596,7 +1599,7 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
   has no other effect. Snapshots, focus changes and `Ctrl-d`/`Ctrl-u` do not
   clear it; the stop always targets the recorded id even if the selection
   moved.
-- **Source:** `zellij/src/panel.rs` (request_stop, process_key)
+- **Source:** `zellij/src/panel.rs` (request_lifecycle, process_key)
 - **Decision:** D-043
 - **Verified by:** `zellij/src/panel.rs` stop_policy_and_confirmation; `zellij/src/panel.rs` modifier_checks_leave_a_pending_stop_alone; `zellij/src/view.rs` details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel (the prompt)
 
@@ -1618,6 +1621,26 @@ afterwards are specified in [08-zellij-host.md](08-zellij-host.md).
 - **Source:** `zellij/src/app.rs` (mark_stopped)
 - **Decision:** D-043
 - **Verified by:** `zellij/src/app.rs` stopped_agents_stay_hidden_until_the_registry_drops_them
+
+#### ZK-038 Respawn (`r`)
+- **Behavior:** `r` MUST follow the stop policy (ZK-016) with its own
+  words: no agent row selected → `no agent is selected`; Quiet agent →
+  `not running; nothing to respawn`; Claude background with a blank short id
+  → `no background id to respawn`; any other Claude session →
+  `only background sessions respawn`; Codex → `can't respawn Codex agents`;
+  another provider → `can't respawn this agent`. A Claude background session
+  with a short id MUST record a pending respawn (`PendingStop { agent_id,
+  title }` in `pending_respawn`) and the status line MUST read
+  `Respawn {title}?  y / n`, answered as ZK-017: `y` → notice
+  `respawning {title}…` and run `[noc_bin, "respawn", agent_id]` with context
+  `zellij-noc=respawn-agent`, `zellij-noc-agent=<id>`,
+  `zellij-noc-title=<title>`; anything else → `respawn cancelled`. On exit 0
+  the panel MUST notice `respawned {title}` and refresh at once (ZK-014
+  rules); the agent stays in the list. Otherwise it MUST notice the compacted
+  stderr (ZG-015) or, if empty, `could not respawn {title}`.
+- **Source:** `zellij/src/panel.rs` (request_lifecycle, process_key, run_intent, on_respawn_result), `zellij/src/main.rs` (on_command_result), `zellij/src/view.rs` (the prompt)
+- **Decision:** D-086
+- **Verified by:** `zellij/src/panel.rs` respawn_policy_and_confirmation; `zellij/src/view.rs` details_window_shows_full_identifiers_and_a_confirmation_prompt_shows_in_the_panel (the prompt); the command and its result handling `UNTESTED`
 
 ### 4.6 Rename (`n`)
 
@@ -2060,7 +2083,8 @@ Implementation choices not recorded in
 | Theme keys must be function keys with modifiers | these are keys nobody types, which is what the theme relay wants | `zellij/src/app.rs` (encode_key) |
 | A settings problem only turns the theme switch off | the agent list must keep working | `zellij/src/app.rs` (Config::problems) |
 | Enter refuses when the agent is open in another Zellij session; `p` makes a second copy | opening it here is sometimes right and sometimes a fork, so the second copy is an explicit choice | `zellij/src/guest.rs` (guest_open_agent) |
-| Stop policy is checked in the panel before `noc stop` runs | a refusal needs no command and no confirmation | `zellij/src/panel.rs` (request_stop) |
+| Stop and respawn policy is checked in the panel before `noc stop` or `noc respawn` runs | a refusal needs no command and no confirmation | `zellij/src/panel.rs` (request_lifecycle) |
+| Respawn asks `y`/`n` like stop | it restarts a process that may be in the middle of a turn | `zellij/src/panel.rs` (request_lifecycle) |
 | One details window per panel, replaced on the next `d` | a second window would cover the first | `zellij/src/panel.rs` (open_details_window) |
 | Control characters are dropped from every rendered text | they would otherwise reach the terminal verbatim | `zellij/src/view.rs` (sanitize) |
 | Last output line printed without a newline | it would scroll the pane by one and hide the first row | `zellij/src/main.rs` (render) |
@@ -2108,7 +2132,7 @@ pair for manual checks are described in
   resumed.
 - **Commands have no timeout.** A registry poll marks a command in flight
   and clears the mark only when its result arrives (ZK-014). If a `noc ls`
-  never returns, the panel stops polling and `r` does nothing until the
+  never returns, the panel stops polling and `R` does nothing until the
   plugin reloads. The details window's `noc show` has the same shape
   (ZR-031).
 - **Recency ordering is lexical** (ZG-002): timestamps with different
@@ -2142,7 +2166,7 @@ pair for manual checks are described in
 - **The team prompt completes from the list in hand** (ZK-031): during a
   search, only the teams of the matching agents.
 - **Half page** uses the whole panel height in rows of `items` (ZK-006).
-- **Help hides the list but keys still act on it** (ZK-007): `x`, `n` and
+- **Help hides the list but keys still act on it** (ZK-007): `x`, `r`, `n` and
   `Enter` operate on an invisible selection.
 - **Section details text** says "Enter opens this section" even when it is
   open (ZR-023).

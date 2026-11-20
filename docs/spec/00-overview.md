@@ -66,7 +66,7 @@ changes (D-005).
 | Retention: 14-day prune, named-row protection, unprompted-row drop | [04](04-server.md) |
 | Read-only Git workspace classification | [04](04-server.md) |
 | Versioned HTTP/JSON API over a user-only Unix socket, including the NDJSON watch stream | [02](02-api.md) |
-| `ls`, `search`, `show`, `watch`, `events`, `rename`, `forget`, `attach`, `stop` | [03](03-cli.md) |
+| `ls`, `search`, `show`, `watch`, `events`, `rename`, `forget`, `attach`, `stop`, `respawn` | [03](03-cli.md) |
 | Teams: a name agents share, with an optional lead; `noc team set\|clear\|lead`, `noc teams`, `--team` filters | [02](02-api.md), [03](03-cli.md) |
 | `noc spawn`: starts a background Claude session from the CLI process and registers its team and parent | [03](03-cli.md), [02](02-api.md) |
 | Buckets `blocked`/`working`/`review`/`quiet` as registry state | [02](02-api.md) |
@@ -260,9 +260,10 @@ requirement says so and the gap is repeated under
 
 #### INV-013 Provider runtimes are never started or installed silently
 - **Behavior:** Discovery, setup, and doctor MUST NOT install or start Claude,
-  Codex, or the Codex daemon. Explicit user commands `noc attach` and
-  `noc stop` are the only paths that run provider lifecycle commands.
-- **Decision:** D-024, D-029, D-030, D-043
+  Codex, or the Codex daemon. Explicit user commands `noc attach`,
+  `noc stop`, `noc respawn` and `noc spawn` are the only paths that run
+  provider lifecycle commands.
+- **Decision:** D-024, D-029, D-030, D-043, D-086
 - **Verified by:** [05](05-providers.md) CDX health/degraded tests,
   [06](06-hooks.md) DOC-*.
 
@@ -289,10 +290,10 @@ requirement says so and the gap is repeated under
    |                                                 │       retention sweep (1 h)     |
    |                                     HTTP/JSON on user-only Unix socket            |
    |  CLI clients: ls show watch events rename forget server-status ◄───────┘          |
-   |  CLI local actions: attach stop setup doctor (run in the CLI process)             |
+   |  CLI local actions: attach stop respawn setup doctor (run in the CLI process)     |
    +-----------------------------------------------------------------------------------+
                          │  reads:  noc ls --json --all, noc show --json
-                         │  runs:   noc attach | rename | stop
+                         │  runs:   noc attach | rename | stop | respawn
                          ▼
                   zellij-noc (Rust/WASM plugin)
         38-column sidebar in the outer Zellij session `noc-host`,
@@ -319,7 +320,7 @@ requirement says so and the gap is repeated under
 4. **Client read ([02](02-api.md), [03](03-cli.md)):** CLI and frontends read
    `GET /v1/agents[...]`; `watch` streams complete snapshots on semantic
    change.
-5. **Act ([03](03-cli.md)):** `attach`/`stop` plan provider argv in the CLI
+5. **Act ([03](03-cli.md)):** `attach`/`stop`/`respawn` plan provider argv in the CLI
    process (no server round-trip for execution); `rename` goes through the
    server, which writes `user_name` and pushes to Codex; `team` writes an
    agent's team and lead through the server.
@@ -334,7 +335,8 @@ requirement says so and the gap is repeated under
    (`plugin location="..." { ... }`), reads the registry only through
    `noc ls --json --all`, `noc search --json` and `noc show --json`, and
    acts only by running
-   `noc attach`, `noc rename`, `noc stop`, `noc team set` and `noc team clear`.
+   `noc attach`, `noc rename`, `noc stop`, `noc respawn`, `noc team set` and
+   `noc team clear`.
 
 ### 4.2 Repository layout
 

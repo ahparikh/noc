@@ -447,6 +447,8 @@ pub struct ZellijNoc {
     /// A release newer than this build, as `vX.Y.Z`.
     pub update: Option<String>,
     pub pending_stop: Option<PendingStop>,
+    /// A respawn waiting for y / n: the same record as a stop.
+    pub pending_respawn: Option<PendingStop>,
     pub pending_rename: Option<PendingRename>,
     pub pending_team: Option<PendingTeam>,
     /// The session the user was asked whether to end.
@@ -518,6 +520,7 @@ impl ZellijNoc {
             guest_problem: None,
             update: None,
             pending_stop: None,
+            pending_respawn: None,
             pending_rename: None,
             pending_team: None,
             pending_end: None,

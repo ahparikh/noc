@@ -451,10 +451,14 @@ which command; the caller decides where the terminal lives.
   would silently diverge; `--force` overrides.
 
 `noc stop <agent>` runs `claude stop` for a Claude background session, which
-ends the process and keeps the conversation. Interactive Claude sessions and
-Codex threads are refused. Both commands run in the CLI process, not the
-server; the registry learns the outcome through reconciliation. The
-reasoning is in [`DECISIONS.md`](DECISIONS.md) (D-038, D-043, D-051, D-054).
+ends the process and keeps the conversation. `noc respawn <agent>` runs
+`claude respawn` for one, which restarts its process on the Claude binary
+installed now and keeps the conversation: a background session otherwise
+stays on the version it was started with. Interactive Claude sessions and
+Codex threads are refused by both. All three commands run in the CLI
+process, not the server; the registry learns the outcome through
+reconciliation. The reasoning is in [`DECISIONS.md`](DECISIONS.md) (D-038,
+D-043, D-051, D-054, D-086).
 
 ## Frontend separation
 
@@ -484,7 +488,8 @@ The first frontend is `zellij-noc`, a Zellij plugin that shows the registry
 as a sidebar beside the user's own Zellij session. It reads only
 `noc ls --json --all`, `noc search --json` and `noc show --json`, and acts
 only through
-`noc attach`, `noc rename`, `noc stop`, `noc team set` and `noc team clear`.
+`noc attach`, `noc rename`, `noc stop`, `noc respawn`, `noc team set` and
+`noc team clear`.
 See [`ZELLIJ.md`](ZELLIJ.md).
 
 ## Security and privacy

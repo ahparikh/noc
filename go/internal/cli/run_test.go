@@ -227,6 +227,7 @@ func TestValidationPaths(t *testing.T) {
 		{[]string{"forget"}, 2, "usage: noc forget <agent-id> [<agent-id>...]"},
 		{[]string{"attach", "id", "--force"}, 2, "usage: noc attach [--force] <agent-id>"},
 		{[]string{"stop"}, 2, "usage: noc stop <agent-id>"},
+		{[]string{"respawn"}, 2, "usage: noc respawn <agent-id>"},
 		{[]string{"watch", "x"}, 2, "noc watch: unexpected positional arguments"},
 		{[]string{"hook"}, 2, "usage: noc hook ingest --provider claude|codex"},
 		{[]string{"hook", "other"}, 2, "usage: noc hook ingest --provider claude|codex"},
@@ -710,6 +711,7 @@ case "$1" in
   --bg) cp "$FAKE_ROSTER_AFTER" "$FAKE_ROSTER"; echo restored ;;
   attach) echo "attached $2"; exit "${FAKE_ATTACH_EXIT:-0}" ;;
   stop) echo "stopped $2" ;;
+  respawn) echo "respawned $2" ;;
 esac
 `
 	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
@@ -804,5 +806,10 @@ esac
 	code, _, stderr = runCLI(t, "stop", id)
 	if code != 1 || stderr != "noc: only background Claude sessions can be stopped; end this one from its terminal with /exit\n" {
 		t.Fatalf("stop = %d %q", code, stderr)
+	}
+	// Respawn: the same rule.
+	code, _, stderr = runCLI(t, "respawn", id)
+	if code != 1 || stderr != "noc: only background Claude sessions can be respawned; restart this one from its terminal\n" {
+		t.Fatalf("respawn = %d %q", code, stderr)
 	}
 }

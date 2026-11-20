@@ -24,7 +24,7 @@ settled constraints on future work are marked *planned* in
   `stop`, and `forget`, with stable JSON output.
 - **Two-way names**, pushed to Codex.
 - **Attach** that never leaves a Claude agent owned by a terminal, and
-  **stop** for Claude background sessions.
+  **stop** and **respawn** for Claude background sessions.
 - **Bounded retention** of ended rows.
 - **`zellij-noc`**, a Zellij plugin that shows the registry as a sidebar
   beside the user's own session ([`ZELLIJ.md`](ZELLIJ.md)).

@@ -45,18 +45,11 @@ pub const SWITCH_LANDING_SECS: f64 = 1.0;
 /// must differ from the panel's tick: the two timers are told apart by
 /// their length.
 pub const SWITCH_POLL_SECS: f64 = 0.03;
-/// How long after the client landed in a session that was just created the
-/// panel waits before it starts that session's relay: `zellij pipe` would wait
-/// for ever on a relay started before the session has a tab to hold it.
-pub const SWITCH_SETTLE_SECS: f64 = 0.25;
-/// How long the panel waits, before its first request, for Zellij to say that
-/// a client is in the guest pane: the inner session is being created until
-/// then, and a request sent before that is lost for `GUEST_WATCH_LOST_SECS`.
-pub const GUEST_ARRIVAL_SECS: f64 = 3.0;
-/// How long after that client is first seen the panel waits before its first
-/// request. Zellij names the client's session as soon as it attaches, which
-/// for a session it is creating is well before the session has a tab.
-pub const GUEST_SETTLE_SECS: f64 = 1.0;
+/// How long the panel waits for one answer to "are you ready" from a
+/// session that is being created, before it asks again.
+pub const READY_LOST_SECS: f64 = 1.0;
+pub const CTX_READY: &str = "guest-ready";
+pub const KEY_READY_SESSION: &str = "zellij-noc-ready-session";
 /// While a move is under way: how often the panel asks the new session's
 /// relay, and how long it waits for one request before it sends another.
 pub const SWITCH_WATCH_SECS: f64 = 0.1;
@@ -100,12 +93,14 @@ pub struct GuestState {
     /// Zellij has said that the client is in `session` since the move began.
     pub landed: bool,
     /// The move is to a session that was not running: it is being created,
-    /// and its relay is not asked before `settle_until`.
+    /// and its relay is not asked before the session says it has a pane
+    /// (`unready`). `ready_asked` is when it was last asked.
     pub fresh: bool,
-    pub settle_until: Option<f64>,
-    /// When the panel first had a request to send and no client to send it
-    /// to: the pair is starting.
-    pub waiting_since: Option<f64>,
+    pub unready: bool,
+    pub ready_asked: Option<f64>,
+    /// The guest pane's loop has been told to start the inner session, or
+    /// was found past its wait.
+    pub started: bool,
     /// The session Zellij last said is attached in the guest pane; none
     /// once that client has exited.
     pub shown: Option<String>,
@@ -347,6 +342,25 @@ pub fn agent_session(
         })
         .map(|(name, _)| name.clone())
         .unwrap_or_else(|| team_session(guest, agent.team_name()))
+}
+
+/// Whether `zellij action list-panes --json` lists a terminal pane: the
+/// session has its first tab, and a plugin started in it by a pipe is held.
+pub fn session_has_a_terminal(stdout: &[u8]) -> bool {
+    serde_json::from_slice::<Vec<serde_json::Value>>(stdout).is_ok_and(|panes| {
+        panes
+            .iter()
+            .any(|pane| pane.get("is_plugin").and_then(|v| v.as_bool()) == Some(false))
+    })
+}
+
+/// Whether the guest pane's loop is waiting for the panel's sign: what runs
+/// in the pane is the loop's own shell, and not yet a `zellij attach` or
+/// the pause between two of them.
+pub fn guest_is_waiting(command: &[String]) -> bool {
+    command
+        .first()
+        .is_some_and(|program| program.rsplit('/').next() == Some("sh"))
 }
 
 /// The panel's request to a session's relay: watch this session for the panel
@@ -715,19 +729,8 @@ impl State {
             GUEST_WATCH_LOST_SECS
         };
         let lost = self.guest.last_watch.is_none_or(|t| now - t > patience);
-        if !self.permissions_granted || (self.guest.in_flight && !lost) {
+        if !self.permissions_granted || !self.guest.started || (self.guest.in_flight && !lost) {
             return false;
-        }
-        if self.guest.settle_until.is_some_and(|t| now < t) {
-            // A session that is being created has no tab yet for its relay.
-            return false;
-        }
-        if !self.guest.switching && self.guest.last_watch.is_none() && self.guest.shown.is_none() {
-            // The pair is starting and the guest pane has no client yet.
-            let since = *self.guest.waiting_since.get_or_insert(now);
-            if now - since < GUEST_ARRIVAL_SECS {
-                return false;
-            }
         }
         // The relay is this plugin, so the panel must know where it was
         // loaded from, and the relay must know which session to answer.
@@ -741,6 +744,7 @@ impl State {
                 // The move did not happen: stop waiting, and show the session
                 // the client is in.
                 self.guest.switching = false;
+                self.guest.unready = false;
                 if self.guest.pending_open.take().is_some() {
                     self.app.set_notice(format!(
                         "session {:?} did not open",
@@ -754,6 +758,12 @@ impl State {
                 // is still being created may never answer.
                 return redraw;
             }
+        }
+        if self.guest.unready {
+            // A session that is being created drops a pipe sent to it, and
+            // never ends the command that carried it, until it has a pane.
+            self.ask_if_ready(now);
+            return redraw;
         }
         let healthy = self.guest.snapshot.is_some() && self.guest.failing_since.is_none();
         let every = if self.guest.switching {
@@ -810,13 +820,7 @@ impl State {
                 pane.nested_session = info.nested_session_name.clone();
             }
             match info.nested_session_name {
-                Some(name) => {
-                    if self.guest.shown.is_none() && self.guest.last_watch.is_none() {
-                        // The first client: its session may be an instant old.
-                        self.guest.settle_until = Some(now_secs() + GUEST_SETTLE_SECS);
-                    }
-                    self.guest.shown = Some(name);
-                }
+                Some(name) => self.guest.shown = Some(name),
                 // The client that was in the guest pane has exited.
                 None => {
                     if let Some(left) = self.guest.shown.take() {
@@ -889,9 +893,6 @@ impl State {
             if shown == self.guest.session && !self.guest.landed {
                 self.guest.landed = true;
                 self.guest.last_watch = None;
-                if self.guest.fresh {
-                    self.guest.settle_until = Some(now_secs() + SWITCH_SETTLE_SECS);
-                }
                 self.watch_guest();
             }
             return false;
@@ -930,7 +931,8 @@ impl State {
         self.guest.failing_since = None;
         self.guest.landed = false;
         self.guest.fresh = false;
-        self.guest.settle_until = None;
+        self.guest.unready = false;
+        self.guest.ready_asked = None;
         self.guest.spare_tab = None;
         self.app.guest_problem = None;
         self.followed_agent = None;
@@ -960,15 +962,118 @@ impl State {
             &switch_command(&self.guest.session, &url, target, &self.config.team_layout),
             ctx(CTX_SWITCH),
         );
-        let running = get_session_list()
-            .is_ok_and(|list| list.live_sessions.iter().any(|s| s.name == target));
+        let running = self.session_is_running(target);
         self.adopt_session(target.to_string());
+        self.await_session(running);
+        true
+    }
+
+    fn session_is_running(&self, name: &str) -> bool {
+        get_session_list().is_ok_and(|list| list.live_sessions.iter().any(|s| s.name == name))
+    }
+
+    /// A client is on its way into the session on show, which was running
+    /// or is being created. Every session comes up through here, the inner
+    /// session at start as much as a team's later: the panel waits for
+    /// Zellij to say the client is there, lets a new session settle, and
+    /// asks its relay until it answers.
+    fn await_session(&mut self, running: bool) {
         self.guest.fresh = !running;
+        self.guest.unready = !running;
+        self.guest.ready_asked = None;
+        self.guest.landed = false;
         self.guest.switching = true;
         self.guest.switched_at = Some(now_secs());
         self.guest.pending_open = None;
         set_timeout(SWITCH_POLL_SECS);
-        true
+    }
+
+    /// Ask the session on show, which is being created, for its panes: one
+    /// request at a time, again when one has not come back.
+    fn ask_if_ready(&mut self, now: f64) {
+        if self
+            .guest
+            .ready_asked
+            .is_some_and(|t| now - t < READY_LOST_SECS)
+        {
+            return;
+        }
+        self.guest.ready_asked = Some(now);
+        let session = self.guest.session.clone();
+        let mut context = ctx(CTX_READY);
+        context.insert(KEY_READY_SESSION.to_string(), session.clone());
+        run_command(
+            &[
+                "zellij",
+                "--session",
+                session.as_str(),
+                "action",
+                "list-panes",
+                "--all",
+                "--json",
+            ],
+            context,
+        );
+    }
+
+    /// The session answered, or is not there yet. With a pane to its name
+    /// it can hold a relay, and is asked to watch at once.
+    pub fn on_guest_ready(
+        &mut self,
+        exit: Option<i32>,
+        stdout: &[u8],
+        context: &BTreeMap<String, String>,
+    ) -> bool {
+        if !self.guest.unready || context.get(KEY_READY_SESSION) != Some(&self.guest.session) {
+            return false;
+        }
+        self.guest.ready_asked = None;
+        if exit == Some(0) && session_has_a_terminal(stdout) {
+            self.guest.unready = false;
+            self.guest.last_watch = None;
+        }
+        self.watch_guest()
+    }
+
+    /// The guest pane's loop waits for a line before it starts the inner
+    /// session, and the panel types it: once, when it has its permissions,
+    /// so the host session is up, and the plugin is in Zellij's keeping,
+    /// before the inner session exists. From there the inner session comes
+    /// up as any other does (`await_session`). Nothing is typed unless the
+    /// loop is seen waiting: a line typed at any other time would reach the
+    /// inner session.
+    pub fn start_guest(&mut self) {
+        if self.guest.started || !self.permissions_granted {
+            return;
+        }
+        let Some(guest) = self.guest_pane() else {
+            return;
+        };
+        if guest.exited {
+            return;
+        }
+        if guest.nested_session.is_some() {
+            // A session is attached already: the panel was loaded anew.
+            self.guest.started = true;
+            return;
+        }
+        let Ok(command) = get_pane_running_command(PaneId::Terminal(guest.id)) else {
+            return;
+        };
+        if command.is_empty() {
+            return;
+        }
+        if guest_is_waiting(&command) {
+            let pane = format!("terminal_{}", guest.id);
+            if !self.host_action(&["write", "--pane-id", pane.as_str(), "10"]) {
+                return;
+            }
+        }
+        // Otherwise the loop is past its wait (Enter was pressed there):
+        // the session is on its way all the same.
+        self.guest.started = true;
+        let running = self.session_is_running(&self.guest.session.clone());
+        self.await_session(running);
     }
 
     /// The request to move ran: it fails when the session the panel took to be
@@ -2032,6 +2137,27 @@ mod tests {
         assert!(keyboard_signal(&broken, false).is_empty());
         assert_eq!(keyboard_signal(&broken, true), FOCUS_FRAME);
         assert_eq!(&FOCUS_FRAME[..], b"\x1bP26661nSgA=\x1b\\");
+    }
+
+    #[test]
+    fn the_guest_loop_is_waiting_while_its_own_shell_is_what_runs() {
+        let words = |s: &str| s.split(' ').map(str::to_string).collect::<Vec<_>>();
+        assert!(guest_is_waiting(&words("sh -c inner=noc; zellij attach")));
+        assert!(guest_is_waiting(&words("/bin/sh -c loop")));
+        assert!(!guest_is_waiting(&words("zellij attach --create noc")));
+        assert!(!guest_is_waiting(&words("sleep 0.5")));
+        assert!(!guest_is_waiting(&[]));
+    }
+
+    #[test]
+    fn a_session_is_ready_once_it_lists_a_terminal_pane() {
+        assert!(session_has_a_terminal(
+            br#"[{"id":0,"is_plugin":true},{"id":0,"is_plugin":false}]"#
+        ));
+        assert!(!session_has_a_terminal(br#"[{"id":0,"is_plugin":true}]"#));
+        assert!(!session_has_a_terminal(b"[]"));
+        assert!(!session_has_a_terminal(b""));
+        assert!(!session_has_a_terminal(b"There is no active session!"));
     }
 
     #[test]

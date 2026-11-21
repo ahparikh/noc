@@ -562,7 +562,10 @@ instance asked for, so roles that ask for different sets overwrite each
 other's grant and stall on a prompt nobody can see. Running commands is
 already granted, so writing through the CLI needs no further permission.
 **Consequence:** the user answers one prompt per plugin location. Nothing
-in the repository writes to Zellij's permission cache.
+in the repository writes to Zellij's permission cache. The one thing that
+answers the prompt for the user is the end-to-end test, only when asked to
+with `NOC_E2E_GRANT=1`, and by pressing `y` in the sidebar as a person
+would: it exists for throwaway machines where nobody is there to answer.
 
 ### D-058: releases are the only way into daily use
 
@@ -947,6 +950,33 @@ waiting (a suspended pane) left the inner session at 80 by 24.
 **Consequence:** the bar says `Zellij (noc--auth)` where `auth` would do.
 A bar of noc's own needs a way to load that is not a race: a plugin
 fetched to a file by the installer, or a separate small plugin.
+
+### D-084: the host session starts the inner session, and every session comes up one way
+
+The guest pane's loop waits for a line before it starts the inner session,
+and the sidebar types that line once it has its permissions. From then on
+the inner session is waited for exactly as a team's session is when the
+client is moved to it: until Zellij says a client is in it, then, if it
+is new, until it lists a terminal pane, then its relay is asked until it
+answers.
+
+**Why:** two things went wrong when both sessions started at once. A
+plugin in the inner layout was fetched by both and the copy Zellij keeps
+was spoilt (D-081). And the sidebar's first request reached the inner
+session in its first half second, when Zellij drops a pipe and never ends
+the command that carried it, so on a slow start the sidebar saw nothing of
+the inner session for seconds. Starting the inner session from the sidebar
+puts the two in order, and tells the sidebar when the inner session
+starts, so the waiting it already did for a team's session serves for the
+first one too. That waiting used to guess how long a new session needs (a
+quarter of a second, which a slow machine outlasts); asking the session
+for its panes is the same on every machine. A typed line needs no file, no timeout and no suspended
+pane (which Zellij gives no size), and Enter does the same by hand.
+**Consequence:** the inner session does not start until the permission
+prompt is answered; the guest pane says so after two seconds. The sidebar
+types the line only while it sees the loop waiting, so nothing is typed
+into a running session when Enter was pressed in the pane first.
+The inner layout may load a plugin again without the clash of D-081.
 
 ### D-042: names are two-way and the most recent rename wins
 

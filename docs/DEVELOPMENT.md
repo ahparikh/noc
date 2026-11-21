@@ -122,7 +122,10 @@ closes, `Alt o` hides and shows the sidebar, `Alt d` detaches and starting
 again attaches, and ending the inner session ends the host.
 
 It needs the plugin's permissions already granted for the build path (run
-`make dev` once first) and stops with a message if they are not.
+`make dev` once first) and stops with a message if they are not. On a
+throwaway machine with nobody to answer the prompt (a cloud session, a
+container), `NOC_E2E_GRANT=1 make zellij-e2e` has the script answer it: it
+moves to the sidebar, presses `y`, and starts the pair again.
 
 ## Changing behavior
 

@@ -8,7 +8,9 @@
 #
 # The plugin's permissions must already be granted for the build path: run
 # `make dev` once and answer the prompt in the sidebar. The script fails with
-# a clear message when they are not.
+# a clear message when they are not. With NOC_E2E_GRANT=1 it answers the
+# prompt itself, by pressing y in the sidebar, and starts the pair again:
+# for throwaway machines where nobody is there to answer.
 #
 # usage: nested.sh           run every check
 #        nested.sh --keep    leave the pair running afterwards (tmux attach -t noc-e2e-tmux)
@@ -141,21 +143,51 @@ start_pair() {
 
 # ---- start ----
 "$ROOT/dev.sh" --fake render >/dev/null || exit 2
-start_pair
-if ! wait_for 30 alive "$HOST" || ! wait_for 30 alive "$INNER"; then
-	echo "nested.sh: the pair did not start; last screen:" >&2
+
+# The prompt wraps in the narrow sidebar, so look for its last line.
+prompting() { screen | grep -q -F 'Allow? (y/n)'; }
+not_prompting() { ! prompting; }
+
+# The host session comes first: the guest pane starts the inner session
+# only once the sidebar, with its permissions, says so.
+start_host() {
+	start_pair
+	if ! wait_for 30 alive "$HOST"; then
+		echo "nested.sh: the host session did not start; last screen:" >&2
+		screen | tail -n 15 >&2
+		exit 1
+	fi
+	sleep 2
+	dismiss_welcome
+}
+start_host
+
+# Answer the prompt as a person would: move to the sidebar and press y.
+# Zellij records the grant itself. The pair is then started again, so the
+# checks begin from the state a granted plugin starts in.
+if prompting && [ "${NOC_E2E_GRANT:-}" = 1 ]; then
+	echo "nested.sh: granting the plugin's permissions (NOC_E2E_GRANT=1)" >&2
+	z --session "$HOST" action move-focus left
+	sleep 0.5
+	keys y
+	wait_for 10 not_prompting
+	start_host
+fi
+
+if prompting; then
+	echo "nested.sh: the plugin is waiting for its permissions." >&2
+	echo "Run 'make dev' once, answer the prompt in the sidebar with y, then run this again," >&2
+	echo "or set NOC_E2E_GRANT=1 to have this script answer it." >&2
+	exit 1
+fi
+
+if ! wait_for 30 alive "$INNER"; then
+	echo "nested.sh: the sidebar did not start the inner session; last screen:" >&2
 	screen | tail -n 15 >&2
 	exit 1
 fi
 sleep 2
 dismiss_welcome
-
-# The prompt wraps in the narrow sidebar, so look for its last line.
-if screen | grep -q -F 'Allow? (y/n)'; then
-	echo "nested.sh: the plugin is waiting for its permissions." >&2
-	echo "Run 'make dev' once, answer the prompt in the sidebar with y, then run this again." >&2
-	exit 1
-fi
 
 SIDEBAR="P$(panes "$HOST" | jq -r 'map(select(.is_plugin and (.is_floating | not) and (.is_suppressed | not) and ((.plugin_url // "") | test("zellij-noc")))) | first | .id')"
 GUEST="T$(panes "$HOST" | jq -r 'map(select((.is_plugin | not) and (.is_floating | not))) | first | .id')"

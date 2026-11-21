@@ -363,6 +363,7 @@ impl State {
             guest::CTX_WATCH => self.on_guest_watch(exit),
             guest::CTX_OPEN => self.on_guest_open(exit, stdout, stderr, context),
             guest::CTX_SWITCH => self.on_guest_switch(exit, stderr),
+            guest::CTX_READY => self.on_guest_ready(exit, stdout, context),
             guest::CTX_END => self.on_end_session(exit, stderr, context),
             guest::CTX_HOST_INFO => {
                 if exit == Some(0) {
@@ -410,6 +411,7 @@ impl State {
         set_timeout(PANEL_TICK_SECONDS);
         self.sync_panel_selectable();
         let mut redraw = self.permissions_granted && self.read_shown_session();
+        self.start_guest();
         redraw |= self.list_sessions_if_due();
         redraw |= self.watch_guest();
         self.watch_registry();
